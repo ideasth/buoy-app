@@ -4,6 +4,44 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (later) — Admin DB export/import endpoints
+
+**What was added** (commit pending — see `server/admin-db.ts`):
+- `GET  /api/admin/db/export` — streams a consistent SQLite snapshot via better-sqlite3's online `.backup()`. Auth: `X-Anchor-Sync-Secret`.
+- `POST /api/admin/db/import` — accepts raw SQLite bytes (Content-Type: application/octet-stream), validates magic header + `PRAGMA integrity_check`, backs up current DB to `data.db.bak.<timestamp>`, atomic rename. Auth: `X-Anchor-Sync-Secret`. **Gated by `ANCHOR_DB_IMPORT_ENABLED=1` env var (off by default — kill switch).** Returns `{ restartRequired: true }`; the server must be restarted (re-publish) for the new DB to take effect.
+- `GET  /api/admin/db/status` — returns `{ dbPath, exists, sizeBytes, importEnabled }`. Sanity check from a new thread.
+- `server/storage.ts` now exports `rawSqlite` so admin endpoints can call `.backup()` on the live handle.
+
+**Build status**: client + server bundles built successfully (`dist/public/assets/index-OJD7pA68.js` + `dist/index.cjs`). All three endpoints confirmed in the server bundle.
+
+**Publish status**: NOT YET DEPLOYED to `anchor-jod.pplx.app`. The `publish_website` tool was not available in this thread (same cached-capability issue as ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac`). Next thread needs to: clone, `npm ci && npm run build`, then run the `publish_website` flow with the standing args.
+
+**How to use export from a new thread (after publish)**:
+```
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+curl -sS -H "X-Anchor-Sync-Secret: $SECRET" \
+  https://anchor-jod.pplx.app/port/5000/api/admin/db/export \
+  -o /home/user/workspace/anchor-data-backup.db
+```
+
+**How to use import** (DESTRUCTIVE):
+1. Set `ANCHOR_DB_IMPORT_ENABLED=1` in the publish env (via `run_command` env or platform config).
+2. Re-publish so the env var is active.
+3. POST the file:
+   ```
+   curl -sS -X POST \
+     -H "X-Anchor-Sync-Secret: $SECRET" \
+     -H "Content-Type: application/octet-stream" \
+     --data-binary @anchor-data-backup.db \
+     https://anchor-jod.pplx.app/port/5000/api/admin/db/import
+   ```
+4. Re-publish (or restart) so the running better-sqlite3 handle reopens against the swapped DB file.
+5. Disable again: remove `ANCHOR_DB_IMPORT_ENABLED` and re-publish.
+
+**Standing rule update**: "Touch `data.db` after extraction" → import endpoint is the sanctioned way to do this; it leaves a `.bak.<timestamp>` rollback. Still requires explicit user approval per run.
+
+---
+
 ## 2026-05-08 — Cross-thread continuity setup (Option B)
 
 **What happened**

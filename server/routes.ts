@@ -28,6 +28,7 @@ import {
   lastBalance,
   runs24hByType,
 } from "./usage-calibration";
+import { registerAdminDbRoutes } from "./admin-db";
 
 // Orchestrator-only auth: protects endpoints that the cron calls from outside
 // the browser. Reads the shared secret from env first, falling back to a
@@ -103,6 +104,10 @@ const REFLECTION_PROMPTS = [
 ];
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Admin DB export/import. Both behind requireOrchestrator; import is
+  // additionally gated by ANCHOR_DB_IMPORT_ENABLED=1.
+  registerAdminDbRoutes(app, requireOrchestrator);
+
   // ---- Tasks ----
   app.get("/api/tasks", (_req, res) => res.json(storage.listTasks()));
 

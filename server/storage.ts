@@ -62,6 +62,8 @@ const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
 
 export const db = drizzle(sqlite);
+// Exported for admin endpoints that need the raw handle (e.g. .backup()).
+export const rawSqlite = sqlite;
 
 // Run schema migrations inline (no drizzle-kit at runtime)
 sqlite.exec(`
