@@ -23,6 +23,7 @@ import {
 import { approveAsTask } from "./inbox-scanner";
 import { getCurrentSession } from "./auth";
 import { BAKED_SYNC_SECRET } from "./baked-secret";
+import { evaluateEmailPriority } from "@shared/email-priority";
 import type { Task } from "@shared/schema";
 import {
   calibrate,
@@ -956,21 +957,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/email-status/upsert", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const items = Array.isArray(req.body?.items) ? req.body.items : [req.body];
-    const saved = items.map((it: any) => storage.upsertEmailStatus({
-      messageId: String(it.messageId),
-      threadId: it.threadId ?? null,
-      receivedAt: Number(it.receivedAt) || Date.now(),
-      sender: String(it.sender || ""),
-      subject: String(it.subject || ""),
-      bodyPreview: String(it.bodyPreview || ""),
-      importance: it.importance ?? null,
-      isFlagged: it.isFlagged ? 1 : 0,
-      draftResponse: it.draftResponse ?? null,
-      draftGeneratedAt: it.draftGeneratedAt ?? null,
-      status: it.status || "pending",
-      webLink: it.webLink ?? null,
-      updatedAt: Date.now(),
-    }));
+    const saved = items.map((it: any) => {
+      const sender = String(it.sender || "");
+      const subject = String(it.subject || "");
+      const bodyPreview = String(it.bodyPreview || "");
+      // Server-side priority evaluation. We deliberately ignore whatever
+      // `isFlagged` the cron sends — the cron used to compute this and
+      // regressed on 2026-05-08, so the server is now the single source of
+      // truth for priority. See shared/email-priority.ts.
+      const { isPriority } = evaluateEmailPriority({ sender, subject, bodyPreview });
+      return storage.upsertEmailStatus({
+        messageId: String(it.messageId),
+        threadId: it.threadId ?? null,
+        receivedAt: Number(it.receivedAt) || Date.now(),
+        sender,
+        subject,
+        bodyPreview,
+        importance: it.importance ?? null,
+        isFlagged: isPriority ? 1 : 0,
+        draftResponse: it.draftResponse ?? null,
+        draftGeneratedAt: it.draftGeneratedAt ?? null,
+        status: it.status || "pending",
+        webLink: it.webLink ?? null,
+        updatedAt: Date.now(),
+      });
+    });
     res.json({ saved });
   });
 

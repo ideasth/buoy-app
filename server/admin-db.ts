@@ -343,4 +343,20 @@ export function registerAdminDbRoutes(
       res.status(500).json({ error: "failed to record receipt", detail: msg.slice(0, 400) });
     }
   });
+
+  // POST /api/admin/email-priority-recompute
+  // Re-evaluates isFlagged on every email_status row using the canonical
+  // shared/email-priority.ts evaluator. Idempotent. Returns counts.
+  // Auth: user cookie OR sync secret (read-only-style write that can't lose data).
+  app.post("/api/admin/email-priority-recompute", (req, res) => {
+    const guard = requireUserOrOrchestrator ?? requireOrchestrator;
+    if (!guard(req, res)) return;
+    try {
+      const r = storage.recomputeAllEmailPriority();
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "recompute failed", detail: msg.slice(0, 400) });
+    }
+  });
 }

@@ -75,6 +75,7 @@ import type {
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, gte, lte, isNull, sql } from "drizzle-orm";
+import { evaluateEmailPriority } from "@shared/email-priority";
 
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
@@ -1083,6 +1084,34 @@ export class Storage {
       .where(eq(emailStatus.id, id))
       .run();
   }
+  /**
+   * Re-evaluate priority on every stored email_status row using the canonical
+   * shared/email-priority.ts evaluator. Only writes rows whose isFlagged value
+   * actually changes. Returns counts for diagnostics. Idempotent.
+   */
+  recomputeAllEmailPriority(): { scanned: number; updated: number; flagged: number } {
+    const rows = db.select().from(emailStatus).all();
+    let updated = 0;
+    let flagged = 0;
+    const now = Date.now();
+    for (const row of rows) {
+      const { isPriority } = evaluateEmailPriority({
+        sender: row.sender,
+        subject: row.subject,
+        bodyPreview: row.bodyPreview,
+      });
+      const next = isPriority ? 1 : 0;
+      if (next !== row.isFlagged) {
+        db.update(emailStatus)
+          .set({ isFlagged: next, updatedAt: now })
+          .where(eq(emailStatus.id, row.id))
+          .run();
+        updated++;
+      }
+      if (next === 1) flagged++;
+    }
+    return { scanned: rows.length, updated, flagged };
+  }
 
   // ===== Projects =====
   listProjects(): Project[] {
@@ -1696,4 +1725,19 @@ try {
   // eslint-disable-next-line no-console
   console.error("[storage] coach FTS backfill failed:", err);
 }
+// Email priority backfill: re-evaluate isFlagged on every existing
+// email_status row using the canonical shared evaluator. This repairs the
+// 2026-05-08 cron-side regression in which priority hits were stored with
+// isFlagged=0. Idempotent: only writes rows whose flag value changes.
+try {
+  const r = storage.recomputeAllEmailPriority();
+  if (r.updated > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[storage] email-priority backfill: scanned=${r.scanned} updated=${r.updated} flagged=${r.flagged}`);
+  }
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error("[storage] email-priority backfill failed:", err);
+}
+
 storage.seedDefaultHabitsIfNeeded();
