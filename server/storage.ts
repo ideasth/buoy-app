@@ -19,6 +19,10 @@ import {
   projectTasks,
   dailyFactors,
   issues,
+  travelLocations,
+  travelOverrides,
+  coachSessions,
+  coachMessages,
 } from "@shared/schema";
 import type {
   Task,
@@ -59,6 +63,14 @@ import type {
   InsertDailyFactors,
   Issue,
   InsertIssue,
+  TravelLocation,
+  InsertTravelLocation,
+  TravelOverride,
+  InsertTravelOverride,
+  CoachSession,
+  InsertCoachSession,
+  CoachMessage,
+  InsertCoachMessage,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -356,6 +368,59 @@ CREATE TABLE IF NOT EXISTS issues (
 CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_created_ymd ON issues(created_ymd);
 CREATE INDEX IF NOT EXISTS idx_issues_category ON issues(category);
+
+-- Feature 1 — Travel locations + per-event overrides
+CREATE TABLE IF NOT EXISTS travel_locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  keywords TEXT NOT NULL DEFAULT '',
+  nominal_minutes INTEGER NOT NULL,
+  allow_minutes INTEGER NOT NULL,
+  destination_address TEXT,
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS travel_overrides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_uid TEXT NOT NULL UNIQUE,
+  nominal_minutes_override INTEGER,
+  allow_minutes_override INTEGER,
+  location_id_override INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_travel_overrides_uid ON travel_overrides(event_uid);
+
+-- Feature 5 — Coach sessions + messages
+CREATE TABLE IF NOT EXISTS coach_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  mode TEXT NOT NULL DEFAULT 'plan',
+  context_snapshot TEXT NOT NULL DEFAULT '{}',
+  summary TEXT,
+  summary_edited_by_user INTEGER NOT NULL DEFAULT 0,
+  linked_issue_id INTEGER,
+  linked_ymd TEXT,
+  model_provider TEXT NOT NULL DEFAULT 'perplexity',
+  model_name TEXT NOT NULL DEFAULT 'sonar-pro',
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_coach_sessions_started ON coach_sessions(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coach_sessions_ymd ON coach_sessions(linked_ymd);
+
+CREATE TABLE IF NOT EXISTS coach_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  token_count INTEGER,
+  mode_at_turn TEXT NOT NULL DEFAULT 'plan'
+);
+CREATE INDEX IF NOT EXISTS idx_coach_messages_session ON coach_messages(session_id, created_at);
 `);
 
 // Add new columns to existing tasks table if missing (idempotent)
@@ -432,6 +497,58 @@ if (DEFAULT_ICS_URL) {
   const existing = db.select().from(settings).get();
   if (!existing) {
     db.insert(settings).values({ data: JSON.stringify(DEFAULT_SETTINGS) }).run();
+  }
+}
+
+// Backfill home_address / maps_provider on existing settings row (Feature 1).
+{
+  const cur = db.select().from(settings).get();
+  if (cur) {
+    try {
+      const parsed = JSON.parse(cur.data) as SettingsBlob;
+      let dirty = false;
+      if (!parsed.home_address) {
+        parsed.home_address = "Erskine St, North Melbourne VIC 3051";
+        dirty = true;
+      }
+      if (!parsed.maps_provider) {
+        parsed.maps_provider = "google";
+        dirty = true;
+      }
+      if (dirty) {
+        db.update(settings).set({ data: JSON.stringify(parsed) }).where(eq(settings.id, cur.id)).run();
+      }
+    } catch {
+      // settings row corrupt; ignore
+    }
+  }
+}
+
+// Feature 1 — seed travel_locations with the user's 4 default locations
+// if the table is empty. User can edit/delete via the Settings page CRUD UI.
+{
+  const count = (sqlite.prepare("SELECT COUNT(*) as c FROM travel_locations").get() as { c: number }).c;
+  if (count === 0) {
+    const now = Date.now();
+    const seedRows = [
+      { name: "Sandringham", keywords: "sandy,sandringham,sandringham hospital,sand hospital", nominalMinutes: 45, allowMinutes: 60, destinationAddress: "Sandringham Hospital, 193 Bluff Rd, Sandringham VIC 3191" },
+      { name: "Peninsula", keywords: "peninsula,frankston,peninsula health", nominalMinutes: 60, allowMinutes: 90, destinationAddress: "Frankston Hospital, 2 Hastings Rd, Frankston VIC 3199" },
+      { name: "Elgin Braybrook", keywords: "elgin braybrook,braybrook", nominalMinutes: 20, allowMinutes: 30, destinationAddress: "Elgin House Braybrook, Braybrook VIC" },
+      { name: "Elgin Carlton", keywords: "elgin carlton,carlton,elgin house", nominalMinutes: 15, allowMinutes: 30, destinationAddress: "Elgin House Carlton, Carlton VIC" },
+    ];
+    for (const r of seedRows) {
+      db.insert(travelLocations).values({
+        name: r.name,
+        keywords: r.keywords,
+        nominalMinutes: r.nominalMinutes,
+        allowMinutes: r.allowMinutes,
+        destinationAddress: r.destinationAddress,
+        notes: null,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+    }
+    console.log(`[storage] seeded ${seedRows.length} default travel_locations`);
   }
 }
 
@@ -1094,6 +1211,121 @@ export class Storage {
   }
   deleteIssue(id: number) {
     db.delete(issues).where(eq(issues.id, id)).run();
+  }
+
+  // ----- Travel locations (Feature 1) -----
+  listTravelLocations(): TravelLocation[] {
+    return db.select().from(travelLocations).orderBy(travelLocations.name).all();
+  }
+  getTravelLocation(id: number): TravelLocation | undefined {
+    return db.select().from(travelLocations).where(eq(travelLocations.id, id)).get();
+  }
+  createTravelLocation(input: Omit<InsertTravelLocation, "createdAt" | "updatedAt">): TravelLocation {
+    const now = Date.now();
+    return db
+      .insert(travelLocations)
+      .values({ ...input, createdAt: now, updatedAt: now })
+      .returning()
+      .get();
+  }
+  updateTravelLocation(id: number, patch: Partial<InsertTravelLocation>): TravelLocation | undefined {
+    db.update(travelLocations)
+      .set({ ...patch, updatedAt: Date.now() })
+      .where(eq(travelLocations.id, id))
+      .run();
+    return this.getTravelLocation(id);
+  }
+  deleteTravelLocation(id: number) {
+    db.delete(travelLocations).where(eq(travelLocations.id, id)).run();
+  }
+
+  // ----- Travel overrides (per-event, keyed on UID) -----
+  getTravelOverride(uid: string): TravelOverride | undefined {
+    return db.select().from(travelOverrides).where(eq(travelOverrides.eventUid, uid)).get();
+  }
+  upsertTravelOverride(
+    uid: string,
+    patch: Partial<Pick<TravelOverride, "nominalMinutesOverride" | "allowMinutesOverride" | "locationIdOverride">>,
+  ): TravelOverride {
+    const existing = this.getTravelOverride(uid);
+    if (existing) {
+      db.update(travelOverrides)
+        .set({ ...patch, updatedAt: Date.now() })
+        .where(eq(travelOverrides.eventUid, uid))
+        .run();
+      return this.getTravelOverride(uid)!;
+    }
+    return db
+      .insert(travelOverrides)
+      .values({
+        eventUid: uid,
+        nominalMinutesOverride: patch.nominalMinutesOverride ?? null,
+        allowMinutesOverride: patch.allowMinutesOverride ?? null,
+        locationIdOverride: patch.locationIdOverride ?? null,
+        updatedAt: Date.now(),
+      })
+      .returning()
+      .get();
+  }
+  deleteTravelOverride(uid: string) {
+    db.delete(travelOverrides).where(eq(travelOverrides.eventUid, uid)).run();
+  }
+
+  // ----- Coach sessions (Feature 5) -----
+  createCoachSession(input: Omit<InsertCoachSession, "startedAt">): CoachSession {
+    return db
+      .insert(coachSessions)
+      .values({ ...input, startedAt: Date.now() })
+      .returning()
+      .get();
+  }
+  getCoachSession(id: number): CoachSession | undefined {
+    return db.select().from(coachSessions).where(eq(coachSessions.id, id)).get();
+  }
+  listCoachSessions(limit = 25): CoachSession[] {
+    return db.select().from(coachSessions).orderBy(desc(coachSessions.startedAt)).limit(limit).all();
+  }
+  /** Latest N sessions that have a non-null summary, newest first. Used to feed prior context. */
+  listRecentCoachSessionSummaries(limit = 3): CoachSession[] {
+    return db
+      .select()
+      .from(coachSessions)
+      .where(sql`${coachSessions.summary} IS NOT NULL`)
+      .orderBy(desc(coachSessions.startedAt))
+      .limit(limit)
+      .all();
+  }
+  updateCoachSession(id: number, patch: Partial<CoachSession>): CoachSession | undefined {
+    db.update(coachSessions).set(patch).where(eq(coachSessions.id, id)).run();
+    return this.getCoachSession(id);
+  }
+  deleteCoachSession(id: number) {
+    // Hard delete + cascade messages.
+    db.delete(coachMessages).where(eq(coachMessages.sessionId, id)).run();
+    db.delete(coachSessions).where(eq(coachSessions.id, id)).run();
+  }
+
+  // ----- Coach messages -----
+  appendCoachMessage(input: Omit<InsertCoachMessage, "createdAt">): CoachMessage {
+    return db
+      .insert(coachMessages)
+      .values({ ...input, createdAt: Date.now() })
+      .returning()
+      .get();
+  }
+  listCoachMessages(sessionId: number): CoachMessage[] {
+    return db
+      .select()
+      .from(coachMessages)
+      .where(eq(coachMessages.sessionId, sessionId))
+      .orderBy(coachMessages.createdAt)
+      .all();
+  }
+  countCoachMessages(sessionId: number): number {
+    const row = sqlite
+      .prepare("SELECT COUNT(*) as c FROM coach_messages WHERE session_id = ?")
+      .get(sessionId) as { c: number };
+    return row.c;
   }
 }
 

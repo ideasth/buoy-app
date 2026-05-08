@@ -23,6 +23,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { fmtTime as fmtTimeShared, todayDateStr } from "@/lib/anchor";
+import { TravelBadge } from "@/components/TravelBadge";
+import type { TravelTodayItem } from "@/lib/travel";
+import { leaveByLabel } from "@/lib/travel";
+
+// Shared travel-today hook used by TodaySection and DayDrawer.
+function useTravelTodayMap(enabled: boolean = true) {
+  const q = useQuery<{ items: TravelTodayItem[] }>({
+    queryKey: ["/api/travel/today"],
+    refetchInterval: 60_000,
+    enabled,
+  });
+  return useMemo(() => {
+    const m = new Map<string, TravelTodayItem>();
+    for (const it of q.data?.items ?? []) m.set(it.event.uid, it);
+    return m;
+  }, [q.data]);
+}
 
 interface CalEvent {
   uid: string;
@@ -533,6 +550,7 @@ function TodaySection({
   loading: boolean;
   onPickDay: (date: string) => void;
 }) {
+  const travelByUid = useTravelTodayMap(true);
   const grouped = useMemo(() => {
     const out = new Map<string, CalEvent[]>();
     for (const e of events) {
@@ -604,6 +622,16 @@ function TodaySection({
                         {e.location && (
                           <div className="text-xs text-muted-foreground truncate">{e.location}</div>
                         )}
+                        {(() => {
+                          const tr = isToday ? travelByUid.get(e.uid) : undefined;
+                          if (!tr) return null;
+                          const lb = tr.allowMinutes != null ? leaveByLabel(e.start, tr.allowMinutes) : null;
+                          return (
+                            <div className="mt-1.5">
+                              <TravelBadge travel={tr} showLeaveBy={lb} />
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   );
@@ -923,6 +951,8 @@ function DayDrawer({
   existingNote: string;
   onClose: () => void;
 }) {
+  const isTodayDrawer = date === todayDateStr();
+  const travelByUid = useTravelTodayMap(isTodayDrawer);
   const [note, setNote] = useState(existingNote);
   const queryClient = useQueryClient();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1007,6 +1037,16 @@ function DayDrawer({
                             {e.location}
                           </div>
                         )}
+                        {(() => {
+                          const tr = isTodayDrawer ? travelByUid.get(e.uid) : undefined;
+                          if (!tr) return null;
+                          const lb = tr.allowMinutes != null ? leaveByLabel(e.start, tr.allowMinutes) : null;
+                          return (
+                            <div className="mt-1.5">
+                              <TravelBadge travel={tr} showLeaveBy={lb} />
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}

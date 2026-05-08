@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { domainLabel } from "@/lib/anchor";
+import { Plus, Trash2, MapPin } from "lucide-react";
 
 interface SettingsView {
   adhd_tax_coefficient: number;
@@ -15,6 +16,20 @@ interface SettingsView {
   theme: string;
   habits_seeded: boolean;
   calendar_ics_url_masked: string;
+  home_address?: string;
+  maps_provider?: string;
+}
+
+interface TravelLocation {
+  id: number;
+  name: string;
+  keywords: string;
+  nominalMinutes: number;
+  allowMinutes: number;
+  destinationAddress: string | null;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export default function SettingsPage() {
@@ -24,11 +39,13 @@ export default function SettingsPage() {
   const [coef, setCoef] = useState("");
   const [briefingTime, setBriefingTime] = useState("");
   const [icsUrl, setIcsUrl] = useState("");
+  const [homeAddress, setHomeAddress] = useState("");
 
   useEffect(() => {
     if (q.data) {
       setCoef(String(q.data.adhd_tax_coefficient));
       setBriefingTime(q.data.briefing_time);
+      setHomeAddress(q.data.home_address ?? "");
     }
   }, [q.data]);
 
@@ -36,11 +53,13 @@ export default function SettingsPage() {
     const patch: any = {
       adhd_tax_coefficient: Number(coef) || 1.5,
       briefing_time: briefingTime,
+      home_address: homeAddress.trim(),
     };
     if (icsUrl.trim()) patch.calendar_ics_url = icsUrl.trim();
     await apiRequest("PATCH", "/api/settings", patch);
     queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
     queryClient.invalidateQueries({ queryKey: ["/api/today-events"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/travel/today"] });
     setIcsUrl("");
     toast({ title: "Settings saved" });
   };
@@ -116,9 +135,28 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      <section className="space-y-3 rounded-lg border bg-card p-5">
+        <h2 className="text-sm font-semibold">Travel · home base</h2>
+        <div className="space-y-1.5">
+          <Label htmlFor="home-address">Home address (origin for Maps directions)</Label>
+          <Input
+            id="home-address"
+            value={homeAddress}
+            onChange={(e) => setHomeAddress(e.target.value)}
+            placeholder="Erskine St, North Melbourne VIC 3051"
+            data-testid="input-home-address"
+          />
+          <div className="text-xs text-muted-foreground">
+            Used as the origin when opening Google Maps from a calendar event.
+          </div>
+        </div>
+      </section>
+
       <Button onClick={save} data-testid="button-save-settings">
         Save settings
       </Button>
+
+      <TravelLocationsSection />
 
       <SecuritySection />
 
@@ -297,6 +335,280 @@ function SecuritySection() {
         </Button>
       </form>
     </section>
+  );
+}
+
+// ---- Travel locations CRUD --------------------------------------------------
+
+function TravelLocationsSection() {
+  const { toast } = useToast();
+  const q = useQuery<TravelLocation[]>({ queryKey: ["/api/travel-locations"] });
+  const locations = q.data ?? [];
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<{
+    name: string;
+    keywords: string;
+    nominalMinutes: string;
+    allowMinutes: string;
+    destinationAddress: string;
+    notes: string;
+  }>({ name: "", keywords: "", nominalMinutes: "", allowMinutes: "", destinationAddress: "", notes: "" });
+
+  const startAdd = () => {
+    setEditingId(null);
+    setAdding(true);
+    setDraft({ name: "", keywords: "", nominalMinutes: "30", allowMinutes: "45", destinationAddress: "", notes: "" });
+  };
+  const startEdit = (loc: TravelLocation) => {
+    setAdding(false);
+    setEditingId(loc.id);
+    setDraft({
+      name: loc.name,
+      keywords: loc.keywords,
+      nominalMinutes: String(loc.nominalMinutes),
+      allowMinutes: String(loc.allowMinutes),
+      destinationAddress: loc.destinationAddress ?? "",
+      notes: loc.notes ?? "",
+    });
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setAdding(false);
+  };
+
+  const validateDraft = (): { ok: true; payload: any } | { ok: false; reason: string } => {
+    const name = draft.name.trim();
+    const keywords = draft.keywords.trim();
+    const nominal = Number(draft.nominalMinutes);
+    const allow = Number(draft.allowMinutes);
+    if (!name) return { ok: false, reason: "Name is required." };
+    if (!keywords) return { ok: false, reason: "At least one keyword is required." };
+    if (!Number.isFinite(nominal) || nominal < 0 || nominal > 600)
+      return { ok: false, reason: "Nominal minutes must be 0\u2013600." };
+    if (!Number.isFinite(allow) || allow < 0 || allow > 600)
+      return { ok: false, reason: "Allow minutes must be 0\u2013600." };
+    return {
+      ok: true,
+      payload: {
+        name,
+        keywords,
+        nominalMinutes: nominal,
+        allowMinutes: allow,
+        destinationAddress: draft.destinationAddress.trim() || null,
+        notes: draft.notes.trim() || null,
+      },
+    };
+  };
+
+  const submit = async () => {
+    const v = validateDraft();
+    if (!v.ok) {
+      toast({ title: "Cannot save", description: v.reason, variant: "destructive" });
+      return;
+    }
+    try {
+      if (editingId != null) {
+        await apiRequest("PATCH", `/api/travel-locations/${editingId}`, v.payload);
+      } else {
+        await apiRequest("POST", "/api/travel-locations", v.payload);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/travel-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/travel/today"] });
+      setEditingId(null);
+      setAdding(false);
+      toast({ title: editingId ? "Location updated" : "Location added" });
+    } catch (err) {
+      toast({ title: "Save failed", description: String(err), variant: "destructive" });
+    }
+  };
+
+  const remove = async (loc: TravelLocation) => {
+    if (!window.confirm(`Delete travel location "${loc.name}"?`)) return;
+    try {
+      await apiRequest("DELETE", `/api/travel-locations/${loc.id}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/travel-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/travel/today"] });
+      toast({ title: "Location deleted" });
+    } catch (err) {
+      toast({ title: "Delete failed", description: String(err), variant: "destructive" });
+    }
+  };
+
+  return (
+    <section className="space-y-3 rounded-lg border bg-card p-5" data-testid="section-travel-locations">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5" />
+            Travel locations
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Calendar events whose summary or location contains any keyword inherit the location's drive
+            time. On ties, the longest matched keyword wins.
+          </p>
+        </div>
+        {!adding && editingId == null && (
+          <Button size="sm" variant="outline" onClick={startAdd} data-testid="button-add-travel-location">
+            <Plus className="h-3 w-3 mr-1" />
+            Add
+          </Button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {locations.length === 0 && !q.isLoading && !adding && (
+          <div className="text-sm text-muted-foreground italic">No travel locations yet.</div>
+        )}
+        {locations.map((loc) => (
+          <div key={loc.id} className="rounded-md border bg-background p-3" data-testid={`row-travel-${loc.id}`}>
+            {editingId === loc.id ? (
+              <TravelLocationForm draft={draft} setDraft={setDraft} onSave={submit} onCancel={cancelEdit} />
+            ) : (
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="font-medium">{loc.name}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      drive ~{loc.nominalMinutes}m · allow {loc.allowMinutes}m
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                    Keywords: {loc.keywords}
+                  </div>
+                  {loc.destinationAddress && (
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                      → {loc.destinationAddress}
+                    </div>
+                  )}
+                  {loc.notes && (
+                    <div className="text-xs text-muted-foreground/80 mt-0.5 truncate">{loc.notes}</div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => startEdit(loc)}
+                    data-testid={`button-edit-travel-${loc.id}`}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => remove(loc)}
+                    className="text-destructive"
+                    data-testid={`button-delete-travel-${loc.id}`}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {adding && (
+          <div className="rounded-md border bg-background p-3">
+            <TravelLocationForm draft={draft} setDraft={setDraft} onSave={submit} onCancel={cancelEdit} />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TravelLocationForm({
+  draft,
+  setDraft,
+  onSave,
+  onCancel,
+}: {
+  draft: {
+    name: string;
+    keywords: string;
+    nominalMinutes: string;
+    allowMinutes: string;
+    destinationAddress: string;
+    notes: string;
+  };
+  setDraft: (d: any) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Name</Label>
+          <Input
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            placeholder="Sandringham"
+            data-testid="input-travel-name"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Keywords (comma-separated)</Label>
+          <Input
+            value={draft.keywords}
+            onChange={(e) => setDraft({ ...draft, keywords: e.target.value })}
+            placeholder="sandringham, sandi"
+            data-testid="input-travel-keywords"
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Nominal minutes (drive)</Label>
+          <Input
+            type="number"
+            min="0"
+            max="600"
+            value={draft.nominalMinutes}
+            onChange={(e) => setDraft({ ...draft, nominalMinutes: e.target.value })}
+            data-testid="input-travel-nominal"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Allow minutes (with buffer)</Label>
+          <Input
+            type="number"
+            min="0"
+            max="600"
+            value={draft.allowMinutes}
+            onChange={(e) => setDraft({ ...draft, allowMinutes: e.target.value })}
+            data-testid="input-travel-allow"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Destination address (optional, for Maps)</Label>
+        <Input
+          value={draft.destinationAddress}
+          onChange={(e) => setDraft({ ...draft, destinationAddress: e.target.value })}
+          placeholder="193 Bluff Rd, Sandringham VIC 3191"
+          data-testid="input-travel-destination"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Notes (optional)</Label>
+        <Input
+          value={draft.notes}
+          onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+          data-testid="input-travel-notes"
+        />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button size="sm" onClick={onSave} data-testid="button-save-travel">
+          Save
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} data-testid="button-cancel-travel">
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

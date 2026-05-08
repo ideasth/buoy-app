@@ -14,6 +14,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DailyFactorsCard } from "@/components/DailyFactorsCard";
 import { IssueList } from "@/components/IssueList";
+import { TravelBadge } from "@/components/TravelBadge";
+import type { TravelTodayItem } from "@/lib/travel";
+import { leaveByLabel } from "@/lib/travel";
 
 interface CalEvent {
   uid: string;
@@ -53,6 +56,15 @@ export default function Today() {
       refetchInterval: 60_000,
     },
   );
+  const travelTodayQ = useQuery<{ items: TravelTodayItem[] }>({
+    queryKey: ["/api/travel/today"],
+    refetchInterval: 60_000,
+  });
+  const travelByUid = useMemo(() => {
+    const m = new Map<string, TravelTodayItem>();
+    for (const it of travelTodayQ.data?.items ?? []) m.set(it.event.uid, it);
+    return m;
+  }, [travelTodayQ.data]);
 
   // Carry-over from yesterday
   const yesterday = todayDateStr(new Date(Date.now() - 24 * 3600 * 1000));
@@ -150,6 +162,10 @@ export default function Today() {
     (e) => !e.allDay && new Date(e.start) <= now && new Date(e.end) > now,
   );
   const allDay = (eventsQ.data?.events ?? []).filter((e) => e.allDay);
+  const timedToday = (eventsQ.data?.events ?? [])
+    .filter((e) => !e.allDay)
+    .sort((a, b) => +new Date(a.start) - +new Date(b.start));
+  const upcomingTimed = timedToday.filter((e) => new Date(e.end) > now);
 
   return (
     <div className="px-5 md:px-8 py-6 md:py-10 space-y-8">
@@ -192,11 +208,50 @@ export default function Today() {
           <div className="font-medium" data-testid="text-now-event">
             {happeningNow.summary}
           </div>
-          <div className="text-xs text-muted-foreground mt-1">
-            {fmtTime(happeningNow.start)}–{fmtTime(happeningNow.end)}
-            {happeningNow.location ? ` · ${happeningNow.location}` : ""}
+          <div className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+            <span>
+              {fmtTime(happeningNow.start)}–{fmtTime(happeningNow.end)}
+              {happeningNow.location ? ` · ${happeningNow.location}` : ""}
+            </span>
+            <TravelBadge travel={travelByUid.get(happeningNow.uid) ?? null} />
           </div>
         </div>
+      )}
+
+      {/* Today's calendar (timed events) */}
+      {upcomingTimed.length > 0 && (
+        <section data-testid="section-today-calendar">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-muted-foreground">Today's calendar</h2>
+            <Link href="/calendar">
+              <span className="text-xs text-primary hover:underline">Open Calendar</span>
+            </Link>
+          </div>
+          <div className="rounded-lg border border-card-border bg-card divide-y divide-border/60">
+            {upcomingTimed.slice(0, 8).map((e) => {
+              const tr = travelByUid.get(e.uid);
+              const lb = tr?.allowMinutes != null ? leaveByLabel(e.start, tr.allowMinutes) : null;
+              return (
+                <div
+                  key={e.uid}
+                  className="px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
+                  data-testid={`today-event-${e.uid}`}
+                >
+                  <div className="text-xs tabular-nums text-muted-foreground w-24 shrink-0">
+                    {fmtTime(e.start)}–{fmtTime(e.end)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{e.summary}</div>
+                    {e.location && (
+                      <div className="text-xs text-muted-foreground truncate">{e.location}</div>
+                    )}
+                  </div>
+                  <TravelBadge travel={tr ?? null} showLeaveBy={lb} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {/* All-day banners */}

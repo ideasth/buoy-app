@@ -11,6 +11,7 @@ import {
 } from "@shared/schema";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { computeAvailableHoursThisWeek } from "./available-hours";
+import { resolveTravel } from "./travel";
 import { buildPlannerXlsx } from "./planner";
 import {
   inferDomain,
@@ -249,6 +250,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "aupfhs_ics_url",
       "timezone",
       "theme",
+      "home_address",
+      "maps_provider",
     ];
     for (const f of fields) if (f in req.body) allowed[f] = req.body[f];
     const merged = storage.updateSettings(allowed);
@@ -290,6 +293,126 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       })
       .sort((a, b) => +new Date(a.start) - +new Date(b.start));
     res.json({ events: filtered });
+  });
+
+  // ---- Feature 1 — Travel locations + per-event travel resolution ----
+
+  app.get("/api/travel-locations", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json({ locations: storage.listTravelLocations() });
+  });
+
+  app.post("/api/travel-locations", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const { name, keywords, nominalMinutes, allowMinutes, destinationAddress, notes } = req.body ?? {};
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return res.status(400).json({ error: "name required" });
+    }
+    if (!Number.isFinite(nominalMinutes) || !Number.isFinite(allowMinutes)) {
+      return res.status(400).json({ error: "nominalMinutes and allowMinutes required (integers)" });
+    }
+    if (nominalMinutes < 0 || nominalMinutes > 600 || allowMinutes < 0 || allowMinutes > 600) {
+      return res.status(400).json({ error: "minutes out of range (0–600)" });
+    }
+    const created = storage.createTravelLocation({
+      name: name.trim(),
+      keywords: typeof keywords === "string" ? keywords : "",
+      nominalMinutes,
+      allowMinutes,
+      destinationAddress: typeof destinationAddress === "string" ? destinationAddress : null,
+      notes: typeof notes === "string" ? notes : null,
+    });
+    res.json(created);
+  });
+
+  app.patch("/api/travel-locations/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid id" });
+    const allowed = ["name", "keywords", "nominalMinutes", "allowMinutes", "destinationAddress", "notes"];
+    const updates: any = {};
+    for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+    if ("nominalMinutes" in updates) {
+      if (!Number.isFinite(updates.nominalMinutes) || updates.nominalMinutes < 0 || updates.nominalMinutes > 600) {
+        return res.status(400).json({ error: "nominalMinutes out of range" });
+      }
+    }
+    if ("allowMinutes" in updates) {
+      if (!Number.isFinite(updates.allowMinutes) || updates.allowMinutes < 0 || updates.allowMinutes > 600) {
+        return res.status(400).json({ error: "allowMinutes out of range" });
+      }
+    }
+    const updated = storage.updateTravelLocation(id, updates);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/travel-locations/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid id" });
+    storage.deleteTravelLocation(id);
+    res.json({ ok: true });
+  });
+
+  // GET /api/travel/lookup?uid=<encoded>
+  // Returns a TravelMatch for the given event uid, by re-fetching the merged
+  // ICS calendar and running the matcher. UID is a query-param so it survives
+  // arbitrary characters (slashes, equals signs in Outlook UIDs).
+  app.get("/api/travel/lookup", async (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const uid = (req.query.uid as string) ?? "";
+    if (!uid) return res.status(400).json({ error: "uid required" });
+    const events = await getMergedPlannerEvents();
+    const event = events.find((e) => e.uid === uid);
+    if (!event) return res.status(404).json({ error: "event not found" });
+    const locations = storage.listTravelLocations();
+    const override = storage.getTravelOverride(uid) ?? null;
+    const homeAddress = storage.getSettings().home_address ?? null;
+    const match = resolveTravel({ event, locations, override, homeAddress });
+    res.json({ event: { uid: event.uid, summary: event.summary, start: event.start, end: event.end, location: event.location }, ...match });
+  });
+
+  // GET /api/travel/today — returns travel info for every event today (Melbourne).
+  // Convenience aggregator for the Today page and Morning briefing so the
+  // client makes ONE call instead of N.
+  app.get("/api/travel/today", async (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const events = await getMergedPlannerEvents();
+    const todayEvents = eventsForDate(events, new Date());
+    const locations = storage.listTravelLocations();
+    const homeAddress = storage.getSettings().home_address ?? null;
+    const items = todayEvents.map((event) => {
+      const override = storage.getTravelOverride(event.uid) ?? null;
+      const match = resolveTravel({ event, locations, override, homeAddress });
+      return {
+        event: { uid: event.uid, summary: event.summary, start: event.start, end: event.end, location: event.location, allDay: event.allDay },
+        ...match,
+      };
+    });
+    res.json({ items });
+  });
+
+  // PUT /api/travel/override?uid=<encoded>  body: { nominalMinutesOverride?, allowMinutesOverride?, locationIdOverride? }
+  // Upserts an override row. Pass null on a field to clear it.
+  app.put("/api/travel/override", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const uid = (req.query.uid as string) ?? "";
+    if (!uid) return res.status(400).json({ error: "uid required" });
+    const patch: any = {};
+    if ("nominalMinutesOverride" in req.body) patch.nominalMinutesOverride = req.body.nominalMinutesOverride;
+    if ("allowMinutesOverride" in req.body) patch.allowMinutesOverride = req.body.allowMinutesOverride;
+    if ("locationIdOverride" in req.body) patch.locationIdOverride = req.body.locationIdOverride;
+    const row = storage.upsertTravelOverride(uid, patch);
+    res.json(row);
+  });
+
+  app.delete("/api/travel/override", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const uid = (req.query.uid as string) ?? "";
+    if (!uid) return res.status(400).json({ error: "uid required" });
+    storage.deleteTravelOverride(uid);
+    res.json({ ok: true });
   });
 
   // Available hours this week (Mon-Sun, Australia/Melbourne). Surfaces on

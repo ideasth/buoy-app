@@ -20,11 +20,14 @@ import { AvailableHoursCard } from "@/components/AvailableHoursCard";
 import { DailyFactorsCard } from "@/components/DailyFactorsCard";
 import { IssueQuickAdd } from "@/components/IssueQuickAdd";
 import { IssueList } from "@/components/IssueList";
-import { todayDateStr } from "@/lib/anchor";
+import { todayDateStr, fmtTime } from "@/lib/anchor";
 import type { MorningRoutine, Task } from "@shared/schema";
 import { domainLabel, DOMAIN_OPTIONS, ESTIMATE_PRESETS } from "@/lib/anchor";
 import { cn } from "@/lib/utils";
 import { formatAUDPerHour } from "@/lib/projectValues";
+import { TravelBadge } from "@/components/TravelBadge";
+import type { TravelTodayItem } from "@/lib/travel";
+import { leaveByLabel } from "@/lib/travel";
 
 type TopPayingTodayResponse = {
   project: { id: number; name: string; currentIncomePerHour: number } | null;
@@ -58,6 +61,17 @@ export default function Morning() {
     queryKey: ["/api/projects/top-paying-today"],
     staleTime: 5 * 60_000,
   });
+  const travelTodayQ = useQuery<{ items: TravelTodayItem[] }>({
+    queryKey: ["/api/travel/today"],
+    refetchInterval: 60_000,
+  });
+  const timedTravelItems = useMemo(
+    () =>
+      (travelTodayQ.data?.items ?? [])
+        .filter((it) => !it.event.allDay)
+        .sort((a, b) => +new Date(a.event.start) - +new Date(b.event.start)),
+    [travelTodayQ.data],
+  );
 
   const morning = morningQ.data;
 
@@ -306,6 +320,44 @@ export default function Morning() {
           ))}
         </div>
       </div>
+
+      {/* Today's events with Leave-by (Feature 1) */}
+      {timedTravelItems.length > 0 && (
+        <div className="mb-6 rounded-lg border border-card-border bg-card" data-testid="morning-todays-events">
+          <div className="px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground border-b border-border/60">
+            Today's events
+          </div>
+          <div className="divide-y divide-border/60">
+            {timedTravelItems.map((it) => {
+              const lb = it.allowMinutes != null ? leaveByLabel(it.event.start, it.allowMinutes) : null;
+              return (
+                <div
+                  key={it.event.uid}
+                  className="px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
+                  data-testid={`morning-event-${it.event.uid}`}
+                >
+                  <div className="text-xs tabular-nums text-muted-foreground w-24 shrink-0">
+                    {fmtTime(it.event.start)}–{fmtTime(it.event.end)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{it.event.summary}</div>
+                    {it.event.location && (
+                      <div className="text-xs text-muted-foreground truncate">{it.event.location}</div>
+                    )}
+                    {lb && (
+                      <div className="text-xs mt-0.5">
+                        <span className="text-muted-foreground">Leave by </span>
+                        <span className="text-foreground font-medium tabular-nums">{lb}</span>
+                      </div>
+                    )}
+                  </div>
+                  <TravelBadge travel={it} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Top-paying project today (Feature 2) */}
       {topPayingQ.data?.project && (

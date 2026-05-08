@@ -270,7 +270,41 @@ export interface SettingsBlob {
   theme: "light" | "dark" | "system";
   habits_seeded: boolean;
   passphrase_hash: string | null;
+  // Feature 1 — travel time defaults
+  home_address?: string; // free text, fed into Google Maps origin
+  maps_provider?: "google"; // reserved for future Apple Maps support
 }
+
+// Feature 1 — Travel locations (static lookup table)
+// Matched against event title/location/description by keyword substring.
+export const travelLocations = sqliteTable("travel_locations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  // Comma-separated, lowercase. Matched as case-insensitive substrings.
+  keywords: text("keywords").notNull().default(""),
+  nominalMinutes: integer("nominal_minutes").notNull(), // typical drive time
+  allowMinutes: integer("allow_minutes").notNull(), // recommended buffer
+  destinationAddress: text("destination_address"), // optional, fed to Maps
+  notes: text("notes"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TravelLocation = typeof travelLocations.$inferSelect;
+export type InsertTravelLocation = typeof travelLocations.$inferInsert;
+
+// Per-event override on top of the matched location. Keyed on event UID
+// because events come from ICS feeds (not stored in our DB).
+export const travelOverrides = sqliteTable("travel_overrides", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  eventUid: text("event_uid").notNull().unique(),
+  nominalMinutesOverride: integer("nominal_minutes_override"),
+  allowMinutesOverride: integer("allow_minutes_override"),
+  // Optional manual location pin (e.g. when the keyword match is wrong).
+  locationIdOverride: integer("location_id_override"),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TravelOverride = typeof travelOverrides.$inferSelect;
+export type InsertTravelOverride = typeof travelOverrides.$inferInsert;
 
 // Planner notes (free-form per-day notes for the /planner page)
 export const plannerNotes = sqliteTable("planner_notes", {
@@ -381,3 +415,43 @@ export const projectTasks = sqliteTable("project_tasks", {
 });
 export type ProjectTask = typeof projectTasks.$inferSelect;
 export type InsertProjectTask = typeof projectTasks.$inferInsert;
+
+// Feature 5 — Life Coach: persistent + auto-summarised conversational sessions.
+// Two modes (plan / reflect) toggleable mid-session. Full transcripts stored;
+// only structured summaries replay back into model context on later sessions.
+export const coachSessions = sqliteTable("coach_sessions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at"),
+  // Last-active mode. Switches mid-session are allowed; this stores the most
+  // recent value at session-end time.
+  mode: text("mode").notNull().default("plan"), // 'plan' | 'reflect'
+  // JSON snapshot of the context bundle loaded at session start. Stored for
+  // auditability — lets the user see exactly what the coach saw.
+  contextSnapshot: text("context_snapshot").notNull().default("{}"),
+  // JSON of the structured summary: { discussed, decisions, commitments, open_threads }
+  summary: text("summary"),
+  summaryEditedByUser: integer("summary_edited_by_user").notNull().default(0),
+  // Set when reflect mode picks an issue to focus on.
+  linkedIssueId: integer("linked_issue_id"),
+  // Date this session belongs to (Australia/Melbourne local), YYYY-MM-DD.
+  linkedYmd: text("linked_ymd"),
+  modelProvider: text("model_provider").notNull().default("perplexity"),
+  modelName: text("model_name").notNull().default("sonar-pro"),
+  totalInputTokens: integer("total_input_tokens").notNull().default(0),
+  totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+});
+export type CoachSession = typeof coachSessions.$inferSelect;
+export type InsertCoachSession = typeof coachSessions.$inferInsert;
+
+export const coachMessages = sqliteTable("coach_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sessionId: integer("session_id").notNull(),
+  role: text("role").notNull(), // 'user' | 'assistant' | 'system'
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+  tokenCount: integer("token_count"),
+  modeAtTurn: text("mode_at_turn").notNull().default("plan"),
+});
+export type CoachMessage = typeof coachMessages.$inferSelect;
+export type InsertCoachMessage = typeof coachMessages.$inferInsert;
