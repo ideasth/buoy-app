@@ -4,6 +4,29 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (17:13 AEST) — Feature 3 LIVE — publish unblocked
+
+**Deploy succeeded**
+- `publish_website` returned `{status: "published", site_id: 77eb73a0-..., url: https://anchor-jod.pplx.app}` on the first try this thread (no error this time — the gating that blocked the previous three threads has cleared).
+- Live frontend now serves `index-lCIIXRfQ.js` + `index-CwN8LvOx.css` (matches the freshly built bundle). Server bundle `dist/index.cjs` is 1022.2kb.
+- Followed standing rule: skipped the security review.
+
+**Smoke test — `GET /api/available-hours/this-week`**
+HTTP 200, sensible numbers for Mon 2026-05-04 to Sun 2026-05-10 (week 2026-W19):
+- `totalWakingMinutes`: 6720 (= 7 d × 16 h × 60, sleep 23:00–07:00 carved out correctly)
+- `sleepMinutes`: 3360, `paidWorkMinutes`: 1115, `familyMinutes`: 1740, `otherCommittedMinutes`: 990
+- `freeMinutes`: 2875
+- `deepWorkBlocks`: 19 entries, all ≥30 min during waking hours
+
+No unexpected output. Diagnostic ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac` can be closed (or at least noted as resolved — the publish path is working again).
+
+**Follow-ups (do NOT start in the deploy thread without explicit approval)**
+- `FEATURES_TODO.md` has next-up specs: Feature 1 (travel time, STATIC) and Feature 2 (project values).
+- Pre-existing TS errors flagged in the previous entry (`CalendarPlanner.tsx` 705/707, `routes.ts` 935/960) remain — still safe to ignore, build still works.
+- Deferred bake-time fix for `AUPFHS_ICS_URL` / `ANCHOR_ICS_URL` (see 2026-05-08 16:20 entry) still not folded in.
+
+---
+
 ## 2026-05-08 (17:05 AEST) — Feature 3 (available hours this week) — source merged, deploy STILL gated
 
 **What changed (source only — NOT live yet)**
