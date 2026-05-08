@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Sunrise, Trash2, Check, X } from "lucide-react";
+import { Sunrise, Trash2, Check, X, DollarSign } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/Logo";
 import { AvailableHoursCard } from "@/components/AvailableHoursCard";
@@ -24,6 +24,12 @@ import { todayDateStr } from "@/lib/anchor";
 import type { MorningRoutine, Task } from "@shared/schema";
 import { domainLabel, DOMAIN_OPTIONS, ESTIMATE_PRESETS } from "@/lib/anchor";
 import { cn } from "@/lib/utils";
+import { formatAUDPerHour } from "@/lib/projectValues";
+
+type TopPayingTodayResponse = {
+  project: { id: number; name: string; currentIncomePerHour: number } | null;
+  matchedEvent: { uid: string; summary: string | null; start: string; end: string } | null;
+};
 
 const STATE_OPTIONS = [
   { value: "calm", label: "Calm" },
@@ -48,6 +54,10 @@ export default function Morning() {
 
   const morningQ = useQuery<MorningRoutine>({ queryKey: ["/api/morning/today"] });
   const eligibleQ = useQuery<Task[]>({ queryKey: ["/api/morning/eligible-tasks"] });
+  const topPayingQ = useQuery<TopPayingTodayResponse>({
+    queryKey: ["/api/projects/top-paying-today"],
+    staleTime: 5 * 60_000,
+  });
 
   const morning = morningQ.data;
 
@@ -296,6 +306,26 @@ export default function Morning() {
           ))}
         </div>
       </div>
+
+      {/* Top-paying project today (Feature 2) */}
+      {topPayingQ.data?.project && (
+        <div
+          className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium"
+          data-testid="pill-top-paying-today"
+          title={
+            topPayingQ.data.matchedEvent?.summary
+              ? `Matched event: ${topPayingQ.data.matchedEvent.summary}`
+              : undefined
+          }
+        >
+          <DollarSign className="h-3.5 w-3.5 text-primary" />
+          <span className="text-muted-foreground">Top-paying today:</span>
+          <span className="text-foreground">{topPayingQ.data.project.name}</span>
+          <span className="text-primary tabular-nums">
+            {formatAUDPerHour(topPayingQ.data.project.currentIncomePerHour)}
+          </span>
+        </div>
+      )}
 
       {/* Section 1: Reflect */}
       <section className="space-y-5 mb-12" data-testid="section-reflect">

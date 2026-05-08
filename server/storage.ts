@@ -276,6 +276,12 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT NOT NULL DEFAULT '',
   current_phase_id INTEGER,
   next_action_task_id INTEGER,
+  -- Feature 2 — Project values
+  current_income_per_hour INTEGER,
+  future_income_estimate INTEGER,
+  is_primary_future_income INTEGER NOT NULL DEFAULT 0,
+  community_benefit INTEGER,
+  professional_kudos INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -356,6 +362,13 @@ CREATE INDEX IF NOT EXISTS idx_issues_category ON issues(category);
 for (const stmt of [
   "ALTER TABLE tasks ADD COLUMN from_braindump INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE tasks ADD COLUMN pending_action TEXT",
+  // Feature 2 — Project values. Nullable so existing rows get NULL; UI treats null as "not scored yet".
+  // is_primary_future_income gets NOT NULL DEFAULT 0 so existing rows are explicitly "not primary".
+  "ALTER TABLE projects ADD COLUMN current_income_per_hour INTEGER",
+  "ALTER TABLE projects ADD COLUMN future_income_estimate INTEGER",
+  "ALTER TABLE projects ADD COLUMN is_primary_future_income INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE projects ADD COLUMN community_benefit INTEGER",
+  "ALTER TABLE projects ADD COLUMN professional_kudos INTEGER",
 ]) {
   try {
     sqlite.exec(stmt);

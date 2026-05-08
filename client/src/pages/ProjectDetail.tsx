@@ -12,12 +12,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowLeft, Plus, Target, Trash2, Pencil, Check, X, Inbox,
+  ArrowLeft, Plus, Target, Trash2, Pencil, Check, X, Inbox, Star, DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatAUDPerHour, formatAUDAnnualised } from "@/lib/projectValues";
 
 type ProjectDetailResponse = {
   project: Project;
@@ -67,6 +71,12 @@ export default function ProjectDetail() {
   const [editTaskState, setEditTaskState] = useState<Record<number, { notes: string; deadline: string }>>({});
   const [descEditing, setDescEditing] = useState(false);
   const [descDraft, setDescDraft] = useState("");
+  // Feature 2 — values editor draft state (string so blank input is allowed mid-edit).
+  const [rateDraft, setRateDraft] = useState<string | null>(null);
+  const [futureDraft, setFutureDraft] = useState<string | null>(null);
+  // Slider draft state — local for smooth dragging, PATCH only fires on release.
+  const [benefitDraft, setBenefitDraft] = useState<number | null>(null);
+  const [kudosDraft, setKudosDraft] = useState<number | null>(null);
 
   if (!Number.isFinite(id)) return <div className="p-8">Invalid project</div>;
   if (q.isLoading) return <div className="p-8 text-muted-foreground">Loading…</div>;
@@ -318,6 +328,217 @@ export default function ProjectDetail() {
             ) : (
               <div className="text-sm text-muted-foreground italic">Pick a task below.</div>
             )}
+          </div>
+        </div>
+      </section>
+
+      {/* Feature 2 — Project values */}
+      <section
+        className="rounded-lg border border-border bg-card p-4 space-y-5"
+        data-testid="section-project-values"
+      >
+        <div className="flex items-baseline justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Project values</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Quantify what this project pays, what it might pay, and what it gives back.
+              Used by the morning briefing and (later) the coach page.
+            </p>
+          </div>
+          {project.isPrimaryFutureIncome === 1 && (
+            <Badge
+              className="text-[10px] py-0 h-5 gap-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40"
+              variant="outline"
+              data-testid="badge-primary-detail"
+            >
+              <Star className="h-3 w-3" />
+              Primary future income
+            </Badge>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Current income per hour */}
+          <div className="space-y-1.5">
+            <Label htmlFor={`rate-${project.id}`} className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+              <DollarSign className="h-3 w-3" />
+              Current income per hour (AUD)
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id={`rate-${project.id}`}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={100000}
+                step={10}
+                placeholder="0"
+                className="h-9 max-w-[180px]"
+                value={
+                  rateDraft != null
+                    ? rateDraft
+                    : project.currentIncomePerHour != null
+                    ? String(project.currentIncomePerHour)
+                    : ""
+                }
+                onChange={(e) => setRateDraft(e.target.value)}
+                onBlur={async () => {
+                  if (rateDraft == null) return;
+                  const trimmed = rateDraft.trim();
+                  const next: number | null = trimmed === "" ? null : Number(trimmed);
+                  if (next != null && (!Number.isFinite(next) || next < 0 || next > 100000)) {
+                    toast({ title: "Invalid rate", description: "Enter 0–100,000 or leave blank." });
+                    setRateDraft(null);
+                    return;
+                  }
+                  await patchProject({ currentIncomePerHour: next } as any);
+                  setRateDraft(null);
+                }}
+                data-testid="input-current-rate"
+              />
+              {project.currentIncomePerHour != null && (
+                <span className="text-sm text-muted-foreground">
+                  = {formatAUDPerHour(project.currentIncomePerHour)}
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-muted-foreground">0 if not income-generating. Leave blank to mark unscored.</div>
+          </div>
+
+          {/* Future income estimate */}
+          <div className="space-y-1.5">
+            <Label htmlFor={`future-${project.id}`} className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+              <DollarSign className="h-3 w-3" />
+              Future income estimate (AUD/yr)
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id={`future-${project.id}`}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={100000000}
+                step={1000}
+                placeholder="0"
+                className="h-9 max-w-[200px]"
+                value={
+                  futureDraft != null
+                    ? futureDraft
+                    : project.futureIncomeEstimate != null
+                    ? String(project.futureIncomeEstimate)
+                    : ""
+                }
+                onChange={(e) => setFutureDraft(e.target.value)}
+                onBlur={async () => {
+                  if (futureDraft == null) return;
+                  const trimmed = futureDraft.trim();
+                  const next: number | null = trimmed === "" ? null : Number(trimmed);
+                  if (next != null && (!Number.isFinite(next) || next < 0 || next > 100000000)) {
+                    toast({ title: "Invalid estimate", description: "Enter 0–100,000,000 or leave blank." });
+                    setFutureDraft(null);
+                    return;
+                  }
+                  await patchProject({ futureIncomeEstimate: next } as any);
+                  setFutureDraft(null);
+                }}
+                data-testid="input-future-estimate"
+              />
+              {project.futureIncomeEstimate != null && project.futureIncomeEstimate > 0 && (
+                <span className="text-sm text-muted-foreground">
+                  = {formatAUDAnnualised(project.futureIncomeEstimate)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Switch
+                id={`primary-${project.id}`}
+                checked={project.isPrimaryFutureIncome === 1}
+                onCheckedChange={(checked) =>
+                  patchProject({ isPrimaryFutureIncome: checked ? 1 : 0 } as any)
+                }
+                data-testid="switch-primary-future"
+              />
+              <Label
+                htmlFor={`primary-${project.id}`}
+                className="text-xs text-muted-foreground cursor-pointer"
+              >
+                Mark as primary future-income project (only one allowed)
+              </Label>
+            </div>
+          </div>
+
+          {/* Community benefit slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                Community benefit
+              </Label>
+              <span className="text-sm tabular-nums" data-testid="text-community-benefit">
+                {(() => {
+                  const live = benefitDraft ?? project.communityBenefit;
+                  if (live == null || live === 0) return "—";
+                  return `${live}/5`;
+                })()}
+              </span>
+            </div>
+            <Slider
+              value={[benefitDraft ?? project.communityBenefit ?? 0]}
+              min={0}
+              max={5}
+              step={1}
+              onValueChange={(v) => setBenefitDraft(v[0])}
+              onValueCommit={(v) => {
+                const score = v[0] === 0 ? null : v[0];
+                setBenefitDraft(null);
+                patchProject({ communityBenefit: score } as any);
+              }}
+              data-testid="slider-community-benefit"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>unscored</span>
+              <span>1</span>
+              <span>2</span>
+              <span>3</span>
+              <span>4</span>
+              <span>5</span>
+            </div>
+          </div>
+
+          {/* Professional kudos slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                Professional kudos
+              </Label>
+              <span className="text-sm tabular-nums" data-testid="text-professional-kudos">
+                {(() => {
+                  const live = kudosDraft ?? project.professionalKudos;
+                  if (live == null || live === 0) return "—";
+                  return `${live}/5`;
+                })()}
+              </span>
+            </div>
+            <Slider
+              value={[kudosDraft ?? project.professionalKudos ?? 0]}
+              min={0}
+              max={5}
+              step={1}
+              onValueChange={(v) => setKudosDraft(v[0])}
+              onValueCommit={(v) => {
+                const score = v[0] === 0 ? null : v[0];
+                setKudosDraft(null);
+                patchProject({ professionalKudos: score } as any);
+              }}
+              data-testid="slider-professional-kudos"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>unscored</span>
+              <span>1</span>
+              <span>2</span>
+              <span>3</span>
+              <span>4</span>
+              <span>5</span>
+            </div>
           </div>
         </div>
       </section>

@@ -897,6 +897,92 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(storage.createProject({ name, status, priority, description }));
   });
 
+  // Aggregate summary of project values — must be registered before /api/projects/:id
+  // so Express doesn't match "values-summary" as an :id.
+  app.get("/api/projects/values-summary", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const all = storage.listProjects();
+    const active = all.filter((p) => p.status === "active");
+    const scoredCurrent = active.filter(
+      (p) => p.currentIncomePerHour != null && p.currentIncomePerHour > 0,
+    );
+    // Weighted average: assume equal weight per project (no time-spent data yet).
+    // When time-spent telemetry lands, weight by hours-this-week.
+    const weightedAvgCurrentRate = scoredCurrent.length
+      ? Math.round(
+          scoredCurrent.reduce((sum, p) => sum + (p.currentIncomePerHour ?? 0), 0) /
+            scoredCurrent.length,
+        )
+      : null;
+    const primaryFutureIncome = active.find((p) => p.isPrimaryFutureIncome === 1) ?? null;
+    res.json({
+      totalActive: active.length,
+      totalParked: all.length - active.length,
+      scoredCurrentIncome: scoredCurrent.length,
+      weightedAvgCurrentRate,
+      primaryFutureIncome: primaryFutureIncome
+        ? {
+            id: primaryFutureIncome.id,
+            name: primaryFutureIncome.name,
+            futureIncomeEstimate: primaryFutureIncome.futureIncomeEstimate,
+          }
+        : null,
+    });
+  });
+
+  // Top-paying project today — matches today's calendar events against active
+  // projects by case-insensitive substring match on project name. Returns the
+  // project with the highest currentIncomePerHour (>= 300) tied to any event.
+  // Must be registered before /api/projects/:id.
+  app.get("/api/projects/top-paying-today", async (_req, res) => {
+    if (!requireUserOrOrchestrator(_req, res)) return;
+    const events = await getMergedPlannerEvents();
+    const today = eventsForDate(events, new Date());
+    const active = storage
+      .listProjects()
+      .filter(
+        (p) =>
+          p.status === "active" &&
+          p.currentIncomePerHour != null &&
+          p.currentIncomePerHour >= 300,
+      );
+    if (active.length === 0 || today.length === 0) {
+      return res.json({ project: null, matchedEvent: null });
+    }
+    // Match each event against project names. Lowercase the haystack once.
+    type Match = { project: typeof active[number]; event: typeof today[number] };
+    const matches: Match[] = [];
+    for (const ev of today) {
+      const hay = `${ev.summary ?? ""} ${ev.location ?? ""} ${ev.description ?? ""}`.toLowerCase();
+      for (const p of active) {
+        const needle = p.name.trim().toLowerCase();
+        if (needle.length >= 3 && hay.includes(needle)) {
+          matches.push({ project: p, event: ev });
+        }
+      }
+    }
+    if (matches.length === 0) {
+      return res.json({ project: null, matchedEvent: null });
+    }
+    matches.sort(
+      (a, b) => (b.project.currentIncomePerHour ?? 0) - (a.project.currentIncomePerHour ?? 0),
+    );
+    const top = matches[0];
+    res.json({
+      project: {
+        id: top.project.id,
+        name: top.project.name,
+        currentIncomePerHour: top.project.currentIncomePerHour,
+      },
+      matchedEvent: {
+        uid: top.event.uid,
+        summary: top.event.summary,
+        start: top.event.start,
+        end: top.event.end,
+      },
+    });
+  });
+
   app.get("/api/projects/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const id = parseInt(req.params.id, 10);
@@ -912,9 +998,60 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/projects/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const id = parseInt(req.params.id, 10);
-    const allowed = ["name", "status", "priority", "description", "currentPhaseId", "nextActionTaskId"];
+    const allowed = [
+      "name",
+      "status",
+      "priority",
+      "description",
+      "currentPhaseId",
+      "nextActionTaskId",
+      // Feature 2 — Project values
+      "currentIncomePerHour",
+      "futureIncomeEstimate",
+      "isPrimaryFutureIncome",
+      "communityBenefit",
+      "professionalKudos",
+    ];
     const updates: any = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+
+    // Validate ranges where applicable.
+    if ("currentIncomePerHour" in updates && updates.currentIncomePerHour != null) {
+      const v = Number(updates.currentIncomePerHour);
+      if (!Number.isFinite(v) || v < 0 || v > 100000) {
+        return res.status(400).json({ error: "currentIncomePerHour must be between 0 and 100000" });
+      }
+      updates.currentIncomePerHour = Math.round(v);
+    }
+    if ("futureIncomeEstimate" in updates && updates.futureIncomeEstimate != null) {
+      const v = Number(updates.futureIncomeEstimate);
+      if (!Number.isFinite(v) || v < 0 || v > 100000000) {
+        return res.status(400).json({ error: "futureIncomeEstimate must be between 0 and 100000000" });
+      }
+      updates.futureIncomeEstimate = Math.round(v);
+    }
+    for (const field of ["communityBenefit", "professionalKudos"] as const) {
+      if (field in updates && updates[field] != null) {
+        const v = Number(updates[field]);
+        if (!Number.isInteger(v) || v < 1 || v > 5) {
+          return res.status(400).json({ error: `${field} must be an integer 1-5` });
+        }
+        updates[field] = v;
+      }
+    }
+
+    // Single-flag invariant: if this project is being marked primary, clear the flag on all others.
+    if ("isPrimaryFutureIncome" in updates) {
+      updates.isPrimaryFutureIncome = updates.isPrimaryFutureIncome ? 1 : 0;
+      if (updates.isPrimaryFutureIncome === 1) {
+        for (const p of storage.listProjects()) {
+          if (p.id !== id && p.isPrimaryFutureIncome === 1) {
+            storage.updateProject(p.id, { isPrimaryFutureIncome: 0 });
+          }
+        }
+      }
+    }
+
     const updated = storage.updateProject(id, updates);
     res.json(updated);
   });

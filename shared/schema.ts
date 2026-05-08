@@ -332,6 +332,12 @@ export const projects = sqliteTable("projects", {
   description: text("description").notNull().default(""),
   currentPhaseId: integer("current_phase_id"),
   nextActionTaskId: integer("next_action_task_id"),
+  // Feature 2 — Project values (income + benefit + kudos). All nullable; null = not yet scored.
+  currentIncomePerHour: integer("current_income_per_hour"), // AUD/hr; null = unscored, 0 = not income-generating
+  futureIncomeEstimate: integer("future_income_estimate"), // AUD annualised over next 12 months; null = unscored
+  isPrimaryFutureIncome: integer("is_primary_future_income").notNull().default(0), // 0/1 flag — at most one project should be flagged
+  communityBenefit: integer("community_benefit"), // 1-5; null = unscored
+  professionalKudos: integer("professional_kudos"), // 1-5; null = unscored
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

@@ -70,7 +70,9 @@ Use Google Maps query URL format: `https://www.google.com/maps/dir/?api=1&origin
 
 ---
 
-## Feature 2 — Project values (income + benefit + kudos)
+## Feature 2 — Project values (income + benefit + kudos)  —  **DONE 2026-05-08**
+
+**Status:** Shipped. See HANDOFF.md entry `2026-05-08 (20:15 AEST)` for full details. Live on https://anchor-jod.pplx.app, bundle `index-CgmvfR1g.js`. Schema migrated additively, `PATCH /api/projects/:id` extended, `GET /api/projects/values-summary` and `GET /api/projects/top-paying-today` added, Projects page + ProjectDetail + Morning pill all wired. Seed values to be entered by user via the Projects UI (no seed script — standing rule).
 
 **Approach:** Extend `projects` schema with four scoring fields, surface on Projects page.
 

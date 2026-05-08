@@ -4,6 +4,59 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (20:15 AEST) — Feature 2 DEPLOYED — Project values (income + benefit + kudos)
+
+**Status:** Live on https://anchor-jod.pplx.app, bundle `index-CgmvfR1g.js`. Standing rule respected: skipped security review. No cron changes. No data.db edits beyond additive `ALTER TABLE` migrations.
+
+**Schema additions (`projects` table)**
+- `current_income_per_hour` INTEGER nullable
+- `future_income_estimate` INTEGER nullable
+- `is_primary_future_income` INTEGER NOT NULL DEFAULT 0 (single-flag invariant enforced server-side)
+- `community_benefit` INTEGER nullable (1–5)
+- `professional_kudos` INTEGER nullable (1–5)
+
+Auto-migrated on server boot via idempotent `ALTER TABLE … ADD COLUMN` alongside existing tasks-table migration block (`server/storage.ts`).
+
+**API additions**
+- `PATCH /api/projects/:id` extended to accept all 5 fields with range validation (rate 0–100000, future 0–100000000, sliders 1–5). Setting `isPrimaryFutureIncome=1` clears the flag on every other project in a single transaction.
+- `GET /api/projects/values-summary` → `{totalActive, totalParked, scoredCurrentIncome, weightedAvgCurrentRate, primaryFutureIncome}`. Registered before `/:id`.
+- `GET /api/projects/top-paying-today` → `{project, matchedEvent}`. Matches today's calendar events (via `getMergedPlannerEvents` + `eventsForDate`) against active projects with `currentIncomePerHour >= 300`, case-insensitive substring on event summary+location+description against project name (length ≥ 3). Returns the highest-rate match. Registered before `/:id`.
+
+**UI additions**
+- `client/src/lib/projectValues.ts` (new) — `formatAUDPerHour`, `formatAUDAnnualised` (compact ≥ $10K), `clampScore`. Uses `Intl.NumberFormat("en-AU")`.
+- Projects page (`Projects.tsx`) — summary section (active count / weighted avg rate / primary project) + per-row values badges (rate, primary star, future estimate, benefit/kudos).
+- Project detail (`ProjectDetail.tsx`) — Project values section: rate input (onBlur PATCH), future estimate + primary switch, two 0–5 sliders for community benefit and professional kudos. Sliders use **local draft state + `onValueCommit`** so dragging is smooth and the PATCH only fires on release (avoids spamming the server). Slider position 0 stores DB null ("unscored"), 1–5 stores literal score.
+- Morning page (`Morning.tsx`) — "Top-paying today" pill rendered between sticky header and Reflect section, conditionally on `topPayingQ.data?.project`. Hovering shows the matched event summary.
+
+**Smoke tests (live)**
+- `GET /api/projects/values-summary` → `{totalActive:8, totalParked:2, scoredCurrentIncome:0, weightedAvgCurrentRate:null, primaryFutureIncome:null}` (initial state — no values seeded yet, awaiting user input).
+- `GET /api/projects/top-paying-today` → `{project:null, matchedEvent:null}` (no rates set, so no match — expected).
+- `PATCH /api/projects/8` with `{currentIncomePerHour:400, communityBenefit:4, professionalKudos:3}` → 200, fields persisted; `values-summary` recomputed to `{scoredCurrentIncome:1, weightedAvgCurrentRate:400}`. Reverted to nulls cleanly.
+- Single-primary invariant verified: setting `isPrimaryFutureIncome=1` on project 1, then on project 5, leaves only project 5 flagged. Reverted.
+- Bundle hash check: `curl -s https://anchor-jod.pplx.app/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'` → `index-CgmvfR1g.js` (live).
+
+**Seed values (NOT applied yet — user to set in-app)**
+Spec calls for: Medicolegal $400/hr, Elgin House $400/hr, Hospital lists $200/hr, AUPFHS = primary future-income (TBC value). Standing rule "don't touch data.db after extraction" applies — Oliver enters these via the Projects page rather than a seed script.
+
+**Files changed (committed on main)**
+- `shared/schema.ts`
+- `server/storage.ts`
+- `server/routes.ts`
+- `client/src/lib/projectValues.ts` (new)
+- `client/src/pages/Projects.tsx`
+- `client/src/pages/ProjectDetail.tsx`
+- `client/src/pages/Morning.tsx`
+- `FEATURES_TODO.md` (Feature 2 marked done)
+
+**Pre-existing TS errors (still safe to ignore)** — `CalendarPlanner.tsx` 705/707 and `routes.ts` ~1072/1097 (the latter shifted because Feature 2 added routes above). Verified by stash-and-recheck on `94eab07`: identical 5-error baseline. Build passes.
+
+**Follow-ups carried over**
+- Feature 1 (travel time, STATIC) still pending. Do NOT start without approval.
+- Feature 5 (Coach page — plan + reflect, persistent + auto-summarised, Sonar adapter) spec only; implementation not started.
+- Deferred bake-time fix for `AUPFHS_ICS_URL` / `ANCHOR_ICS_URL` (see 2026-05-08 16:20) still not folded in.
+
+---
+
 ## 2026-05-08 (19:45 AEST) — Feature 5 BUGFIX DEPLOYED — `m.map is not a function` resolved
 
 **Deploy succeeded**

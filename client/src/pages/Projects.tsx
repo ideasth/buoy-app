@@ -4,8 +4,9 @@ import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import type { Project } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, FolderKanban } from "lucide-react";
+import { ChevronRight, FolderKanban, Star, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatAUDPerHour, formatAUDAnnualised } from "@/lib/projectValues";
 
 type ProjectWithNext = Project & {
   nextAction: {
@@ -15,6 +16,14 @@ type ProjectWithNext = Project & {
     phaseName: string | null;
     componentName: string | null;
   } | null;
+};
+
+type ValuesSummary = {
+  totalActive: number;
+  totalParked: number;
+  scoredCurrentIncome: number;
+  weightedAvgCurrentRate: number | null;
+  primaryFutureIncome: { id: number; name: string; futureIncomeEstimate: number | null } | null;
 };
 
 function fmtDeadline(s: string | null): string {
@@ -44,6 +53,10 @@ export default function Projects() {
     queryKey: ["/api/projects"],
     queryFn: async () => (await apiRequest("GET", "/api/projects")).json(),
   });
+  const summaryQ = useQuery<ValuesSummary>({
+    queryKey: ["/api/projects/values-summary"],
+    queryFn: async () => (await apiRequest("GET", "/api/projects/values-summary")).json(),
+  });
 
   const sorted = useMemo(() => {
     const list = [...(q.data ?? [])];
@@ -70,6 +83,50 @@ export default function Projects() {
           Synced from Microsoft To Do lists ending in <code className="text-xs">: Active</code> or <code className="text-xs">: Parked</code>. New imports start as Active-Low — promote here.
         </p>
       </header>
+
+      {summaryQ.data && (summaryQ.data.scoredCurrentIncome > 0 || summaryQ.data.primaryFutureIncome) && (
+        <section
+          className="rounded-lg border border-card-border bg-card p-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm"
+          data-testid="section-values-summary"
+        >
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Active projects</div>
+            <div className="clock-numerals text-2xl font-medium mt-1">{summaryQ.data.totalActive}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {summaryQ.data.scoredCurrentIncome} scored for current income
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Avg current rate</div>
+            <div className="clock-numerals text-2xl font-medium mt-1">
+              {summaryQ.data.weightedAvgCurrentRate != null
+                ? formatAUDPerHour(summaryQ.data.weightedAvgCurrentRate)
+                : "—"}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">Across income-generating projects</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Primary future income</div>
+            {summaryQ.data.primaryFutureIncome ? (
+              <>
+                <div className="text-base font-medium mt-1 truncate">
+                  <Star className="inline h-4 w-4 mr-1 text-amber-500 align-[-2px]" />
+                  {summaryQ.data.primaryFutureIncome.name}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {summaryQ.data.primaryFutureIncome.futureIncomeEstimate != null
+                    ? `${formatAUDAnnualised(summaryQ.data.primaryFutureIncome.futureIncomeEstimate)} est.`
+                    : "estimate not set"}
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-muted-foreground italic mt-1">
+                Mark a project as Primary in its detail page.
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {q.isLoading && (
         <div className="text-sm text-muted-foreground">Loading…</div>
@@ -134,6 +191,58 @@ export default function Projects() {
                           No Next Action set
                         </div>
                       )}
+
+                      {/* Feature 2 — values row */}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        {p.currentIncomePerHour != null && (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] py-0 h-4 gap-0.5",
+                              p.currentIncomePerHour >= 300
+                                ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+                                : "",
+                            )}
+                            data-testid={`badge-rate-${p.id}`}
+                          >
+                            <DollarSign className="h-2.5 w-2.5" />
+                            {formatAUDPerHour(p.currentIncomePerHour)}
+                          </Badge>
+                        )}
+                        {p.isPrimaryFutureIncome === 1 && (
+                          <Badge
+                            className="text-[10px] py-0 h-4 gap-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40"
+                            variant="outline"
+                            data-testid={`badge-primary-${p.id}`}
+                          >
+                            <Star className="h-2.5 w-2.5" />
+                            Primary future
+                          </Badge>
+                        )}
+                        {p.futureIncomeEstimate != null && p.futureIncomeEstimate > 0 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            future {formatAUDAnnualised(p.futureIncomeEstimate)}
+                          </span>
+                        )}
+                        {p.communityBenefit != null && (
+                          <span className="text-[10px] text-muted-foreground">
+                            benefit {p.communityBenefit}/5
+                          </span>
+                        )}
+                        {p.professionalKudos != null && (
+                          <span className="text-[10px] text-muted-foreground">
+                            kudos {p.professionalKudos}/5
+                          </span>
+                        )}
+                        {p.currentIncomePerHour == null &&
+                          p.futureIncomeEstimate == null &&
+                          p.communityBenefit == null &&
+                          p.professionalKudos == null && (
+                            <span className="text-[10px] text-muted-foreground italic">
+                              No values scored — open to add
+                            </span>
+                          )}
+                      </div>
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
                   </div>
