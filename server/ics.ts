@@ -202,6 +202,17 @@ export async function getCachedEvents(url: string, force = false): Promise<CalEv
   }
 }
 
+// Read-only introspection of the per-URL cache. Used by the Admin dashboard
+// to surface last-fetch time + event count per feed without revealing the URL
+// itself (the caller already has the URL — this just looks up cache state).
+export function getIcsCacheStatus(
+  url: string,
+): { fetchedAt: number; eventCount: number } | null {
+  const c = cacheByUrl.get(url);
+  if (!c) return null;
+  return { fetchedAt: c.fetchedAt, eventCount: c.events.length };
+}
+
 // Fetch and merge multiple ICS feeds. Per-feed prefixes can be supplied so
 // downstream column classifiers (e.g. "[Personal] \u2026" \u2192 Oliver-All) work.
 // Events with no summary or that can't be fetched are skipped silently.

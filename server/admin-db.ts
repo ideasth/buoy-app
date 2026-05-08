@@ -20,6 +20,7 @@ import {
   parseHeartbeatBody,
   buildExpectedWindows,
 } from "./cron-heartbeat";
+import { getIcsCacheStatus } from "./ics";
 
 // The cwd-relative path used by storage.ts (`new Database("data.db")`).
 const DB_PATH = path.resolve(process.cwd(), "data.db");
@@ -31,12 +32,20 @@ const MAX_IMPORT_BYTES = 200 * 1024 * 1024;
 
 type Authed = (req: Request, res: Response) => boolean;
 
+// Predicate: returns true when the request authenticated via
+// X-Anchor-Sync-Secret (used to gate full-URL exposure on /api/admin/health).
+type SyncSecretCheck = (req: Request) => boolean;
+
 export function registerAdminDbRoutes(
   app: Express,
   requireOrchestrator: Authed,
   // Optional: when provided, /api/admin/health accepts user-cookie auth too
   // (so the in-app /admin dashboard works without prompting for a secret).
   requireUserOrOrchestrator?: Authed,
+  // Optional: lets /api/admin/health distinguish sync-secret callers from
+  // cookie-only callers without re-implementing secret comparison here.
+  // When omitted, full ICS URLs are never revealed.
+  hasSyncSecret?: SyncSecretCheck,
 ) {
   // -------- EXPORT --------
   // GET /api/admin/db/export
@@ -319,6 +328,51 @@ export function registerAdminDbRoutes(
       cronHeartbeats = [];
     }
 
+    // ICS feeds (Admin dashboard). Privacy: full URLs are ONLY revealed when
+    // the request authenticated via X-Anchor-Sync-Secret. Cookie-only callers
+    // see the masked URL plus last-fetch + count metadata.
+    // We detect sync-secret presence by re-checking the header here rather
+    // than threading a flag through Authed (keeps the auth helpers untouched
+    // and avoids leaking auth state to other middleware).
+    const usedSyncSecret = hasSyncSecret ? hasSyncSecret(req) : false;
+    const maskUrl = (u: string): string =>
+      u ? u.replace(/\/\/.*@/, "//[secret]@") : "";
+    let icsFeeds: Array<{
+      label: string;
+      url: string | null;
+      urlMasked: string;
+      hasUrl: boolean;
+      lastFetchedAt: number | null;
+      eventCount: number | null;
+      cacheStatus: "fresh" | "stale" | "never";
+    }> = [];
+    try {
+      const s = storage.getSettings();
+      const feedDefs: Array<{ label: string; url: string }> = [
+        { label: "Personal calendar", url: s.calendar_ics_url || "" },
+        { label: "AUPFHS (Outlook publish)", url: s.aupfhs_ics_url || "" },
+      ];
+      const FRESH_MS = 30 * 60 * 1000; // 30 min — cache TTL is 15 min, give headroom
+      icsFeeds = feedDefs.map(({ label, url }) => {
+        const status = url ? getIcsCacheStatus(url) : null;
+        let cacheStatus: "fresh" | "stale" | "never" = "never";
+        if (status) {
+          cacheStatus = Date.now() - status.fetchedAt < FRESH_MS ? "fresh" : "stale";
+        }
+        return {
+          label,
+          url: usedSyncSecret ? (url || null) : null,
+          urlMasked: maskUrl(url),
+          hasUrl: Boolean(url),
+          lastFetchedAt: status ? status.fetchedAt : null,
+          eventCount: status ? status.eventCount : null,
+          cacheStatus,
+        };
+      });
+    } catch {
+      icsFeeds = [];
+    }
+
     // Coach context-bundle telemetry (last 30 days, top 10 keys).
     let coachContextUsage: Array<{ key: string; hits: number; sessions: number }> = [];
     let coachTelemetryEnabled = true;
@@ -354,6 +408,7 @@ export function registerAdminDbRoutes(
       },
       crons: KNOWN_CRONS,
       cronHeartbeats,
+      icsFeeds,
       coachContextUsage,
       coachTelemetryEnabled,
     });

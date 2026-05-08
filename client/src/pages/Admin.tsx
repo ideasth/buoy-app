@@ -156,6 +156,15 @@ interface HealthResponse {
     anomalyReason: string | null;
     createdAt: number | null;
   }>;
+  icsFeeds?: Array<{
+    label: string;
+    url: string | null; // present only when authed via X-Anchor-Sync-Secret
+    urlMasked: string;
+    hasUrl: boolean;
+    lastFetchedAt: number | null;
+    eventCount: number | null;
+    cacheStatus: "fresh" | "stale" | "never";
+  }>;
   coachContextUsage?: Array<{ key: string; hits: number; sessions: number }>;
   coachTelemetryEnabled?: boolean;
 }
@@ -263,6 +272,178 @@ function RecentErrorsCard() {
             )}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function IcsFeedsCard({
+  feeds,
+}: {
+  feeds: NonNullable<HealthResponse["icsFeeds"]>;
+}) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function copyUrl(label: string, url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(label);
+      window.setTimeout(() => setCopied((c) => (c === label ? null : c)), 1500);
+    } catch {
+      // Some browsers block clipboard without HTTPS / user gesture; fall
+      // back to selecting the text input so the user can copy manually.
+      setCopied(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">ICS feeds</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        <div className="text-xs text-muted-foreground">
+          These are the upstream ICS calendars Anchor reads from to populate
+          the Calendar view. Anchor itself does not publish an outbound ICS
+          feed — to see the same events in Apple Calendar, Outlook, or your
+          phone, subscribe each device directly to the URLs below. Full URLs
+          are only shown when this page is loaded with the sync secret;
+          otherwise the credential portion is masked.
+        </div>
+
+        {feeds.length === 0 && (
+          <div className="text-sm italic text-muted-foreground">
+            No ICS feeds configured.
+          </div>
+        )}
+
+        {feeds.map((f) => {
+          const displayUrl = f.url ?? f.urlMasked;
+          const canCopy = Boolean(f.url);
+          const dotClass =
+            f.cacheStatus === "fresh"
+              ? "bg-emerald-500"
+              : f.cacheStatus === "stale"
+                ? "bg-amber-500"
+                : "bg-muted-foreground";
+          const cacheLabel =
+            f.cacheStatus === "fresh"
+              ? "fresh"
+              : f.cacheStatus === "stale"
+                ? "stale"
+                : "not yet fetched";
+          return (
+            <div
+              key={f.label}
+              className="rounded-md border p-3 space-y-2"
+              data-testid={`ics-feed-${f.label}`}
+            >
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <div className="font-medium flex items-center gap-2">
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${dotClass}`}
+                    title={cacheLabel}
+                  />
+                  {f.label}
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {f.eventCount === null
+                    ? "— events"
+                    : `${f.eventCount} event${f.eventCount === 1 ? "" : "s"}`}
+                </span>
+              </div>
+
+              {!f.hasUrl ? (
+                <div className="text-xs italic text-muted-foreground">
+                  No URL configured. Set it in Settings.
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <code
+                      className="text-[11px] font-mono break-all bg-muted/40 rounded px-2 py-1 flex-1 min-w-0"
+                      data-testid={`ics-url-${f.label}`}
+                    >
+                      {displayUrl || "(empty)"}
+                    </code>
+                    {canCopy ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => copyUrl(f.label, f.url!)}
+                        data-testid={`copy-ics-${f.label}`}
+                      >
+                        {copied === f.label ? "Copied" : "Copy"}
+                      </Button>
+                    ) : (
+                      <span
+                        className="text-[11px] text-muted-foreground italic"
+                        title="Reload this page with the X-Anchor-Sync-Secret header to reveal the full URL."
+                      >
+                        masked
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-muted-foreground">
+                    Last fetched: {fmtAbs(f.lastFetchedAt)}
+                    {fmtRelative(f.lastFetchedAt)} — {cacheLabel}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        <details className="text-xs border rounded-md p-2 bg-muted/30">
+          <summary className="cursor-pointer font-medium">
+            Subscribe instructions (per device)
+          </summary>
+          <div className="mt-2 space-y-3">
+            <div>
+              <div className="font-medium">Apple Calendar (macOS)</div>
+              <ol className="list-decimal pl-5 space-y-0.5">
+                <li>Open Calendar.</li>
+                <li>File → New Calendar Subscription…</li>
+                <li>Paste the URL above and click Subscribe.</li>
+                <li>
+                  Set Auto-refresh to Every 15 minutes (or shorter) and
+                  Untick Alerts and Attachments.
+                </li>
+              </ol>
+            </div>
+            <div>
+              <div className="font-medium">Apple Calendar (iOS / iPadOS)</div>
+              <ol className="list-decimal pl-5 space-y-0.5">
+                <li>Settings → Calendar → Accounts → Add Account.</li>
+                <li>Choose Other → Add Subscribed Calendar.</li>
+                <li>Paste the URL into Server, then Next → Save.</li>
+              </ol>
+            </div>
+            <div>
+              <div className="font-medium">Outlook (web)</div>
+              <ol className="list-decimal pl-5 space-y-0.5">
+                <li>Open the Calendar view.</li>
+                <li>Add calendar → Subscribe from web.</li>
+                <li>Paste the URL, give it a name, choose colour → Import.</li>
+              </ol>
+            </div>
+            <div>
+              <div className="font-medium">Outlook (desktop, Windows / Mac)</div>
+              <ol className="list-decimal pl-5 space-y-0.5">
+                <li>Switch to the Calendar.</li>
+                <li>Add Calendar → From Internet…</li>
+                <li>Paste the URL and confirm.</li>
+              </ol>
+            </div>
+            <div className="text-muted-foreground italic">
+              Subscribed calendars are read-only on every platform. Refresh
+              cadence is controlled by the client — typical defaults are
+              every 1 to 24 hours, which can lag Anchor's own 15-minute
+              cache.
+            </div>
+          </div>
+        </details>
       </CardContent>
     </Card>
   );
@@ -627,6 +808,10 @@ function HealthDashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {data.icsFeeds && (
+            <IcsFeedsCard feeds={data.icsFeeds} />
+          )}
 
           <div className="text-xs text-muted-foreground">
             Generated {fmtAbs(data.generatedAt)}

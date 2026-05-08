@@ -15,6 +15,56 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (01:15 AEST) — Admin ICS feeds card DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103 (no test changes — UI + privacy-gated read endpoint). Privacy gating verified locally on both auth paths (sync-secret → full URL, cookie → url=null + masked only) and on the live endpoint with sync-secret (1799 events on Personal feed, 73 on AUPFHS, both fresh).
+
+**Why.** User asked "Add a section on the Admin page called ICS feeds with details of all the ics calendars and how to add them to my calendar." Clarified scope: Both inbound diagnostic AND outbound subscribe instructions; Reveal full URL (sync-secret gated). Important wrinkle: Anchor has no outbound ICS publisher, so "add to my calendar" means re-subscribing the user's Apple Calendar / Outlook / iPhone to the SAME upstream URLs Anchor reads from.
+
+**What was implemented**
+
+- **`server/ics.ts`** — added `getIcsCacheStatus(url)` exporter that reads the module-private `cacheByUrl` Map and returns `{fetchedAt, eventCount} | null`. Read-only introspection so the Admin page can surface last-fetch + count without having to refetch the feed.
+
+- **`server/admin-db.ts`** — extended `/api/admin/health` with an `icsFeeds` array. Each feed: `{label, url, urlMasked, hasUrl, lastFetchedAt, eventCount, cacheStatus}`. Cache status is `fresh` when last-fetch is <30 min old (cache TTL is 15 min so 30 min headroom), `stale` if older, `never` if not cached. Reads `calendar_ics_url` and `aupfhs_ics_url` via `storage.getSettings()`.
+
+- **Privacy gating.** Added a new optional `hasSyncSecret: (req) => boolean` parameter to `registerAdminDbRoutes()`. The full URL is only included in the response when this predicate returns true; cookie-only callers see `url: null` plus `urlMasked` (regex `//.*@` → `//[secret]@`, same as existing Settings page). Threading a predicate beats re-implementing secret comparison inside admin-db.ts and keeps the Authed type untouched. `routes.ts` builds the predicate from the same `SYNC_SECRET` constant the auth helpers already use, so there's a single source of truth.
+
+- **`client/src/pages/Admin.tsx`** — new `IcsFeedsCard` rendered after the Scheduled crons card. Shows per-feed: status dot (emerald=fresh, amber=stale, muted=never), label, event count, full URL in monospace (or masked when cookie auth) with Copy button, last-fetch timestamp + relative "X min ago". Below the feeds, a collapsible `<details>` with subscribe instructions for Apple Calendar (macOS), Apple Calendar (iOS / iPadOS), Outlook (web), and Outlook (desktop). Clipboard copy uses `navigator.clipboard.writeText` with a 1.5s "Copied" confirmation; falls back silently on browsers that block clipboard.
+
+**Privacy verification (local)**
+
+Seeded data.db with `https://user:pass@example.com/cal.ics` and `https://aup:sec@aupfhs.example.com/cal.ics`. Three calls:
+
+1. With `X-Anchor-Sync-Secret: $SECRET` → `url` is the full credentialed URL, `urlMasked` shows `//[secret]@`. ✓
+2. With cookie session (created via `/api/auth/setup`) → `url: null`, `urlMasked` shows `//[secret]@`. ✓
+3. With no auth → `401 auth required` (no body, no leak). ✓
+
+Then reverted data.db (deleted both URLs and the test passphrase hash) so the live build picks up the user's actual env-configured feeds.
+
+**Live smoke**
+
+```
+curl -s -H "X-Anchor-Sync-Secret: $SECRET" https://anchor-jod.pplx.app/port/5000/api/admin/health | jq .icsFeeds
+```
+
+Returns 2 feeds (Personal: 1799 events fresh, AUPFHS: 73 events fresh). Without the header: 401. The Admin UI is reachable at https://anchor-jod.pplx.app/admin (cookie auth path — user will see masked URLs there, which is the correct privacy posture for a browser session that could be left open on a shared laptop).
+
+**Files changed**
+
+- `server/ics.ts` (+11 lines: `getIcsCacheStatus`)
+- `server/admin-db.ts` (+50 lines: import, `SyncSecretCheck` type, fourth `hasSyncSecret` param, icsFeeds block, response field)
+- `server/routes.ts` (+10 lines: build `hasSyncSecret` predicate, pass to `registerAdminDbRoutes`)
+- `client/src/pages/Admin.tsx` (+170 lines: HealthResponse type extended, `IcsFeedsCard` component, render after Scheduled crons)
+
+**Commit:** see next push. No test changes — the new logic is straight-line read code that is exercised end-to-end by the smoke tests above.
+
+**Follow-ups**
+
+- The cookie-auth view shows `url: null` + masked, which is correct but means there is no "copy URL" affordance for the user when they hit /admin from the iPad. If they want to subscribe a phone, they need to load /admin with the sync secret header (curl, or the bookmarklet pattern documented elsewhere) once and grab the URL. Could revisit if it becomes painful — e.g. add a "reveal" button that prompts for the secret in-page.
+- Cache status `never` will show on a freshly-restarted sandbox until the next calendar fetch. Not worth fixing — the calendar is fetched on every `/api/calendar` hit which the user's home page triggers immediately.
+
+---
+
 ## 2026-05-09 (00:45 AEST) — Option 3 cron heartbeat canary DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103 (was 81; +22 cron-heartbeat). Cron `8e8b7bb5` task body updated via `schedule_cron action=update` with explicit user approval ("approved").

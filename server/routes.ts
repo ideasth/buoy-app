@@ -109,8 +109,20 @@ const REFLECTION_PROMPTS = [
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Admin DB export/import. Both behind requireOrchestrator; import is
-  // additionally gated by ANCHOR_DB_IMPORT_ENABLED=1.
-  registerAdminDbRoutes(app, requireOrchestrator, requireUserOrOrchestrator);
+  // additionally gated by ANCHOR_DB_IMPORT_ENABLED=1. The sync-secret
+  // predicate is used by /api/admin/health to decide whether to reveal
+  // full ICS URLs (sync-secret only) vs masked URLs (cookie auth).
+  const hasSyncSecret = (req: Request): boolean => {
+    if (!SYNC_SECRET) return false;
+    const provided = (req.header("x-anchor-sync-secret") || "").trim();
+    return provided.length > 0 && provided === SYNC_SECRET;
+  };
+  registerAdminDbRoutes(
+    app,
+    requireOrchestrator,
+    requireUserOrOrchestrator,
+    hasSyncSecret,
+  );
 
   // ---- Tasks ----
   app.get("/api/tasks", (_req, res) => res.json(storage.listTasks()));
