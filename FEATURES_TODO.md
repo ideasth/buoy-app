@@ -140,10 +140,122 @@ Then ask ONE focused question, e.g.:
 
 ---
 
+## Feature 5 — Life coach page (full dialogue, two modes, persistent + auto-summarised)
+
+**Status:** Designed 2026-05-08, NOT started. Do NOT implement without explicit approval.
+
+**Brief**
+Full conversational coach page in Anchor. Two modes the user toggles within a single session:
+- **Plan mode** — prioritisation advisor. Reads today's top-3, this week's calendar, available hours, project priorities (incl. Feature 2 values once shipped), open issues, recent factors. More directive.
+- **Reflect mode** — reflective sounding board on issues. User picks an open issue (or coach suggests one); coach asks Socratic questions. Less prescriptive. Default stance for relationship/house/kids categories.
+
+One page, mode toggle at the top. Not two pages.
+
+**Context bundle (loaded full read-only at session start)**
+- `daily_factors` for today + last 7 days
+- `top_three` for today + yesterday's unfinished
+- `issues` where `status != resolved`, plus issues resolved in last 14 days
+- `available_hours/this-week`
+- Today's calendar events + tomorrow's
+- Last 3 reflections
+- Last 3 coach session summaries (if any)
+- Project list with current priorities (and Feature 2 values once shipped — income/benefit/kudos)
+
+Post to model as a structured system prompt block. Roughly 4–8k tokens. Sonar context window handles this fine.
+
+**Persistence: persistent + auto-summarised**
+- Full transcript stored in DB.
+- On session end, model writes a structured summary (3–6 bullets across: what we discussed, decisions made, commitments set, open threads to revisit).
+- Summary is editable by the user before save — forces a moment of consolidation, ADHD-aware design choice. `summary_edited_by_user` flag captures whether the user touched it.
+- Subsequent sessions load only the last 2–3 session **summaries** as context, not full transcripts. Transcripts are scrollable in the UI for the user but not fed back into the model.
+- Decisions/commitments can be written back to Anchor in structured form (create top-3 candidate, patch issue `supportType`/`status`, shift project priority). Every side-effect requires a confirm step in the UI — coach never writes to `data.db` autonomously.
+
+**Schema (new tables)**
+```
+coach_sessions
+  id (pk)
+  started_at, ended_at (timestamps)
+  mode (text: 'plan' | 'reflect' — last-active mode; sessions can switch mid-session, last value wins)
+  context_snapshot (JSON — the bundle loaded at start, for auditability)
+  summary (JSON — structured bullets: { discussed, decisions, commitments, open_threads })
+  summary_edited_by_user (int 0/1)
+  linked_issue_id (nullable FK to issues — set when reflect mode picks an issue)
+  linked_ymd (nullable text YYYY-MM-DD — the date this session belongs to)
+  model_provider (text: 'perplexity' | 'anthropic' | etc.)
+  model_name (text: e.g. 'sonar-reasoning-pro')
+  total_input_tokens, total_output_tokens (int)
+
+coach_messages
+  id (pk)
+  session_id (FK)
+  role (text: 'user' | 'assistant' | 'system')
+  content (text)
+  created_at (timestamp)
+  token_count (int, nullable)
+  mode_at_turn (text: 'plan' | 'reflect' — mode active when this turn happened)
+```
+
+**Server endpoints**
+- `POST   /api/coach/sessions` — start a session, returns `session_id` + initial context bundle for client display.
+- `POST   /api/coach/sessions/:id/turn` — append user message, stream assistant reply (SSE).
+- `POST   /api/coach/sessions/:id/end` — generate draft summary, return for editing (does NOT save until PATCH).
+- `PATCH  /api/coach/sessions/:id/summary` — save edited summary; optionally apply structured side-effects passed in the body.
+- `GET    /api/coach/sessions` — list with pagination, newest first.
+- `GET    /api/coach/sessions/:id` — full transcript + summary.
+- All behind sync-secret header like the rest of Anchor's API.
+
+**Model layer (adapter pattern)**
+- New file `server/llm/adapter.ts` defining a thin `LlmProvider` interface (`chatStream(messages, opts) => AsyncIterator<chunk>`).
+- Default provider: **Perplexity Sonar** (`sonar-reasoning-pro` for plan mode — reasoning helps prioritisation; `sonar-pro` for reflect mode — lighter, warmer).
+- Optional second provider: **Anthropic Claude Sonnet** for reflect mode if Sonar's tone is too directive in practice.
+- Selection by mode + per-session override (stored on `coach_sessions.model_provider`/`.model_name`).
+
+**Credentials (baked-secret pattern, identical to `BAKED_SYNC_SECRET`)**
+- `.secrets/perplexity_api_key` (and optionally `.secrets/anthropic_api_key`).
+- `server/baked-llm-keys.ts` — generated at build time from those files. **Gitignored.** Add to `.gitignore` alongside `server/baked-secret.ts`.
+- Bake step folded into the existing pre-build snippet in CONTEXT.md / Space Instructions.
+- Never expose to the client. Browser calls `/api/coach/sessions/:id/turn`; server calls the LLM.
+
+**Client (`client/src/pages/Coach.tsx`)**
+- Mode toggle at top: Plan | Reflect (segmented control). Switching mid-session is allowed; the next turn's system prompt reflects the new mode.
+- Conversation pane: standard chat UI, streamed responses.
+- Right rail (collapsible): "What the coach can see" — shows the context bundle so the user can correct it before sending the first message. Counts: "3 open issues, 2 carried over", "18 deep-work hrs this week", "top-3 today: …". Click any item to drill into it.
+- "End session" button → opens summary editor modal → user edits/deletes bullets, ticks structured side-effects to apply, saves.
+- Session history strip at top: last 5 sessions, click to view transcript + summary read-only.
+- Route: `/coach`. Nav link in `Layout.tsx` between Reflect and Review.
+- New shared module `client/src/lib/coach.ts` — mode constants, summary schema helpers.
+
+**Safety rails (non-negotiable)**
+- System prompt rule: in reflect mode, when discussing relationship/kids/house issues, ask before suggesting; do not prescribe action. Different stance from work issues where directive advice is welcome.
+- Crisis-language detector: simple keyword pass on user input. On hit, suspend normal coaching and surface a static "please contact GP / Lifeline 13 11 14 / Marieke" card. Override-able after explicit confirm.
+- Coach never writes to `data.db` autonomously. Every side-effect requires a UI confirm step.
+- Transcripts contain sensitive content (issues category covers relationship + kids). Confirm `data.db` is included in the existing weekly snapshot cron (it is) and consider whether to add an `apiCoachExport` endpoint for selective deletion. Defer the deletion endpoint to v2.
+
+**Cost shape**
+- Plan mode session: ~6k token system prompt + ~2k of conversation = ~8k input, ~1k output per turn. Sonar Reasoning Pro current pricing applies.
+- Reflect mode: lighter, ~3k input + ~500 output per turn.
+- Show running session token count in the right rail so the user sees the cost surface.
+
+**Relationship to Feature 4**
+Feature 4 (deterministic weekly coaching prompt on Sunday Morning page) is complementary, not redundant. Feature 4 is a low-cost rules-based banner; Feature 5 is the deep-dive page. After Feature 5 ships, Feature 4 may become a banner-card on Morning that says "Sunday: ready for a weekly plan session?" and deep-links into `/coach?mode=plan`. Re-evaluate Feature 4 scope after Feature 5 lands.
+
+**Effort:** ~3 evening sessions.
+1. Schema + endpoints + adapter + Sonar provider (no streaming yet).
+2. Client page + streaming + mode toggle + context rail.
+3. Summary editor + structured side-effects + history list.
+
+**Open questions to resolve before starting**
+- Confirm Perplexity API key arrangement (which org/account, billing surface).
+- Confirm whether to ship with Anthropic adapter on day 1 or just Sonar.
+- Confirm whether a coach-session deletion endpoint is needed at v1 (privacy hygiene for relationship/kids transcripts).
+
+---
+
 ## Implementation order (when next session starts)
 
 1. Feature 1 first (smaller, self-contained, immediate value on Today page)
-2. Feature 2 second (reuses existing Projects page UI patterns)
+2. Feature 2 second (reuses existing Projects page UI patterns) — also unlocks richer plan-mode context for Feature 5
 3. Then re-evaluate Feature 4 readiness
+4. Feature 5 (life coach page) — best after Feature 2 ships so plan mode has project values to reason over
 
-Both features should ship without enabling Outlook writes, without re-running the security review, and without re-pulling MS To Do projects (per standing rules).
+All features should ship without enabling Outlook writes, without re-running the security review, and without re-pulling MS To Do projects (per standing rules).
