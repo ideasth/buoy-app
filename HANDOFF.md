@@ -4,6 +4,40 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (22:25 AEST) — Sidebar reorder + Admin consolidation + Settings fix DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app, bundle `index-CuxQmtbn.js`. Commit `2357416` on `main`. tsc clean (pre-build hook).
+
+**What changed**
+
+1. **Settings blank-page fix** — root cause: `GET /api/travel-locations` returns `{locations: TravelLocation[]}` but `Settings.tsx > TravelLocationsSection` typed the response as `TravelLocation[]` and called `.map`, which threw on the wrapper object and blanked the whole page. Now defensively unwraps `Array.isArray(q.data) ? q.data : q.data?.locations ?? []`. Also dropped the unused `domainLabel` import.
+2. **Sidebar nav reorder + dividers** — new order per user spec: Coach, Capture | Today, Calendar, Morning, Reflect, Review | Priorities, Email Status, Projects, Issues, Habits | Admin. Three dividers, drawn as a horizontal `bg-sidebar-border` rule on md+ and a thin vertical separator inside the horizontal mobile scroller. `NavItem` is now a discriminated union (`{href, label} | {divider: true}`).
+3. **Admin consolidation** — Admin / Usage / Settings merged into a single `/admin` page using a `Tabs` component (Radix `tabs.tsx` already in the design system). Tabs are Health (the previous Admin dashboard, lifted into a `<HealthDashboard />` inner component), Usage (renders the existing `<Usage />` page verbatim), Settings (renders the existing `<SettingsPage />` verbatim).
+4. **Tab state in URL** — active tab is mirrored in `?tab=health|usage|settings` (using `replaceState` so back-history isn't polluted), and `hashchange` keeps tabs in sync when the user uses browser back/forward. Default tab is Health (no query string).
+5. **Legacy route redirects** — `/settings` → `/admin?tab=settings`, `/usage` → `/admin?tab=usage`. Implemented as tiny `SettingsRedirect` / `UsageRedirect` components in `App.tsx` that call `navigate(…, {replace: true})` from `useLocation`.
+6. **Wouter hash hook wrapper** — created `useHashLocationStripQuery` so wouter's route matcher sees `/admin` regardless of any `?tab=…` suffix on the hash. Otherwise `<Route path="/admin">` wouldn't match `#/admin?tab=settings` and the redirect would dead-end on NotFound.
+7. **MorningGuard** updated to also skip the auto-redirect on `/admin` (the consolidated page absorbs the old `/settings` skip).
+
+**Smoke tests (live, post-publish)**
+- Bundle `index-CuxQmtbn.js` returns 200 with `content-type: text/javascript` ✓
+- `/api/admin/health` 200 ✓
+- `/api/travel-locations` returns `{locations:[…]}` (server unchanged) ✓
+- Headless playwright loaded `#/settings` and `#/admin?tab=usage` with **zero console errors and zero pageerrors** — confirms the Tabs wiring, the wrapper hook, and the redirect logic do not throw at import time ✓
+- Pre-build typecheck hook fired and passed ✓
+
+**Files modified (commit 2357416, 4 files, 168+/31-)**
+- `client/src/App.tsx` — `useHashLocationStripQuery` wrapper, `SettingsRedirect` + `UsageRedirect` components, `/settings` and `/usage` routes now point to redirect components, MorningGuard ignores `/admin`, `Router` now uses the wrapper hook
+- `client/src/components/Layout.tsx` — nav becomes a discriminated `NavItem[]` with `{divider:true}` rows; new render branch draws a separator; usage/settings nav links removed; reorder per spec
+- `client/src/pages/Admin.tsx` — default export is now a tabbed shell (Health/Usage/Settings) with hash-query-mirrored tab state; previous dashboard body extracted into a private `<HealthDashboard />` component
+- `client/src/pages/Settings.tsx` — unwrap `{locations}` shape; remove unused import
+
+**Notes / open items**
+- Capture vs Quick capture: `/capture` is the full Capture page. The sidebar's "Quick capture" button is just a navigation shortcut (`window.location.hash = "#/capture"`) — it opens the same page, no separate quick-entry flow. Worth deciding later whether to drop the duplicate or convert it into a real one-tap modal.
+- Settings was hitting the old `/settings` route via the sidebar link; now bookmarks/links to `/settings` and `/usage` continue to work but land on the new consolidated page with the right tab pre-selected.
+- Standing rules respected: no cron changes, no data.db edits, no security re-review, secrets only read from `.secrets/`.
+
+---
+
 ## 2026-05-08 (22:05 AEST) — Coach polish v2 + admin dashboard + CI gate DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app, bundle `index-Dr3g4p9S.js`. Commit `6859eed` on `main`. TypeScript still strict-clean and now enforced via pre-build hook. Standing rules respected: skipped security review; no cron changes; no data.db edits.
