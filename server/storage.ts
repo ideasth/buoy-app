@@ -1608,6 +1608,24 @@ export class Storage {
   }
 
   /**
+   * Delete coach_context_usage rows older than `days` days. Returns the
+   * number of rows removed. Called by the daily retention sweep.
+   */
+  pruneCoachContextUsage(days = 90): number {
+    try {
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const r = sqlite
+        .prepare(`DELETE FROM coach_context_usage WHERE created_at < ?`)
+        .run(cutoff);
+      return Number((r as { changes?: number }).changes ?? 0);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[storage] pruneCoachContextUsage failed:", err);
+      return 0;
+    }
+  }
+
+  /**
    * Aggregate bundle-key reference counts over the last `days` days. Used by
    * admin Health card to show which context fields the model actually leans
    * on. Returns array of {key, hits, sessions}.

@@ -273,6 +273,10 @@ export interface SettingsBlob {
   // Feature 1 — travel time defaults
   home_address?: string; // free text, fed into Google Maps origin
   maps_provider?: "google"; // reserved for future Apple Maps support
+  // Coach context-bundle telemetry kill switch. Default true.
+  // When false, /api/coach/sessions/:id/turn skips the telemetry write to
+  // coach_context_usage and the daily retention sweep is a no-op.
+  coach_telemetry_enabled?: boolean;
 }
 
 // Feature 1 — Travel locations (static lookup table)

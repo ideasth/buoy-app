@@ -254,6 +254,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "theme",
       "home_address",
       "maps_provider",
+      "coach_telemetry_enabled",
     ];
     for (const f of fields) if (f in req.body) allowed[f] = req.body[f];
     const merged = storage.updateSettings(allowed);

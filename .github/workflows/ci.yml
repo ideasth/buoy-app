@@ -1,0 +1,83 @@
+name: CI
+
+# Mirrors the local .husky/pre-commit hook so the safety net survives
+# `git commit --no-verify`, fresh clones without `npm install`, and any
+# git client that doesn't run hooks. Three gates: secret check, typecheck, tests.
+#
+# Standing rule reminder: server/baked-secret.ts and server/baked-llm-keys.ts
+# are gitignored. They must NEVER appear in a commit. The secret-check job
+# fails CI if either path is present in the repo, even if the .gitignore is
+# tampered with.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-check:
+    name: No baked secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if baked secret files are tracked
+        run: |
+          set -e
+          for path in server/baked-secret.ts server/baked-llm-keys.ts; do
+            if git ls-files --error-unmatch "$path" > /dev/null 2>&1; then
+              echo "FAIL: $path is tracked in git. Baked secrets must never be committed."
+              exit 1
+            fi
+          done
+          echo "OK: no baked secret files in the index."
+      - name: Fail if any file looks like it contains a baked secret literal
+        # Cheap belt-and-braces grep for the BAKED_*_SECRET / BAKED_*_KEY
+        # constant pattern with a non-placeholder value. Picks up renames,
+        # copies, or accidental literal pastes elsewhere in the tree.
+        run: |
+          set -e
+          # Match BAKED_<UPPER>_<UPPER...> = "..." in any tracked file,
+          # excluding tests, docs, and the SoT module names themselves
+          # (which only declare the type, not the value).
+          if git grep -nE 'BAKED_[A-Z_]+\s*=\s*"[^"]+"' -- ':(exclude)test/' ':(exclude)*.md' | grep -v 'BAKED_SYNC_SECRET = "PLACEHOLDER"' | grep -v 'BAKED_PERPLEXITY_KEY = "PLACEHOLDER"'; then
+            echo "FAIL: a tracked file appears to contain a baked secret literal."
+            exit 1
+          fi
+          echo "OK: no baked secret literals in tracked files."
+
+  typecheck:
+    name: tsc --noEmit
+    runs-on: ubuntu-latest
+    needs: secret-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Stub baked secrets so tsc can resolve them
+        # baked-*.ts is gitignored and only generated at publish time.
+        # Stub them here with placeholder strings so type-checking succeeds.
+        run: |
+          printf 'export const BAKED_SYNC_SECRET = "PLACEHOLDER";\n' > server/baked-secret.ts
+          printf 'export const BAKED_PERPLEXITY_KEY = "PLACEHOLDER";\n' > server/baked-llm-keys.ts
+      - run: npx tsc --noEmit
+
+  test:
+    name: vitest
+    runs-on: ubuntu-latest
+    needs: secret-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Stub baked secrets
+        run: |
+          printf 'export const BAKED_SYNC_SECRET = "PLACEHOLDER";\n' > server/baked-secret.ts
+          printf 'export const BAKED_PERPLEXITY_KEY = "PLACEHOLDER";\n' > server/baked-llm-keys.ts
+      - run: npx vitest run --reporter=dot

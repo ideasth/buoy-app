@@ -25,6 +25,7 @@ import {
   type CoachContextBundle,
 } from "./coach-context";
 import { scheduleCoachSummaryBackfill } from "./coach-summary-backfill";
+import { scheduleCoachTelemetrySweeper } from "./coach-telemetry-sweeper";
 import { detectReferencedBundleKeys } from "./coach-context-telemetry";
 import type { CalEvent } from "./ics";
 import type { AvailableHoursThisWeek } from "./available-hours";
@@ -383,16 +384,21 @@ export function registerCoachRoutes({
         totalOutputTokens: (session.totalOutputTokens ?? 0) + r.usage.outputTokens,
       });
       // Context-bundle telemetry: which bundle keys did the response touch?
+      // Gated by Settings.coach_telemetry_enabled (default true). When false,
+      // skip the write entirely; the rest of the turn is unaffected.
       try {
-        const { bundleKeysPresent, bundleKeysReferenced } =
-          detectReferencedBundleKeys(bundle, cleanText);
-        storage.recordCoachContextUsage({
-          sessionId: id,
-          messageId: assistantMsg.id,
-          mode,
-          bundleKeysPresent,
-          bundleKeysReferenced,
-        });
+        const settingsForTelemetry = storage.getSettings();
+        if (settingsForTelemetry.coach_telemetry_enabled !== false) {
+          const { bundleKeysPresent, bundleKeysReferenced } =
+            detectReferencedBundleKeys(bundle, cleanText);
+          storage.recordCoachContextUsage({
+            sessionId: id,
+            messageId: assistantMsg.id,
+            mode,
+            bundleKeysPresent,
+            bundleKeysReferenced,
+          });
+        }
       } catch (telemetryErr) {
         const tm = telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr);
         console.warn(`[coach] telemetry capture failed: ${tm.slice(0, 200)}`);
@@ -507,6 +513,7 @@ export function registerCoachRoutes({
   // startup delay. Safe to call multiple times — re-queries and only acts on
   // remaining nulls.
   scheduleCoachSummaryBackfill();
+  scheduleCoachTelemetrySweeper();
 }
 
 // Re-export message type so client can reuse if needed.

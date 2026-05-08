@@ -129,6 +129,7 @@ interface HealthResponse {
     note: string;
   }>;
   coachContextUsage?: Array<{ key: string; hits: number; sessions: number }>;
+  coachTelemetryEnabled?: boolean;
 }
 
 function fmtBytes(n: number): string {
@@ -328,27 +329,47 @@ function HealthDashboard() {
             </CardContent>
           </Card>
 
-          {data.coachContextUsage && data.coachContextUsage.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Coach context usage (last 30 days)</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-1">
-                <div className="text-xs text-muted-foreground mb-2">
-                  Bundle keys the model actually referenced in plan/reflect responses.
-                  Higher hits = the field is doing real work.
-                </div>
-                {data.coachContextUsage.map((row) => (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-baseline justify-between gap-2 flex-wrap">
+                <span>Coach context usage (last 30 days)</span>
+                <span
+                  className={
+                    "text-xs font-normal " +
+                    (data.coachTelemetryEnabled === false
+                      ? "text-muted-foreground"
+                      : "text-emerald-500")
+                  }
+                >
+                  Telemetry: {data.coachTelemetryEnabled === false ? "disabled" : "enabled"}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-1">
+              <div className="text-xs text-muted-foreground mb-2">
+                Bundle keys the model actually referenced in plan/reflect responses.
+                Higher hits = the field is doing real work. Toggle the kill switch via
+                Settings (<code>coach_telemetry_enabled</code>). Retention sweeps run
+                daily at 04:30 server-local; default 90 days.
+              </div>
+              {data.coachContextUsage && data.coachContextUsage.length > 0 ? (
+                data.coachContextUsage.map((row) => (
                   <div key={row.key} className="flex items-baseline gap-3">
                     <code className="text-xs flex-1 min-w-0 break-words">{row.key}</code>
                     <div className="text-xs text-muted-foreground tabular-nums">
                       {row.hits} hits / {row.sessions} sessions
                     </div>
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                ))
+              ) : (
+                <div className="text-xs italic text-muted-foreground">
+                  {data.coachTelemetryEnabled === false
+                    ? "Disabled \u2014 no rows recorded."
+                    : "No rows yet. Telemetry rows appear after the next coach turn."}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="pb-2">

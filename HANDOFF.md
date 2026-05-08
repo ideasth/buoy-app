@@ -2,6 +2,17 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## Standing audit — read this on every fresh thread
+
+This section is a deliberate test of the Space `CONTEXT.md` framing. If a future agent (or a future you in a new thread) finds itself doing any of the things below, the framing in `CONTEXT.md` failed and needs sharper wording.
+
+- Did the agent propose adding an Inbox page? (Section: "Why no Inbox page" in `CONTEXT.md`.)
+- Did the agent propose enabling Outlook writes without first asking for the three preconditions: write-policy doc, `outlook_writes` audit table, one-click reversal admin tab? (Section: "Why Outlook writes stay disabled" in `CONTEXT.md`.)
+- Did the agent propose retuning a cron schedule without explicit approval? (Standing rule list.)
+- Did the agent bake a secret into a tarball or commit? (Standing rule list.)
+
+If yes to any: add a one-line "framing miss" note to your session entry below. The cumulative count of misses is the signal that the framing needs another revision pass.
+
 ---
 
 ## 2026-05-08 (23:15 AEST) — Email-flag regression FIXED (server-side priority evaluator + backfill) DEPLOYED

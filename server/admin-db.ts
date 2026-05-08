@@ -12,6 +12,8 @@ import path from "node:path";
 import os from "node:os";
 import Database from "better-sqlite3";
 import { rawSqlite, storage } from "./storage";
+import { backfillCoachSessionSummaries } from "./coach-summary-backfill";
+import { runCoachTelemetrySweepNow } from "./coach-telemetry-sweeper";
 
 // The cwd-relative path used by storage.ts (`new Database("data.db")`).
 const DB_PATH = path.resolve(process.cwd(), "data.db");
@@ -289,6 +291,12 @@ export function registerAdminDbRoutes(
 
     // Coach context-bundle telemetry (last 30 days, top 10 keys).
     let coachContextUsage: Array<{ key: string; hits: number; sessions: number }> = [];
+    let coachTelemetryEnabled = true;
+    try {
+      coachTelemetryEnabled = storage.getSettings().coach_telemetry_enabled !== false;
+    } catch {
+      coachTelemetryEnabled = true;
+    }
     try {
       coachContextUsage = storage.summariseCoachContextUsage(30).slice(0, 10);
     } catch {
@@ -316,7 +324,45 @@ export function registerAdminDbRoutes(
       },
       crons: KNOWN_CRONS,
       coachContextUsage,
+      coachTelemetryEnabled,
     });
+  });
+
+  // POST /api/admin/coach/backfill-summaries
+  // Manual catch-up for the boot-time backfill ceiling.
+  // Body: { limit?: number } (default 50, capped 1–500)
+  // Auth: X-Anchor-Sync-Secret only (no user cookie); admin maintenance.
+  app.post(
+    "/api/admin/coach/backfill-summaries",
+    express.json({ limit: "1kb" }),
+    async (req, res) => {
+      if (!requireOrchestrator(req, res)) return;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const rawLimit = typeof body.limit === "number" && isFinite(body.limit) ? Math.floor(body.limit) : 50;
+      const limit = Math.max(1, Math.min(rawLimit, 500));
+      try {
+        const r = await backfillCoachSessionSummaries(limit);
+        res.json({ ok: true, ...r, limit });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: "backfill failed", detail: msg.slice(0, 400) });
+      }
+    },
+  );
+
+  // POST /api/admin/coach/telemetry-sweep
+  // Manual one-shot retention sweep on coach_context_usage.
+  // Returns rows removed and current retention window.
+  // Auth: X-Anchor-Sync-Secret only.
+  app.post("/api/admin/coach/telemetry-sweep", (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    try {
+      const r = runCoachTelemetrySweepNow();
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "sweep failed", detail: msg.slice(0, 400) });
+    }
   });
 
   // POST /api/admin/backup-receipt
