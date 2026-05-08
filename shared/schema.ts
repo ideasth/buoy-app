@@ -167,6 +167,15 @@ export const morningRoutines = sqliteTable("morning_routines", {
   braindumpTaskIds: text("braindump_task_ids"),
   topThreeIds: text("top_three_ids"),
   expressMode: integer("express_mode").notNull().default(0),
+  // Morning habits (added 2026-05-09): tickbox completions for the Morning page.
+  breathingDone: integer("breathing_done").notNull().default(0),
+  medicationDone: integer("medication_done").notNull().default(0),
+  // Reflection check-in fields surfaced on the Morning page (added 2026-05-09).
+  // Mirror of the lighter dailyFactors row, but stored on the morning routine
+  // so the Morning page is self-contained and can lock without a second API.
+  mood: text("mood"), // positive | neutral | strained
+  cognitiveLoad: text("cognitive_load"), // high | moderate | low
+  alignment: text("alignment"), // yes | no  (replaces the legacy three-option valuesAlignment for the Morning surface)
 });
 
 export const insertMorningRoutineSchema = createInsertSchema(morningRoutines).omit({ id: true });

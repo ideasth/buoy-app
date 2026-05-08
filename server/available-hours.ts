@@ -215,6 +215,112 @@ export interface AvailableHoursThisWeek {
   generatedAt: string; // ISO
 }
 
+// ---------------------------------------------------------------------------
+// Today variant — single Melbourne day. Used by the Morning page (2026-05-09).
+//
+// Differences from this-week:
+//   - Window is the current Melbourne day [00:00 .. next-day 00:00).
+//   - Adds a `transitMinutes` total: sum of `allowMinutes` from per-event
+//     travel calculations (passed in from routes via `eventTransitMinutes`).
+//     This is the same number the Today's-events Leave-by labels use.
+//   - `freeMinutes = wakingMinutes - paid - family - other_committed - transit`.
+//     Transit is subtracted from waking; it is NOT double-counted with the
+//     event's own classification, because transit happens BEFORE the event
+//     starts (it's outside the event's wall-clock minutes).
+// ---------------------------------------------------------------------------
+
+export interface AvailableHoursToday {
+  todayYmd: string;
+  totalDayMinutes: number; // 1440
+  sleepMinutes: number; // 480 (00:00-07:00 + 23:00-24:00 = 7h+1h = 8h)
+  totalWakingMinutes: number; // 960 (16h)
+  paidWorkMinutes: number;
+  familyMinutes: number;
+  otherCommittedMinutes: number;
+  transitMinutes: number;
+  freeMinutes: number;
+  generatedAt: string;
+}
+
+export function computeAvailableHoursToday(
+  events: CalEvent[],
+  eventTransitMinutes: Map<string, number>,
+  now: Date = new Date(),
+): AvailableHoursToday {
+  const { ymd: todayYmd } = melbourneParts(now);
+  const dayStart = melbourneWallToUtc(todayYmd, 0, 0);
+  // Compute next-day YMD by walking forward 24h then re-rendering in Melbourne.
+  const nextDayProbe = new Date(dayStart.getTime() + 26 * 60 * 60 * 1000); // safe past DST
+  const nextDayYmd = melbourneParts(nextDayProbe).ymd;
+  const dayEnd = melbourneWallToUtc(nextDayYmd, 0, 0);
+
+  // Single-day occupancy bitmap.
+  const occupied: boolean[] = new Array(1440).fill(false);
+  let paidMinutes = 0;
+  let familyMinutes = 0;
+  let otherCommittedMinutes = 0;
+  let transitMinutes = 0;
+
+  for (const ev of events) {
+    if (ev.allDay) continue;
+    const evStart = new Date(ev.start);
+    const evEnd = new Date(ev.end);
+    if (!(evEnd > dayStart && evStart < dayEnd)) continue;
+
+    const klass = classifyEvent(ev.summary);
+    const clipStart = evStart < dayStart ? dayStart : evStart;
+    const clipEnd = evEnd > dayEnd ? dayEnd : evEnd;
+    if (clipEnd <= clipStart) continue;
+
+    const totalMin = Math.min(
+      Math.ceil((clipEnd.getTime() - clipStart.getTime()) / 60000),
+      1440,
+    );
+    for (let m = 0; m < totalMin; m++) {
+      const inst = new Date(clipStart.getTime() + m * 60000);
+      const { ymd, hours, minutes } = melbourneParts(inst);
+      if (ymd !== todayYmd) continue;
+      const minOfDay = hours * 60 + minutes;
+      if (minOfDay < 0 || minOfDay >= 1440) continue;
+      if (occupied[minOfDay]) continue;
+      occupied[minOfDay] = true;
+      if (!isWakingMinute(minOfDay)) continue;
+      if (klass === "paid_work") paidMinutes += 1;
+      else if (klass === "family") familyMinutes += 1;
+      else otherCommittedMinutes += 1;
+    }
+
+    // Transit (allowMinutes) is keyed by event uid. Sum all of today's events.
+    const t = eventTransitMinutes.get(ev.uid);
+    if (typeof t === "number" && Number.isFinite(t) && t > 0) {
+      transitMinutes += Math.round(t);
+    }
+  }
+
+  const totalDayMinutes = 1440;
+  const wakingPerDay = (SLEEP_START_HOUR - SLEEP_END_HOUR) * 60; // 960
+  const totalWakingMinutes = wakingPerDay;
+  const sleepMinutes = totalDayMinutes - totalWakingMinutes;
+
+  const freeMinutes = Math.max(
+    0,
+    totalWakingMinutes - paidMinutes - familyMinutes - otherCommittedMinutes - transitMinutes,
+  );
+
+  return {
+    todayYmd,
+    totalDayMinutes,
+    sleepMinutes,
+    totalWakingMinutes,
+    paidWorkMinutes: paidMinutes,
+    familyMinutes,
+    otherCommittedMinutes,
+    transitMinutes,
+    freeMinutes,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function computeAvailableHoursThisWeek(
   events: CalEvent[],
   now: Date = new Date(),

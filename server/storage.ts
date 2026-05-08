@@ -506,6 +506,15 @@ for (const stmt of [
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
+  // Morning page restructure (2026-05-09):
+  // - Habits tickboxes (calm focused breathing, medication)
+  // - Reflection mirror columns (mood, cognitive_load, alignment) so the
+  //   Morning page surface is self-contained.
+  "ALTER TABLE morning_routines ADD COLUMN breathing_done INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE morning_routines ADD COLUMN medication_done INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE morning_routines ADD COLUMN mood TEXT",
+  "ALTER TABLE morning_routines ADD COLUMN cognitive_load TEXT",
+  "ALTER TABLE morning_routines ADD COLUMN alignment TEXT",
 ]) {
   try {
     sqlite.exec(stmt);

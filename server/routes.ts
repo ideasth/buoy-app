@@ -10,7 +10,7 @@ import {
   insertGoalSchema,
 } from "@shared/schema";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
-import { computeAvailableHoursThisWeek } from "./available-hours";
+import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
 import { buildPlannerXlsx } from "./planner";
@@ -442,6 +442,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Available hours TODAY (single Melbourne day). Surfaces on the Morning page.
+  // Includes a `transitMinutes` total derived from per-event travel allowMinutes
+  // (same numbers the Today's-events Leave-by labels use).
+  app.get("/api/available-hours/today", async (_req, res) => {
+    try {
+      const events = await getMergedPlannerEvents();
+      const todayEvents = eventsForDate(events, new Date());
+      const locations = storage.listTravelLocations();
+      const homeAddress = storage.getSettings().home_address ?? null;
+      const transitByUid = new Map<string, number>();
+      for (const ev of todayEvents) {
+        if (ev.allDay) continue;
+        const override = storage.getTravelOverride(ev.uid) ?? null;
+        const match = resolveTravel({ event: ev, locations, override, homeAddress });
+        if (match.allowMinutes != null && match.allowMinutes > 0) {
+          transitByUid.set(ev.uid, match.allowMinutes);
+        }
+      }
+      const result = computeAvailableHoursToday(events, transitByUid);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
   // ---- Planner ----
   app.get("/api/planner/events", async (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
@@ -672,6 +697,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "avoidedTask",
       "notes",
       "expressMode",
+      // Habits tickboxes (added 2026-05-09)
+      "breathingDone",
+      "medicationDone",
+      // Reflection mirror columns (added 2026-05-09)
+      "mood",
+      "cognitiveLoad",
+      "alignment",
     ]) {
       if (k in req.body) allowed[k] = req.body[k];
     }

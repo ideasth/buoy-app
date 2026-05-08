@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -16,8 +17,7 @@ import {
 import { Sunrise, Trash2, Check, X, DollarSign } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/Logo";
-import { AvailableHoursCard } from "@/components/AvailableHoursCard";
-import { DailyFactorsCard } from "@/components/DailyFactorsCard";
+import { AvailableHoursTodayCard } from "@/components/AvailableHoursTodayCard";
 import { IssueQuickAdd } from "@/components/IssueQuickAdd";
 import { IssueList } from "@/components/IssueList";
 import { todayDateStr, fmtTime } from "@/lib/anchor";
@@ -34,11 +34,30 @@ type TopPayingTodayResponse = {
   matchedEvent: { uid: string; summary: string | null; start: string; end: string } | null;
 };
 
-const STATE_OPTIONS = [
+// Arousal state — clinical autonomic-arousal axis (replaces older calm/anxious/scattered/flat
+// options as of 2026-05-09). Historical rows may carry legacy values; the UI just won't
+// pre-select them.
+const AROUSAL_STATE_OPTIONS = [
+  { value: "hypo", label: "Hypo" },
   { value: "calm", label: "Calm" },
-  { value: "anxious", label: "Anxious" },
-  { value: "scattered", label: "Scattered" },
-  { value: "flat", label: "Flat" },
+  { value: "hyper", label: "Hyper" },
+];
+
+const MOOD_OPTIONS = [
+  { value: "positive", label: "Positive" },
+  { value: "neutral", label: "Neutral" },
+  { value: "strained", label: "Strained" },
+];
+
+const COGNITIVE_LOAD_OPTIONS = [
+  { value: "low", label: "Low / clear" },
+  { value: "moderate", label: "Moderate" },
+  { value: "high", label: "High (overloaded)" },
+];
+
+const ALIGNMENT_OPTIONS = [
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
 ];
 
 function fmtMelbourneToday(): string {
@@ -87,13 +106,21 @@ export default function Morning() {
     return () => clearInterval(id);
   }, [morning?.startedAt]);
 
-  // Local copies of fields so typing doesn't lag while server saves.
+  // Local field copies so typing doesn't lag while server saves.
+  // Habits
+  const [breathingDone, setBreathingDone] = useState(false);
+  const [medicationDone, setMedicationDone] = useState(false);
+  // Reflection
+  const [arousalState, setArousalState] = useState<string | null>(null);
   const [energy, setEnergy] = useState<number | null>(null);
-  const [stateV, setStateV] = useState<string | null>(null);
   const [sleep, setSleep] = useState<number | null>(null);
+  const [mood, setMood] = useState<string | null>(null);
+  const [cognitiveLoad, setCognitiveLoad] = useState<string | null>(null);
+  const [alignment, setAlignment] = useState<string | null>(null);
+  // Bottom-of-page reflective prompts
   const [gratitude, setGratitude] = useState("");
-  const [avoided, setAvoided] = useState("");
   const [notes, setNotes] = useState("");
+  const [avoided, setAvoided] = useState("");
   const [express, setExpress] = useState(false);
 
   const [braindump, setBraindump] = useState("");
@@ -108,9 +135,14 @@ export default function Morning() {
   useEffect(() => {
     if (!morning || hydrated.current) return;
     hydrated.current = true;
+    setBreathingDone((morning.breathingDone ?? 0) === 1);
+    setMedicationDone((morning.medicationDone ?? 0) === 1);
+    setArousalState(morning.state ?? null);
     setEnergy(morning.energy ?? null);
-    setStateV(morning.state ?? null);
     setSleep(morning.sleepQuality ?? null);
+    setMood(morning.mood ?? null);
+    setCognitiveLoad(morning.cognitiveLoad ?? null);
+    setAlignment(morning.alignment ?? null);
     setGratitude(morning.gratitude ?? "");
     setAvoided(morning.avoidedTask ?? "");
     setNotes(morning.notes ?? "");
@@ -118,16 +150,7 @@ export default function Morning() {
     setBraindump(morning.braindumpRaw ?? "");
     if (morning.braindumpRaw && morning.braindumpRaw.trim().length > 0) {
       setBraindumpDone(true);
-      try {
-        const ids: number[] = morning.braindumpTaskIds
-          ? JSON.parse(morning.braindumpTaskIds)
-          : [];
-        // We'll fill braindumpTasks from /api/tasks if needed in render.
-        setBraindumpTasks([]);
-        void ids; // not used here
-      } catch {
-        // ignore
-      }
+      setBraindumpTasks([]);
     }
     try {
       const ids = morning.topThreeIds ? JSON.parse(morning.topThreeIds) : [];
@@ -155,17 +178,43 @@ export default function Morning() {
     }, 400);
   };
 
+  // Habits
+  const setBreathingAndSave = (v: boolean) => {
+    setBreathingDone(v);
+    queuePatch({ breathingDone: v ? 1 : 0 });
+  };
+  const setMedicationAndSave = (v: boolean) => {
+    setMedicationDone(v);
+    queuePatch({ medicationDone: v ? 1 : 0 });
+  };
+  // Reflection setters
+  const setArousalAndSave = (s: string) => {
+    const next = arousalState === s ? null : s;
+    setArousalState(next);
+    queuePatch({ state: next });
+  };
   const setEnergyAndSave = (n: number) => {
     setEnergy(n);
     queuePatch({ energy: n });
   };
-  const setStateAndSave = (s: string) => {
-    setStateV(s);
-    queuePatch({ state: s });
-  };
   const setSleepAndSave = (n: number) => {
     setSleep(n);
     queuePatch({ sleepQuality: n });
+  };
+  const setMoodAndSave = (s: string) => {
+    const next = mood === s ? null : s;
+    setMood(next);
+    queuePatch({ mood: next });
+  };
+  const setCognitiveLoadAndSave = (s: string) => {
+    const next = cognitiveLoad === s ? null : s;
+    setCognitiveLoad(next);
+    queuePatch({ cognitiveLoad: next });
+  };
+  const setAlignmentAndSave = (s: string) => {
+    const next = alignment === s ? null : s;
+    setAlignment(next);
+    queuePatch({ alignment: next });
   };
   const toggleExpress = (v: boolean) => {
     setExpress(v);
@@ -203,7 +252,6 @@ export default function Morning() {
     try {
       await apiRequest("PATCH", `/api/tasks/${id}`, patch);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      // refresh local mirror
       setBraindumpTasks((arr) =>
         arr.map((t) => (t.id === id ? ({ ...t, ...patch } as Task) : t)),
       );
@@ -266,8 +314,9 @@ export default function Morning() {
     }
   };
 
-  // Section completion booleans
-  const reflectDone = !!energy && !!stateV;
+  // Section completion booleans. Reflection is done when at least the two
+  // required quick-tap fields are set (energy + arousal state).
+  const reflectDone = !!energy && !!arousalState;
   const braindumpComplete = !!braindump && braindump.trim().length > 0;
   const topDone = topThree.length >= 1;
   const allDone = reflectDone && braindumpComplete && topDone;
@@ -321,7 +370,7 @@ export default function Morning() {
         </div>
       </div>
 
-      {/* Today's events with Leave-by (Feature 1) */}
+      {/* Today's events with Leave-by */}
       {timedTravelItems.length > 0 && (
         <div className="mb-6 rounded-lg border border-card-border bg-card" data-testid="morning-todays-events">
           <div className="px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground border-b border-border/60">
@@ -359,7 +408,7 @@ export default function Morning() {
         </div>
       )}
 
-      {/* Top-paying project today (Feature 2) */}
+      {/* Top-paying project today */}
       {topPayingQ.data?.project && (
         <div
           className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium"
@@ -379,13 +428,61 @@ export default function Morning() {
         </div>
       )}
 
-      {/* Section 1: Reflect */}
+      {/* Section: Morning habits */}
+      <section className="space-y-4 mb-12" data-testid="section-morning-habits">
+        <header>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            Morning habits
+          </div>
+          <h2 className="text-xl font-semibold mt-1">Tick when done</h2>
+        </header>
+
+        <div className="rounded-lg border bg-card divide-y divide-border/60">
+          <HabitRow
+            id="habit-breathing"
+            label="Calm focused breathing"
+            checked={breathingDone}
+            onChange={setBreathingAndSave}
+          />
+          <HabitRow
+            id="habit-medication"
+            label="Medication"
+            checked={medicationDone}
+            onChange={setMedicationAndSave}
+          />
+        </div>
+      </section>
+
+      {/* Section 1: Reflection */}
       <section className="space-y-5 mb-12" data-testid="section-reflect">
         <header>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">01 — Reflect</div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">01 — Reflection</div>
           <h2 className="text-xl font-semibold mt-1">How are you arriving?</h2>
         </header>
 
+        {/* Arousal state */}
+        <div className="space-y-2">
+          <div className="text-sm text-muted-foreground">Arousal state</div>
+          <div className="flex flex-wrap gap-2">
+            {AROUSAL_STATE_OPTIONS.map((s) => (
+              <button
+                key={s.value}
+                onClick={() => setArousalAndSave(s.value)}
+                data-testid={`chip-arousal-${s.value}`}
+                className={cn(
+                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
+                  arousalState === s.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border bg-secondary text-secondary-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Energy */}
         <div className="space-y-2">
           <div className="text-sm text-muted-foreground">Energy</div>
           <div className="flex gap-2">
@@ -407,17 +504,37 @@ export default function Morning() {
           </div>
         </div>
 
+        {/* Sleep */}
         <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">State</div>
+          <div className="text-sm text-muted-foreground">Sleep quality</div>
+          <div className="flex gap-1.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setSleepAndSave(n)}
+                data-testid={`button-sleep-${n}`}
+                aria-label={`sleep quality ${n}`}
+                className={cn(
+                  "h-3 w-8 rounded-full transition-colors",
+                  (sleep ?? 0) >= n ? "bg-primary" : "bg-muted",
+                )}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Mood */}
+        <div className="space-y-2">
+          <div className="text-sm text-muted-foreground">Mood</div>
           <div className="flex flex-wrap gap-2">
-            {STATE_OPTIONS.map((s) => (
+            {MOOD_OPTIONS.map((s) => (
               <button
                 key={s.value}
-                onClick={() => setStateAndSave(s.value)}
-                data-testid={`chip-state-${s.value}`}
+                onClick={() => setMoodAndSave(s.value)}
+                data-testid={`chip-mood-${s.value}`}
                 className={cn(
                   "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
-                  stateV === s.value
+                  mood === s.value
                     ? "bg-primary text-primary-foreground border-primary"
                     : "border-border bg-secondary text-secondary-foreground",
                 )}
@@ -428,79 +545,55 @@ export default function Morning() {
           </div>
         </div>
 
-        {!express && (
-          <>
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">Sleep quality</div>
-              <div className="flex gap-1.5">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setSleepAndSave(n)}
-                    data-testid={`button-sleep-${n}`}
-                    aria-label={`sleep quality ${n}`}
-                    className={cn(
-                      "h-3 w-8 rounded-full transition-colors",
-                      (sleep ?? 0) >= n ? "bg-primary" : "bg-muted",
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
+        {/* Cognitive load */}
+        <div className="space-y-2">
+          <div className="text-sm text-muted-foreground">Cognitive load</div>
+          <div className="flex flex-wrap gap-2">
+            {COGNITIVE_LOAD_OPTIONS.map((s) => (
+              <button
+                key={s.value}
+                onClick={() => setCognitiveLoadAndSave(s.value)}
+                data-testid={`chip-cognitive-${s.value}`}
+                className={cn(
+                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
+                  cognitiveLoad === s.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border bg-secondary text-secondary-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-            <div className="space-y-1.5">
-              <Input
-                placeholder="One thing I'm grateful for…"
-                value={gratitude}
-                onChange={(e) => setGratitude(e.target.value)}
-                onBlur={() => queuePatch({ gratitude })}
-                data-testid="input-gratitude"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Textarea
-                placeholder="Free notes…"
-                rows={3}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => queuePatch({ notes })}
-                data-testid="textarea-morning-notes"
-              />
-            </div>
-          </>
-        )}
-
-        <div className="space-y-1.5">
-          <Input
-            placeholder="What am I avoiding?"
-            value={avoided}
-            onChange={(e) => setAvoided(e.target.value)}
-            onBlur={() => queuePatch({ avoidedTask: avoided })}
-            data-testid="input-avoided"
-          />
+        {/* Feeling of alignment (Yes / No) */}
+        <div className="space-y-2">
+          <div className="text-sm text-muted-foreground">Feeling of alignment</div>
+          <div className="flex flex-wrap gap-2">
+            {ALIGNMENT_OPTIONS.map((s) => (
+              <button
+                key={s.value}
+                onClick={() => setAlignmentAndSave(s.value)}
+                data-testid={`chip-alignment-${s.value}`}
+                className={cn(
+                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
+                  alignment === s.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border bg-secondary text-secondary-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {!reflectDone && (
           <div className="text-xs text-muted-foreground">
-            Tap an energy level and a state to mark this section done.
+            Tap an arousal state and an energy level to mark this section done.
           </div>
         )}
-      </section>
-
-      {/* Section 1b: Mood & Factors check-in (compact) */}
-      <section className="space-y-4 mb-12" data-testid="section-daily-factors">
-        <header>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">
-            Mood &amp; factors
-          </div>
-          <h2 className="text-xl font-semibold mt-1">A quick check-in</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Light-touch read on mood, energy, load, sleep, focus, and values alignment.
-            Fill what feels true; come back later for the rest.
-          </p>
-        </header>
-        <DailyFactorsCard variant="compact" />
       </section>
 
       {/* Section 2: Braindump */}
@@ -566,34 +659,7 @@ export default function Morning() {
         )}
       </section>
 
-      {/* Section 2b: Issues mini-section (logs to the Issues page) */}
-      <section className="space-y-4 mb-12" data-testid="section-morning-issues">
-        <header>
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">
-            Anything pressing?
-          </div>
-          <h2 className="text-xl font-semibold mt-1">Log a life issue</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Optional. Tag any pressure that's present this morning. Multiple categories
-            are fine. Manage the full log on the Issues page.
-          </p>
-        </header>
-        <div className="rounded-lg border border-card-border bg-card p-4">
-          <IssueQuickAdd sourcePage="morning" defaultDate={todayDateStr()} />
-        </div>
-        <div className="space-y-2">
-          <div className="text-sm font-medium text-muted-foreground">Today's issues</div>
-          <IssueList
-            from={todayDateStr()}
-            to={todayDateStr()}
-            emptyText="Nothing logged for today yet."
-            showDate={false}
-            compact
-          />
-        </div>
-      </section>
-
-      {/* Section 3: Top 3 */}
+      {/* Section 3: Top 3 + Eligible + Today's available time */}
       <section className="space-y-4 mb-12" data-testid="section-top-three">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
@@ -688,6 +754,22 @@ export default function Morning() {
           )}
         </div>
 
+        {/* Today's available time — what's left after work, family, transit */}
+        <div className="pt-2" data-testid="section-available-hours-today">
+          <header className="mb-3">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              Today
+            </div>
+            <h3 className="text-base font-semibold mt-1">
+              How much time I have today.
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              What's left after paid work, family, and transit.
+            </p>
+          </header>
+          <AvailableHoursTodayCard />
+        </div>
+
         <Button
           size="lg"
           className="w-full"
@@ -699,16 +781,78 @@ export default function Morning() {
         </Button>
       </section>
 
-      {/* Available project time this week */}
-      <section className="mb-12" data-testid="section-available-hours">
-        <header className="mb-3">
+      {/* Section 4: Life issues */}
+      <section className="space-y-4 mb-12" data-testid="section-morning-issues">
+        <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
-            This week
+            04 — Life issues
           </div>
-          <h2 className="text-xl font-semibold mt-1">How much time you actually have.</h2>
+          <h2 className="text-xl font-semibold mt-1">Anything pressing?</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Optional. Tag any pressure that's present this morning. Multiple categories
+            are fine. Manage the full log on the Issues page.
+          </p>
         </header>
-        <AvailableHoursCard variant="compact" />
+        <div className="rounded-lg border border-card-border bg-card p-4">
+          <IssueQuickAdd sourcePage="morning" defaultDate={todayDateStr()} />
+        </div>
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-muted-foreground">Today's issues</div>
+          <IssueList
+            from={todayDateStr()}
+            to={todayDateStr()}
+            emptyText="Nothing logged for today yet."
+            showDate={false}
+            compact
+          />
+        </div>
       </section>
+
+      {/* Bottom-of-page reflective prompts: gratitude, free notes, things avoiding */}
+      {!express && (
+        <section className="space-y-4 mb-12" data-testid="section-bottom-reflective">
+          <header>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              Closing notes
+            </div>
+            <h2 className="text-xl font-semibold mt-1">Before you head off</h2>
+          </header>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">One thing I'm grateful for</label>
+            <Input
+              placeholder="One thing I'm grateful for…"
+              value={gratitude}
+              onChange={(e) => setGratitude(e.target.value)}
+              onBlur={() => queuePatch({ gratitude })}
+              data-testid="input-gratitude"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">Free notes</label>
+            <Textarea
+              placeholder="Free notes…"
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={() => queuePatch({ notes })}
+              data-testid="textarea-morning-notes"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">What am I avoiding?</label>
+            <Input
+              placeholder="What am I avoiding?"
+              value={avoided}
+              onChange={(e) => setAvoided(e.target.value)}
+              onBlur={() => queuePatch({ avoidedTask: avoided })}
+              data-testid="input-avoided"
+            />
+          </div>
+        </section>
+      )}
 
       {/* Floating "Complete morning" FAB when all sections done */}
       {allDone && !morning?.completedAt && (
@@ -732,6 +876,36 @@ export default function Morning() {
         <Logo className="h-1 w-1" />
       </span>
     </div>
+  );
+}
+
+function HabitRow({
+  id,
+  label,
+  checked,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex items-center gap-3 px-4 py-3 cursor-pointer hover-elevate"
+      data-testid={`row-${id}`}
+    >
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(v) => onChange(v === true)}
+        data-testid={`checkbox-${id}`}
+      />
+      <span className={cn("text-sm flex-1", checked && "line-through text-muted-foreground")}>
+        {label}
+      </span>
+    </label>
   );
 }
 
