@@ -423,6 +423,37 @@ CREATE TABLE IF NOT EXISTS coach_messages (
 CREATE INDEX IF NOT EXISTS idx_coach_messages_session ON coach_messages(session_id, created_at);
 `);
 
+// Coach session full-text search (Feature 5 polish, 2026-05-08).
+// Additive virtual table + triggers — does not alter coach_sessions schema.
+// We store summary text directly (not external-content) so triggers stay simple.
+try {
+  sqlite.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS coach_sessions_fts USING fts5(
+      session_id UNINDEXED,
+      summary,
+      tokenize='porter unicode61'
+    );
+    CREATE TRIGGER IF NOT EXISTS coach_sessions_fts_ai AFTER INSERT ON coach_sessions
+      WHEN NEW.summary IS NOT NULL
+      BEGIN
+        INSERT INTO coach_sessions_fts(session_id, summary) VALUES (NEW.id, NEW.summary);
+      END;
+    CREATE TRIGGER IF NOT EXISTS coach_sessions_fts_au AFTER UPDATE OF summary ON coach_sessions
+      BEGIN
+        DELETE FROM coach_sessions_fts WHERE session_id = OLD.id;
+        INSERT INTO coach_sessions_fts(session_id, summary)
+          SELECT NEW.id, NEW.summary WHERE NEW.summary IS NOT NULL;
+      END;
+    CREATE TRIGGER IF NOT EXISTS coach_sessions_fts_ad AFTER DELETE ON coach_sessions
+      BEGIN
+        DELETE FROM coach_sessions_fts WHERE session_id = OLD.id;
+      END;
+  `);
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error("[storage] FTS5 setup failed (search will be unavailable):", err);
+}
+
 // Add new columns to existing tasks table if missing (idempotent)
 for (const stmt of [
   "ALTER TABLE tasks ADD COLUMN from_braindump INTEGER NOT NULL DEFAULT 0",
@@ -1382,6 +1413,88 @@ export class Storage {
       .get(sessionId) as { c: number };
     return row.c;
   }
+
+  // ----- Coach session search (FTS5) -----
+  /**
+   * Full-text search across session summaries. Returns matched sessions
+   * (newest first) with a snippet around the match. Empty/whitespace query
+   * returns []. Tolerates malformed FTS5 syntax by falling back to no results.
+   */
+  searchCoachSessions(
+    q: string,
+    limit = 20,
+  ): Array<{
+    id: number;
+    mode: string;
+    startedAt: number;
+    archivedAt: number | null;
+    summarySnippet: string;
+  }> {
+    const trimmed = q.trim();
+    if (!trimmed) return [];
+    // Quote each token to make it a phrase match; FTS5 tolerates duplicate
+    // quotes and this avoids needing to validate operators.
+    const tokens = trimmed
+      .split(/\s+/)
+      .map((t) => t.replace(/["']/g, ""))
+      .filter(Boolean);
+    if (tokens.length === 0) return [];
+    const fts = tokens.map((t) => `"${t}"`).join(" ");
+    try {
+      const rows = sqlite
+        .prepare(
+          `SELECT cs.id as id,
+                  cs.mode as mode,
+                  cs.started_at as startedAt,
+                  cs.archived_at as archivedAt,
+                  snippet(coach_sessions_fts, 1, '<mark>', '</mark>', '...', 16) as summarySnippet
+           FROM coach_sessions_fts
+           JOIN coach_sessions cs ON cs.id = coach_sessions_fts.session_id
+           WHERE coach_sessions_fts MATCH ?
+           ORDER BY cs.started_at DESC
+           LIMIT ?`,
+        )
+        .all(fts, limit) as Array<{
+        id: number;
+        mode: string;
+        startedAt: number;
+        archivedAt: number | null;
+        summarySnippet: string;
+      }>;
+      return rows;
+    } catch {
+      // Malformed FTS5 syntax or table missing — return empty quietly.
+      return [];
+    }
+  }
+
+  /**
+   * Backfill coach_sessions_fts from existing coach_sessions rows that have
+   * a summary. Idempotent (skips sessions already indexed). Returns the
+   * number of rows inserted.
+   */
+  backfillCoachSessionsFts(): number {
+    try {
+      const rows = sqlite
+        .prepare(
+          `SELECT cs.id as id, cs.summary as summary
+           FROM coach_sessions cs
+           LEFT JOIN coach_sessions_fts f ON f.session_id = cs.id
+           WHERE cs.summary IS NOT NULL AND f.session_id IS NULL`,
+        )
+        .all() as Array<{ id: number; summary: string }>;
+      const insert = sqlite.prepare(
+        "INSERT INTO coach_sessions_fts(session_id, summary) VALUES (?, ?)",
+      );
+      const tx = sqlite.transaction((batch: Array<{ id: number; summary: string }>) => {
+        for (const r of batch) insert.run(r.id, r.summary);
+      });
+      tx(rows);
+      return rows.length;
+    } catch {
+      return 0;
+    }
+  }
 }
 
 export const storage = new Storage();
@@ -1398,5 +1511,18 @@ try {
 } catch (err) {
   // eslint-disable-next-line no-console
   console.error("[storage] coach auto-archive failed:", err);
+}
+
+// Backfill FTS5 index for any sessions that already have summaries (first
+// boot after the FTS5 table was added).
+try {
+  const n = storage.backfillCoachSessionsFts();
+  if (n > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[storage] backfilled ${n} coach session summary(ies) into FTS5 index`);
+  }
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error("[storage] coach FTS backfill failed:", err);
 }
 storage.seedDefaultHabitsIfNeeded();

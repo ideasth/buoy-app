@@ -109,7 +109,7 @@ const REFLECTION_PROMPTS = [
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Admin DB export/import. Both behind requireOrchestrator; import is
   // additionally gated by ANCHOR_DB_IMPORT_ENABLED=1.
-  registerAdminDbRoutes(app, requireOrchestrator);
+  registerAdminDbRoutes(app, requireOrchestrator, requireUserOrOrchestrator);
 
   // ---- Tasks ----
   app.get("/api/tasks", (_req, res) => res.json(storage.listTasks()));

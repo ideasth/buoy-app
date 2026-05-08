@@ -366,16 +366,30 @@ Output style:
 - If proposing a top-3 or an issue patch, mark the suggestion clearly so the UI can offer to apply it. Use a fenced block exactly like:
 
 \`\`\`anchor-action
-{ "type": "top3_candidate", "date": "YYYY-MM-DD", "taskIds": [12, 34, 56] }
+{ "kind": "top3_candidate", "date": "YYYY-MM-DD", "taskIds": [12, 34, 56] }
 \`\`\`
 
 or
 
 \`\`\`anchor-action
-{ "type": "issue_patch", "issueId": 99, "fields": { "status": "in_progress", "domain": "work" } }
+{ "kind": "issue_patch", "issueId": 99, "fields": { "status": "in_progress", "domain": "work" } }
 \`\`\`
 
-Only emit one action block per turn, and only when the user has indicated they want a concrete commitment, not just exploration.`;
+or, when the user is decision-fatigued and yesterday's top-3 still applies:
+
+\`\`\`anchor-action
+{ "kind": "repeat_last_top3", "date": "YYYY-MM-DD" }
+\`\`\`
+
+or, when a priced project in pricedProjects received <30 min of time in lastWeekTimeSpentPerProject (or didn't appear at all) and you want to nudge a slot toward it:
+
+\`\`\`anchor-action
+{ "kind": "swap_in_underworked_project", "date": "YYYY-MM-DD", "slot": 3, "projectId": 42, "taskId": 117 }
+\`\`\`
+
+The slot field is 1, 2, or 3 (which of today's top-3 to replace). Pick the lowest-priority slot the user hasn't already committed to.
+
+Use "kind" (not "type") as the action discriminator. Only emit one action block per turn, and only when the user has indicated they want a concrete commitment, not just exploration.`;
 
 const REFLECT_MODE_INSTRUCTIONS = `You are in REFLECT mode.
 

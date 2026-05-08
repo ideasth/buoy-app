@@ -77,7 +77,12 @@ interface HealthResponse {
 // -- Anchor-action detection ------------------------------------------------
 
 interface AnchorAction {
-  kind: "top3_candidate" | "issue_patch" | string;
+  kind:
+    | "top3_candidate"
+    | "issue_patch"
+    | "repeat_last_top3"
+    | "swap_in_underworked_project"
+    | string;
   payload: any;
   raw: string;
 }
@@ -170,11 +175,35 @@ export default function Coach() {
   const [contextRailOpen, setContextRailOpen] = useState(false);
   const [summaryModalOpen, setSummaryModalOpen] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
+  // Bundle preview shown after POST /sessions returns. The session row exists
+  // server-side at this point; we only activate it after the user confirms.
+  const [pendingSession, setPendingSession] = useState<
+    | { id: number; mode: Mode; bundle: any }
+    | null
+  >(null);
+  // Coach session search (FTS5 over summaries).
+  const [searchQ, setSearchQ] = useState("");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const healthQ = useQuery<HealthResponse>({ queryKey: ["/api/coach/health"] });
   const sessionsQ = useQuery<{ sessions: CoachSessionRow[] }>({
     queryKey: ["/api/coach/sessions"],
+  });
+  const searchTrim = searchQ.trim();
+  const searchActive = searchTrim.length >= 2;
+  const searchQueryUrl = `/api/coach/sessions/search?q=${encodeURIComponent(searchTrim)}`;
+  const searchQ_ = useQuery<{
+    q: string;
+    hits: Array<{
+      id: number;
+      mode: string;
+      startedAt: number;
+      archivedAt: number | null;
+      summarySnippet: string;
+    }>;
+  }>({
+    queryKey: [searchQueryUrl],
+    enabled: searchActive,
   });
 
   const detailQ = useQuery<{
@@ -220,11 +249,9 @@ export default function Coach() {
       const data = await res.json();
       const id = data?.session?.id;
       if (typeof id === "number") {
-        setActiveSessionId(id);
-        setMode(initialMode);
-        setStreamingText("");
-        setStreamingCrisis(false);
-        setDraft("");
+        // Show the context bundle preview before activating. The user can
+        // confirm (start chatting) or cancel (delete the just-created session).
+        setPendingSession({ id, mode: initialMode, bundle: data.bundle ?? null });
         await queryClient.invalidateQueries({ queryKey: ["/api/coach/sessions"] });
       }
     } catch (e: any) {
@@ -397,27 +424,107 @@ export default function Coach() {
   async function applyAction(action: AnchorAction) {
     try {
       if (action.kind === "top3_candidate") {
+        // Accept either {taskIds: [...]} (canonical) or legacy {items: [...]}.
         const date = action.payload.date || bundle?.todayYmd;
-        const items = action.payload.items;
-        if (!date || !Array.isArray(items)) {
-          throw new Error("top3_candidate requires date + items[]");
+        const idsRaw: unknown = action.payload.taskIds ?? action.payload.items;
+        if (!date || !Array.isArray(idsRaw)) {
+          throw new Error("top3_candidate requires date + taskIds[]");
         }
-        await apiRequest("PUT", "/api/top-three", { date, items });
+        const ids = (idsRaw as any[])
+          .map((v) => (typeof v === "number" ? v : typeof v?.taskId === "number" ? v.taskId : null))
+          .filter((v): v is number => typeof v === "number")
+          .slice(0, 3);
+        await apiRequest("PUT", "/api/top-three", {
+          date,
+          taskId1: ids[0] ?? null,
+          taskId2: ids[1] ?? null,
+          taskId3: ids[2] ?? null,
+        });
         toast({ title: "Top 3 updated" });
         await queryClient.invalidateQueries();
       } else if (action.kind === "issue_patch") {
-        const id = action.payload.id;
-        const patch = action.payload.patch;
-        if (typeof id !== "number" || !patch) throw new Error("issue_patch requires id + patch");
+        // Accept either {issueId, fields} (canonical) or legacy {id, patch}.
+        const id = action.payload.issueId ?? action.payload.id;
+        const patch = action.payload.fields ?? action.payload.patch;
+        if (typeof id !== "number" || !patch) throw new Error("issue_patch requires issueId + fields");
         await apiRequest("PATCH", `/api/issues/${id}`, patch);
         toast({ title: "Issue updated" });
         await queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
+      } else if (action.kind === "repeat_last_top3") {
+        // Set today's top-3 to the most recent locked top-3 in the bundle.
+        const date = action.payload.date || bundle?.todayYmd;
+        const history: any[] = bundle?.recentTopThreeHistory ?? [];
+        if (!date || history.length === 0) {
+          throw new Error("repeat_last_top3 needs todayYmd + recentTopThreeHistory");
+        }
+        const last = history[history.length - 1];
+        const ids: number[] = [last?.slot1?.taskId, last?.slot2?.taskId, last?.slot3?.taskId]
+          .filter((v): v is number => typeof v === "number");
+        if (ids.length === 0) throw new Error("last top-3 has no task ids");
+        await apiRequest("PUT", "/api/top-three", {
+          date,
+          taskId1: ids[0] ?? null,
+          taskId2: ids[1] ?? null,
+          taskId3: ids[2] ?? null,
+        });
+        toast({ title: "Top 3 set from last locked day", description: last.date });
+        await queryClient.invalidateQueries();
+      } else if (action.kind === "swap_in_underworked_project") {
+        // Replace one of today's top-3 slots with a task from a priced project
+        // that received <30 min of attention last week. Action payload may
+        // optionally specify {slot: 1|2|3, projectId, taskId}; otherwise we
+        // pick a sensible default.
+        const date = action.payload.date || bundle?.todayYmd;
+        const slot: number = [1, 2, 3].includes(action.payload.slot) ? action.payload.slot : 3;
+        const taskId: number | null =
+          typeof action.payload.taskId === "number" ? action.payload.taskId : null;
+        if (!date || !taskId) {
+          throw new Error("swap_in_underworked_project requires taskId");
+        }
+        const current = bundle?.todayTop3 ?? [];
+        const slotKey = (n: number) => `taskId${n}` as "taskId1" | "taskId2" | "taskId3";
+        const body: Record<string, number | string | null> = {
+          date,
+          taskId1: current.find((t: any) => t.slot === 1)?.taskId ?? null,
+          taskId2: current.find((t: any) => t.slot === 2)?.taskId ?? null,
+          taskId3: current.find((t: any) => t.slot === 3)?.taskId ?? null,
+        };
+        body[slotKey(slot)] = taskId;
+        await apiRequest("PUT", "/api/top-three", body);
+        toast({ title: `Swapped slot ${slot} for under-worked project` });
+        await queryClient.invalidateQueries();
       } else {
         toast({ title: "Unknown action", description: action.kind });
       }
     } catch (e: any) {
       toast({
         title: "Action failed",
+        description: String(e?.message ?? e),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function confirmPendingSession() {
+    if (!pendingSession) return;
+    setActiveSessionId(pendingSession.id);
+    setMode(pendingSession.mode);
+    setStreamingText("");
+    setStreamingCrisis(false);
+    setDraft("");
+    setPendingSession(null);
+  }
+
+  async function cancelPendingSession() {
+    if (!pendingSession) return;
+    const id = pendingSession.id;
+    setPendingSession(null);
+    try {
+      await apiRequest("DELETE", `/api/coach/sessions/${id}`, undefined);
+      await queryClient.invalidateQueries({ queryKey: ["/api/coach/sessions"] });
+    } catch (e: any) {
+      toast({
+        title: "Could not delete pending session",
         description: String(e?.message ?? e),
         variant: "destructive",
       });
@@ -479,9 +586,61 @@ export default function Coach() {
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             Recent sessions
           </div>
-          {sessions.length === 0 && (
+          <input
+            type="search"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder="Search summaries..."
+            className="w-full text-sm rounded-md border border-input bg-background px-2 py-1"
+          />
+          {searchActive && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {searchQ_.data?.hits?.length ?? 0} match
+                {(searchQ_.data?.hits?.length ?? 0) === 1 ? "" : "es"}
+                {searchQ_.isFetching ? " (searching...)" : ""}
+              </div>
+              <div className="flex lg:flex-col gap-2 overflow-x-auto">
+                {(searchQ_.data?.hits ?? []).map((h) => (
+                  <button
+                    key={`hit-${h.id}`}
+                    onClick={() => {
+                      setActiveSessionId(h.id);
+                      setSearchQ("");
+                    }}
+                    className={cn(
+                      "text-left rounded-md border px-3 py-2 text-sm shrink-0 lg:shrink min-w-[220px]",
+                      activeSessionId === h.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-accent",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium capitalize">
+                        {h.mode}
+                        {h.archivedAt ? (
+                          <span className="ml-1 text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
+                            archived
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {fmtTime(h.startedAt)}
+                      </span>
+                    </div>
+                    <div
+                      className="text-xs text-muted-foreground line-clamp-3 mt-1"
+                      dangerouslySetInnerHTML={{ __html: h.summarySnippet || "" }}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {!searchActive && sessions.length === 0 && (
             <div className="text-sm text-muted-foreground italic">No sessions yet.</div>
           )}
+          {!searchActive && (
           <div className="flex lg:flex-col gap-2 overflow-x-auto">
             {sessions.map((s) => (
               <button
@@ -513,6 +672,7 @@ export default function Coach() {
               </button>
             ))}
           </div>
+          )}
         </aside>
 
         {/* Chat column */}
@@ -728,6 +888,34 @@ export default function Coach() {
         </main>
       </div>
 
+      <Dialog
+        open={!!pendingSession}
+        onOpenChange={(open) => {
+          if (!open) cancelPendingSession();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Context bundle for new {pendingSession?.mode === "reflect" ? "Reflect" : "Plan"} session
+            </DialogTitle>
+          </DialogHeader>
+          {pendingSession?.bundle ? (
+            <BundlePreview bundle={pendingSession.bundle} />
+          ) : (
+            <div className="text-sm text-muted-foreground italic">
+              No bundle returned by server.
+            </div>
+          )}
+          <DialogFooter className="sm:justify-between gap-2">
+            <Button variant="ghost" onClick={cancelPendingSession}>
+              Cancel & delete session
+            </Button>
+            <Button onClick={confirmPendingSession}>Looks right — start chatting</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={summaryModalOpen} onOpenChange={setSummaryModalOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -813,4 +1001,137 @@ function MessageBubble({ role, content, streaming, crisis, onApplyAction }: Mess
       </div>
     </div>
   );
+}
+
+// -- Bundle preview ---------------------------------------------------------
+
+interface BundlePreviewProps {
+  bundle: any;
+}
+
+function BundlePreview({ bundle }: BundlePreviewProps) {
+  if (!bundle) return null;
+  const top3: any[] = bundle.todayTop3 ?? [];
+  const avail = bundle.availableHoursThisWeek ?? null;
+  const events: any[] = bundle.upcomingEvents ?? [];
+  const lastWeek: any[] = bundle.lastWeekTimeSpentPerProject ?? [];
+  const top3History: any[] = bundle.recentTopThreeHistory ?? [];
+  const issues: any[] = bundle.openIssues ?? [];
+
+  return (
+    <div className="space-y-3 max-h-[60vh] overflow-y-auto text-sm">
+      <Section label={`Today's top 3 (${bundle.todayYmd ?? ""})`}>
+        {top3.length === 0 ? (
+          <Empty text="No top-3 set." />
+        ) : (
+          <ul className="list-decimal list-inside space-y-0.5">
+            {top3.map((t) => (
+              <li key={t.taskId}>
+                <span className="font-medium">{t.name}</span>{" "}
+                <span className="text-xs text-muted-foreground">({t.status})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section label="Available hours this week">
+        {avail ? (
+          <div className="text-xs">
+            <span className="font-mono">{avail.freeHours.toFixed(1)}h</span> free /{" "}
+            <span className="font-mono">{avail.bookedHours.toFixed(1)}h</span> booked /{" "}
+            <span className="font-mono">{avail.totalHours.toFixed(1)}h</span> total
+          </div>
+        ) : (
+          <Empty text="Not computed." />
+        )}
+      </Section>
+
+      <Section label="Today + tomorrow events">
+        {events.length === 0 ? (
+          <Empty text="No timed events." />
+        ) : (
+          <ul className="space-y-0.5 text-xs">
+            {events.slice(0, 12).map((e, i) => (
+              <li key={i} className="font-mono">
+                <span className="text-muted-foreground">{e.date}</span>{" "}
+                {new Date(e.start).toLocaleTimeString("en-AU", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+                })}
+                {" "}— <span className="font-sans">{e.summary}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section label="Last week — time per priced project">
+        {lastWeek.length === 0 ? (
+          <Empty text="No matched events." />
+        ) : (
+          <ul className="space-y-0.5 text-xs">
+            {lastWeek.slice(0, 8).map((p) => (
+              <li key={p.projectId}>
+                <span className="font-mono">{(p.minutes / 60).toFixed(1)}h</span>{" "}
+                <span>{p.name}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section label="Recent top-3 history">
+        {top3History.length === 0 ? (
+          <Empty text="No history." />
+        ) : (
+          <ul className="space-y-0.5 text-xs">
+            {top3History.slice(-5).map((h, i) => {
+              const items = [h.slot1, h.slot2, h.slot3]
+                .filter(Boolean)
+                .map((x: any) => x.name)
+                .join(" · ");
+              return (
+                <li key={i}>
+                  <span className="font-mono text-muted-foreground">{h.date}</span>{" "}
+                  {items || <span className="italic text-muted-foreground">empty</span>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+
+      <Section label="Open issues">
+        {issues.length === 0 ? (
+          <Empty text="None open." />
+        ) : (
+          <ul className="space-y-0.5 text-xs">
+            {issues.slice(0, 8).map((i) => (
+              <li key={i.id}>
+                <span className="font-mono text-muted-foreground">#{i.id}</span>{" "}
+                <span>{i.note ?? i.category}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <div className="text-xs italic text-muted-foreground">{text}</div>;
 }

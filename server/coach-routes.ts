@@ -101,10 +101,21 @@ export function registerCoachRoutes({
             ? s.summary.slice(0, 220)
             : null,
         messageCount: storage.countCoachMessages(s.id),
-        deepThink: (s as any).deepThink ?? 0,
-        archivedAt: (s as any).archivedAt ?? null,
+        deepThink: s.deepThink ?? 0,
+        archivedAt: s.archivedAt ?? null,
       })),
     });
+  });
+
+  // --- Sessions: search (FTS5 over summaries) --------------------------
+  // Registered before /:id so 'search' is not interpreted as a session id.
+  app.get("/api/coach/sessions/search", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const q = String(req.query.q ?? "").trim();
+    const limit = Math.max(1, Math.min(50, parseInt((req.query.limit as string) || "20", 10)));
+    if (!q) return res.json({ q, hits: [] });
+    const hits = storage.searchCoachSessions(q, limit);
+    res.json({ q, hits });
   });
 
   // --- Sessions: detail -------------------------------------------------
@@ -166,7 +177,7 @@ export function registerCoachRoutes({
       totalOutputTokens: 0,
       deepThink,
       archivedAt: null,
-    } as any);
+    });
 
     res.json({ session, bundle });
   });
@@ -185,12 +196,12 @@ export function registerCoachRoutes({
     const nextDeepThink: 0 | 1 =
       typeof req.body?.deepThink === "boolean"
         ? (req.body.deepThink ? 1 : 0)
-        : ((existing as any).deepThink ?? 0);
+        : ((existing.deepThink ?? 0) as 0 | 1);
     if (req.body?.mode === "plan" || req.body?.mode === "reflect") {
       patch.mode = req.body.mode;
     }
     if (typeof req.body?.deepThink === "boolean") {
-      (patch as any).deepThink = nextDeepThink;
+      patch.deepThink = nextDeepThink;
     }
     // Whenever mode or deepThink changes, recompute modelName so /turn picks
     // up the new value next call.
@@ -215,7 +226,7 @@ export function registerCoachRoutes({
     const id = Number(req.params.id);
     const existing = storage.getCoachSession(id);
     if (!existing) return res.status(404).json({ error: "Session not found" });
-    if ((existing as any).archivedAt) {
+    if (existing.archivedAt) {
       return res.json({ ok: true, alreadyArchived: true, session: existing });
     }
     const updated = storage.archiveCoachSession(id);
@@ -241,7 +252,7 @@ export function registerCoachRoutes({
     const id = Number(req.params.id);
     const session = storage.getCoachSession(id);
     if (!session) return res.status(404).json({ error: "Session not found" });
-    if ((session as any).archivedAt) {
+    if (session.archivedAt) {
       return res
         .status(409)
         .json({ error: "Session is archived (transcript purged); start a new session to continue." });
@@ -260,14 +271,14 @@ export function registerCoachRoutes({
         content: userText,
         modeAtTurn: session.mode,
         tokenCount: null,
-      } as any);
+      });
       storage.appendCoachMessage({
         sessionId: id,
         role: "assistant",
         content: CRISIS_RESPONSE,
         modeAtTurn: session.mode,
         tokenCount: null,
-      } as any);
+      });
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
@@ -288,10 +299,10 @@ export function registerCoachRoutes({
       content: userText,
       modeAtTurn: session.mode,
       tokenCount: null,
-    } as any);
+    });
 
     const mode = session.mode === "reflect" ? "reflect" : "plan";
-    const deepThink: boolean = ((session as any).deepThink ?? 0) === 1;
+    const deepThink: boolean = (session.deepThink ?? 0) === 1;
     const bundle =
       safeParseSnapshot(session.contextSnapshot) ??
       buildCoachContextBundle({
@@ -364,7 +375,7 @@ export function registerCoachRoutes({
         content: cleanText,
         modeAtTurn: mode,
         tokenCount: r.usage.outputTokens,
-      } as any);
+      });
       storage.updateCoachSession(id, {
         totalInputTokens: (session.totalInputTokens ?? 0) + r.usage.inputTokens,
         totalOutputTokens: (session.totalOutputTokens ?? 0) + r.usage.outputTokens,

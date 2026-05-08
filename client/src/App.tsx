@@ -22,6 +22,7 @@ import EmailStatus from "@/pages/EmailStatus";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
 import Issues from "@/pages/Issues";
+import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -47,6 +48,7 @@ function AppRouter() {
       <Route path="/planner" component={CalendarPlanner} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/usage" component={Usage} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );

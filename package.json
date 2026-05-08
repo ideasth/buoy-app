@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
     "import:mstodo": "tsx server/import-mstodo.ts"
   },

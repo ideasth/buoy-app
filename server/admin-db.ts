@@ -23,7 +23,13 @@ const MAX_IMPORT_BYTES = 200 * 1024 * 1024;
 
 type Authed = (req: Request, res: Response) => boolean;
 
-export function registerAdminDbRoutes(app: Express, requireOrchestrator: Authed) {
+export function registerAdminDbRoutes(
+  app: Express,
+  requireOrchestrator: Authed,
+  // Optional: when provided, /api/admin/health accepts user-cookie auth too
+  // (so the in-app /admin dashboard works without prompting for a secret).
+  requireUserOrOrchestrator?: Authed,
+) {
   // -------- EXPORT --------
   // GET /api/admin/db/export
   // Returns a consistent SQLite snapshot. Uses better-sqlite3's native backup
@@ -206,6 +212,92 @@ export function registerAdminDbRoutes(app: Express, requireOrchestrator: Authed)
       exists,
       sizeBytes: size,
       importEnabled: IMPORT_ENABLED,
+    });
+  });
+
+  // -------- HEALTH --------
+  // GET /api/admin/health — read-only ops dashboard endpoint.
+  // Returns DB size + import flag, local backup directory state (best-effort
+  // — only readable when the server runs in the Computer sandbox), and a
+  // static manifest of the scheduled crons that orchestrate this app.
+  // Cron live status is NOT polled here; the published sandbox can't reach
+  // pplx-tool. The user checks runs in the Perplexity scheduler UI.
+  const BACKUPS_DIR = "/home/user/workspace/anchor-backups";
+  const KNOWN_CRONS: Array<{
+    id: string;
+    name: string;
+    cron: string;
+    note: string;
+  }> = [
+    {
+      id: "8e8b7bb5",
+      name: "Anchor data.db weekly backup",
+      cron: "0 17 * * 6",
+      note: "Saturdays 17:00 UTC = Sundays 03:00 AEST. Retune to '0 16 * * 6' on/after 2026-10-05 (AEDT cutover).",
+    },
+  ];
+
+  app.get("/api/admin/health", (req, res) => {
+    const auth = requireUserOrOrchestrator ?? requireOrchestrator;
+    if (!auth(req, res)) return;
+
+    // DB.
+    let dbExists = false;
+    let dbSize = 0;
+    try {
+      const stat = fs.statSync(DB_PATH);
+      dbExists = true;
+      dbSize = stat.size;
+    } catch {
+      /* dbExists stays false */
+    }
+
+    // Backups (best-effort read of local Computer-sandbox path).
+    let backupCount = 0;
+    let lastLocalMtime: number | null = null;
+    let lastLocalPath: string | null = null;
+    let backupsReadable = false;
+    try {
+      const entries = fs.readdirSync(BACKUPS_DIR);
+      backupsReadable = true;
+      const dbFiles = entries.filter((f) => f.startsWith("anchor-") && f.endsWith(".db"));
+      backupCount = dbFiles.length;
+      for (const f of dbFiles) {
+        try {
+          const full = path.join(BACKUPS_DIR, f);
+          const st = fs.statSync(full);
+          const mtime = st.mtimeMs;
+          if (lastLocalMtime === null || mtime > lastLocalMtime) {
+            lastLocalMtime = mtime;
+            lastLocalPath = full;
+          }
+        } catch {
+          /* skip */
+        }
+      }
+    } catch {
+      /* backupsReadable stays false (expected in published sandbox) */
+    }
+
+    res.json({
+      generatedAt: Date.now(),
+      db: {
+        path: DB_PATH,
+        exists: dbExists,
+        sizeBytes: dbSize,
+        importEnabled: IMPORT_ENABLED,
+      },
+      backups: {
+        dir: BACKUPS_DIR,
+        readable: backupsReadable,
+        count: backupCount,
+        lastLocalMtime,
+        lastLocalPath,
+        note: backupsReadable
+          ? null
+          : "Local backup dir not readable from this sandbox. Backups exist on the Computer-side filesystem and are uploaded to OneDrive by cron 8e8b7bb5.",
+      },
+      crons: KNOWN_CRONS,
     });
   });
 }
