@@ -3,8 +3,9 @@ import { useTheme } from "@/hooks/use-theme";
 import { Logo } from "./Logo";
 import { Button } from "@/components/ui/button";
 import { Sun, Moon, Plus, Phone } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LateModal } from "./LateModal";
+import { QuickCaptureModal } from "./QuickCaptureModal";
 import { cn } from "@/lib/utils";
 
 // Sidebar nav. `divider: true` rows render a separator instead of a link.
@@ -34,6 +35,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();
   const [location] = useLocation();
   const [lateOpen, setLateOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+
+  // Global hotkey: ⌘/Ctrl+K opens Quick Capture from anywhere. Skipped when
+  // the active element is a contenteditable region (so it doesn't fight with
+  // editors that bind the same key) and on the /capture page itself (where
+  // the full form already has focus).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        const ae = document.activeElement as HTMLElement | null;
+        if (ae?.isContentEditable) return;
+        if (location === "/capture") return;
+        e.preventDefault();
+        setQuickCaptureOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [location]);
 
   return (
     <div className="min-h-screen w-full flex flex-col md:flex-row bg-background">
@@ -92,8 +112,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Button
             variant="outline"
             className="w-full justify-start gap-2"
-            onClick={() => (window.location.hash = "#/capture")}
+            onClick={() => setQuickCaptureOpen(true)}
             data-testid="button-quick-capture"
+            title="⌘K"
           >
             <Plus className="h-4 w-4" />
             Quick capture
@@ -133,6 +154,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </button>
 
       <LateModal open={lateOpen} onOpenChange={setLateOpen} />
+      <QuickCaptureModal
+        open={quickCaptureOpen}
+        onOpenChange={setQuickCaptureOpen}
+      />
     </div>
   );
 }

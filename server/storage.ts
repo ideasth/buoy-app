@@ -454,6 +454,33 @@ try {
   console.error("[storage] FTS5 setup failed (search will be unavailable):", err);
 }
 
+// Coach context-bundle telemetry + backup receipts (2026-05-08).
+// Both append-only; queried by admin Health card and (later) coach analytics.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS coach_context_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL,
+  message_id INTEGER,
+  mode TEXT NOT NULL,
+  bundle_keys_present TEXT NOT NULL,
+  bundle_keys_referenced TEXT NOT NULL,
+  reference_count INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coach_context_usage_session ON coach_context_usage(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_coach_context_usage_created ON coach_context_usage(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS backup_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  onedrive_url TEXT NOT NULL,
+  mtime INTEGER,
+  size_bytes INTEGER,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_backup_receipts_created ON backup_receipts(created_at DESC);
+`);
+
 // Add new columns to existing tasks table if missing (idempotent)
 for (const stmt of [
   "ALTER TABLE tasks ADD COLUMN from_braindump INTEGER NOT NULL DEFAULT 0",
@@ -1391,6 +1418,27 @@ export class Storage {
     return n;
   }
 
+  /**
+   * List ended coach sessions that have no summary yet and are not archived.
+   * Used by the boot-time backfill worker. Ordered oldest-first so we keep
+   * the historical record consistent.
+   */
+  listCoachSessionsNeedingSummary(limit = 50): CoachSession[] {
+    return db
+      .select()
+      .from(coachSessions)
+      .where(
+        and(
+          sql`${coachSessions.endedAt} IS NOT NULL`,
+          sql`${coachSessions.summary} IS NULL`,
+          sql`${coachSessions.archivedAt} IS NULL`,
+        ),
+      )
+      .orderBy(coachSessions.startedAt)
+      .limit(limit)
+      .all();
+  }
+
   // ----- Coach messages -----
   appendCoachMessage(input: Omit<InsertCoachMessage, "createdAt">): CoachMessage {
     return db
@@ -1428,6 +1476,7 @@ export class Storage {
     mode: string;
     startedAt: number;
     archivedAt: number | null;
+    deepThink: number;
     summarySnippet: string;
   }> {
     const trimmed = q.trim();
@@ -1447,6 +1496,7 @@ export class Storage {
                   cs.mode as mode,
                   cs.started_at as startedAt,
                   cs.archived_at as archivedAt,
+                  cs.deep_think as deepThink,
                   snippet(coach_sessions_fts, 1, '<mark>', '</mark>', '...', 16) as summarySnippet
            FROM coach_sessions_fts
            JOIN coach_sessions cs ON cs.id = coach_sessions_fts.session_id
@@ -1459,6 +1509,7 @@ export class Storage {
         mode: string;
         startedAt: number;
         archivedAt: number | null;
+        deepThink: number;
         summarySnippet: string;
       }>;
       return rows;
@@ -1494,6 +1545,126 @@ export class Storage {
     } catch {
       return 0;
     }
+  }
+
+  // ----- Coach context-bundle telemetry -----
+  recordCoachContextUsage(input: {
+    sessionId: number;
+    messageId?: number | null;
+    mode: string;
+    bundleKeysPresent: string[];
+    bundleKeysReferenced: string[];
+  }): void {
+    try {
+      sqlite
+        .prepare(
+          `INSERT INTO coach_context_usage
+             (session_id, message_id, mode, bundle_keys_present, bundle_keys_referenced, reference_count, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.sessionId,
+          input.messageId ?? null,
+          input.mode,
+          JSON.stringify(input.bundleKeysPresent),
+          JSON.stringify(input.bundleKeysReferenced),
+          input.bundleKeysReferenced.length,
+          Date.now(),
+        );
+    } catch (err) {
+      // Telemetry failures must never break the coach turn.
+      // eslint-disable-next-line no-console
+      console.warn("[storage] recordCoachContextUsage failed:", err);
+    }
+  }
+
+  /**
+   * Aggregate bundle-key reference counts over the last `days` days. Used by
+   * admin Health card to show which context fields the model actually leans
+   * on. Returns array of {key, hits, sessions}.
+   */
+  summariseCoachContextUsage(days = 30): Array<{ key: string; hits: number; sessions: number }> {
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const rows = sqlite
+      .prepare(
+        `SELECT bundle_keys_referenced, session_id
+         FROM coach_context_usage
+         WHERE created_at >= ?`,
+      )
+      .all(cutoff) as Array<{ bundle_keys_referenced: string; session_id: number }>;
+    const hits = new Map<string, number>();
+    const sessions = new Map<string, Set<number>>();
+    for (const r of rows) {
+      let keys: string[] = [];
+      try {
+        keys = JSON.parse(r.bundle_keys_referenced);
+      } catch {
+        keys = [];
+      }
+      for (const k of keys) {
+        hits.set(k, (hits.get(k) ?? 0) + 1);
+        if (!sessions.has(k)) sessions.set(k, new Set());
+        sessions.get(k)!.add(r.session_id);
+      }
+    }
+    const out = Array.from(hits.entries()).map(([key, n]) => ({
+      key,
+      hits: n,
+      sessions: sessions.get(key)?.size ?? 0,
+    }));
+    out.sort((a, b) => b.hits - a.hits);
+    return out;
+  }
+
+  // ----- Backup receipts -----
+  recordBackupReceipt(input: {
+    onedriveUrl: string;
+    mtime?: number | null;
+    sizeBytes?: number | null;
+    note?: string | null;
+  }): { id: number; createdAt: number } {
+    const createdAt = Date.now();
+    const result = sqlite
+      .prepare(
+        `INSERT INTO backup_receipts (onedrive_url, mtime, size_bytes, note, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.onedriveUrl,
+        input.mtime ?? null,
+        input.sizeBytes ?? null,
+        input.note ?? null,
+        createdAt,
+      );
+    return { id: Number(result.lastInsertRowid), createdAt };
+  }
+
+  latestBackupReceipt(): {
+    id: number;
+    onedriveUrl: string;
+    mtime: number | null;
+    sizeBytes: number | null;
+    note: string | null;
+    createdAt: number;
+  } | null {
+    const row = sqlite
+      .prepare(
+        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note, created_at as createdAt
+         FROM backup_receipts
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get() as
+      | {
+          id: number;
+          onedriveUrl: string;
+          mtime: number | null;
+          sizeBytes: number | null;
+          note: string | null;
+          createdAt: number;
+        }
+      | undefined;
+    return row ?? null;
   }
 }
 

@@ -75,39 +75,15 @@ interface HealthResponse {
 }
 
 // -- Anchor-action detection ------------------------------------------------
+//
+// The parser + validator live in @shared/anchor-action so the test suite can
+// exercise the exact same code path. Keep this file thin.
 
-interface AnchorAction {
-  kind:
-    | "top3_candidate"
-    | "issue_patch"
-    | "repeat_last_top3"
-    | "swap_in_underworked_project"
-    | string;
-  payload: any;
-  raw: string;
-}
-
-function extractAnchorActions(text: string): AnchorAction[] {
-  if (!text) return [];
-  const out: AnchorAction[] = [];
-  const re = /```anchor-action\s*\n([\s\S]*?)\n```/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    try {
-      const obj = JSON.parse(m[1]);
-      if (obj && typeof obj === "object" && typeof obj.kind === "string") {
-        out.push({ kind: obj.kind, payload: obj, raw: m[0] });
-      }
-    } catch {
-      // Skip malformed action blocks silently.
-    }
-  }
-  return out;
-}
-
-function stripAnchorActions(text: string): string {
-  return text.replace(/```anchor-action\s*\n[\s\S]*?\n```/g, "").trim();
-}
+import {
+  extractAnchorActions,
+  stripAnchorActions,
+  type ExtractedAnchorAction as AnchorAction,
+} from "@shared/anchor-action";
 
 // -- SSE parser -------------------------------------------------------------
 
@@ -199,6 +175,7 @@ export default function Coach() {
       mode: string;
       startedAt: number;
       archivedAt: number | null;
+      deepThink: number;
       summarySnippet: string;
     }>;
   }>({
@@ -475,7 +452,10 @@ export default function Coach() {
         // optionally specify {slot: 1|2|3, projectId, taskId}; otherwise we
         // pick a sensible default.
         const date = action.payload.date || bundle?.todayYmd;
-        const slot: number = [1, 2, 3].includes(action.payload.slot) ? action.payload.slot : 3;
+        const slot: number =
+          action.payload.slot === 1 || action.payload.slot === 2 || action.payload.slot === 3
+            ? (action.payload.slot as number)
+            : 3;
         const taskId: number | null =
           typeof action.payload.taskId === "number" ? action.payload.taskId : null;
         if (!date || !taskId) {
@@ -616,10 +596,18 @@ export default function Coach() {
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium capitalize">
+                      <span className="font-medium capitalize flex items-center gap-1 flex-wrap">
                         {h.mode}
+                        {h.mode === "plan" && (h.deepThink ?? 0) === 1 ? (
+                          <span
+                            className="text-[10px] uppercase tracking-wider px-1 py-0.5 rounded bg-primary/15 text-primary align-middle"
+                            title="Plan mode used sonar-reasoning-pro"
+                          >
+                            deep
+                          </span>
+                        ) : null}
                         {h.archivedAt ? (
-                          <span className="ml-1 text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
                             archived
                           </span>
                         ) : null}
@@ -654,10 +642,23 @@ export default function Coach() {
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium capitalize">
+                  <span className="font-medium capitalize flex items-center gap-1 flex-wrap">
                     {s.mode}
+                    {/* deep-think badge: only meaningful in plan mode and only
+                        when the per-session flag was on. Lets you scan the
+                        rail and tell which plan sessions used reasoning-pro
+                        before opening them. */}
+                    {s.mode === "plan" && (s.deepThink ?? 0) === 1 ? (
+                      <span
+                        className="text-[10px] uppercase tracking-wider px-1 py-0.5 rounded bg-primary/15 text-primary align-middle"
+                        title="Plan mode used sonar-reasoning-pro for this session"
+                        data-testid={`badge-deepthink-${s.id}`}
+                      >
+                        deep
+                      </span>
+                    ) : null}
                     {s.archivedAt ? (
-                      <span className="ml-1 text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
                         archived
                       </span>
                     ) : null}

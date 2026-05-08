@@ -7,25 +7,39 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { Layout } from "@/components/Layout";
 import NotFound from "@/pages/not-found";
+// Eagerly imported pages (small, hit on first paint or near-first paint).
 import Today from "@/pages/Today";
 import Capture from "@/pages/Capture";
 import Priorities from "@/pages/Priorities";
 import HabitsPage from "@/pages/Habits";
 import Reflect from "@/pages/Reflect";
 import Review from "@/pages/Review";
-import Coach from "@/pages/Coach";
-import CalendarPlanner from "@/pages/CalendarPlanner";
-import SettingsPage from "@/pages/Settings";
 import Morning from "@/pages/Morning";
-import Usage from "@/pages/Usage";
 import EmailStatus from "@/pages/EmailStatus";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
 import Issues from "@/pages/Issues";
-import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+
+// Lazily imported pages — the heavy ones. Each becomes its own JS chunk so
+// initial paint doesn't have to download Coach + CalendarPlanner + the
+// Settings/Usage panels embedded in Admin. Loaded on first navigation.
+const Coach = lazy(() => import("@/pages/Coach"));
+const CalendarPlanner = lazy(() => import("@/pages/CalendarPlanner"));
+const Admin = lazy(() => import("@/pages/Admin"));
+const SettingsPage = lazy(() => import("@/pages/Settings"));
+const Usage = lazy(() => import("@/pages/Usage"));
+
+// Tiny fallback shown for the few hundred ms each lazy chunk takes to fetch.
+// Intentionally minimal — a centred spinner string is less jarring than a
+// full skeleton on a route the user just clicked.
+function LazyFallback() {
+  return (
+    <div className="p-8 text-sm text-muted-foreground italic">Loading…</div>
+  );
+}
 
 // Wraps the hash-location hook to strip any `?query` segment from the path
 // before wouter matches routes. This lets us deep-link to /admin?tab=settings
@@ -58,6 +72,7 @@ function UsageRedirect() {
 
 function AppRouter() {
   return (
+    <Suspense fallback={<LazyFallback />}>
     <Switch>
       <Route path="/" component={Today} />
       <Route path="/morning" component={Morning} />
@@ -81,6 +96,7 @@ function AppRouter() {
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

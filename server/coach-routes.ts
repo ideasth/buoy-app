@@ -24,6 +24,8 @@ import {
   SUMMARY_MODEL,
   type CoachContextBundle,
 } from "./coach-context";
+import { scheduleCoachSummaryBackfill } from "./coach-summary-backfill";
+import { detectReferencedBundleKeys } from "./coach-context-telemetry";
 import type { CalEvent } from "./ics";
 import type { AvailableHoursThisWeek } from "./available-hours";
 import type { CoachMessage, CoachSession } from "@shared/schema";
@@ -369,7 +371,7 @@ export function registerCoachRoutes({
       console.log(`[coach] complete() returned in ${Date.now() - tStart}ms (${r.fullText.length} chars raw, ${cleanText.length} chars clean), aborted=${aborted}, writable=${!res.writableEnded}`);
       // Always persist the assistant message even if the client aborted, so
       // the next page load shows the full conversation.
-      storage.appendCoachMessage({
+      const assistantMsg = storage.appendCoachMessage({
         sessionId: id,
         role: "assistant",
         content: cleanText,
@@ -380,6 +382,21 @@ export function registerCoachRoutes({
         totalInputTokens: (session.totalInputTokens ?? 0) + r.usage.inputTokens,
         totalOutputTokens: (session.totalOutputTokens ?? 0) + r.usage.outputTokens,
       });
+      // Context-bundle telemetry: which bundle keys did the response touch?
+      try {
+        const { bundleKeysPresent, bundleKeysReferenced } =
+          detectReferencedBundleKeys(bundle, cleanText);
+        storage.recordCoachContextUsage({
+          sessionId: id,
+          messageId: assistantMsg.id,
+          mode,
+          bundleKeysPresent,
+          bundleKeysReferenced,
+        });
+      } catch (telemetryErr) {
+        const tm = telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr);
+        console.warn(`[coach] telemetry capture failed: ${tm.slice(0, 200)}`);
+      }
       if (!res.writableEnded) {
         res.write(`event: delta\ndata: ${JSON.stringify({ text: cleanText })}\n\n`);
         res.write(
@@ -484,6 +501,12 @@ export function registerCoachRoutes({
     });
     res.json({ session: updated });
   });
+
+  // Boot-time backfill: catch up any ended sessions whose summary was lost
+  // (e.g. LLM error during /end). Runs once, fire-and-forget, with a small
+  // startup delay. Safe to call multiple times — re-queries and only acts on
+  // remaining nulls.
+  scheduleCoachSummaryBackfill();
 }
 
 // Re-export message type so client can reuse if needed.

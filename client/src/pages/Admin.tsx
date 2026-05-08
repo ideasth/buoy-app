@@ -112,6 +112,14 @@ interface HealthResponse {
     count: number;
     lastLocalMtime: number | null;
     lastLocalPath: string | null;
+    lastReceipt: {
+      id: number;
+      onedriveUrl: string;
+      mtime: number | null;
+      sizeBytes: number | null;
+      note: string | null;
+      createdAt: number;
+    } | null;
     note: string | null;
   };
   crons: Array<{
@@ -120,6 +128,7 @@ interface HealthResponse {
     cron: string;
     note: string;
   }>;
+  coachContextUsage?: Array<{ key: string; hits: number; sessions: number }>;
 }
 
 function fmtBytes(n: number): string {
@@ -263,6 +272,54 @@ function HealthDashboard() {
                   v={<code className="text-xs">{data.backups.lastLocalPath}</code>}
                 />
               )}
+              {data.backups.lastReceipt && (
+                <>
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground mt-3">
+                    Last OneDrive backup
+                  </div>
+                  <Row
+                    k="Recorded"
+                    v={
+                      <>
+                        {fmtAbs(data.backups.lastReceipt.createdAt)}
+                        <span className="text-muted-foreground">
+                          {fmtRelative(data.backups.lastReceipt.createdAt)}
+                        </span>
+                      </>
+                    }
+                  />
+                  <Row
+                    k="OneDrive URL"
+                    v={
+                      <a
+                        href={data.backups.lastReceipt.onedriveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs underline break-all"
+                      >
+                        {data.backups.lastReceipt.onedriveUrl}
+                      </a>
+                    }
+                  />
+                  {data.backups.lastReceipt.sizeBytes != null && (
+                    <Row
+                      k="Size"
+                      v={fmtBytes(data.backups.lastReceipt.sizeBytes)}
+                    />
+                  )}
+                  {data.backups.lastReceipt.note && (
+                    <div className="text-xs text-muted-foreground italic">
+                      {data.backups.lastReceipt.note}
+                    </div>
+                  )}
+                </>
+              )}
+              {!data.backups.lastReceipt && (
+                <div className="text-xs text-muted-foreground italic mt-2">
+                  No OneDrive backup receipt recorded yet. The cron will POST one
+                  on its next successful run.
+                </div>
+              )}
               {data.backups.note && (
                 <div className="text-xs text-muted-foreground italic mt-2">
                   {data.backups.note}
@@ -270,6 +327,28 @@ function HealthDashboard() {
               )}
             </CardContent>
           </Card>
+
+          {data.coachContextUsage && data.coachContextUsage.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Coach context usage (last 30 days)</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-1">
+                <div className="text-xs text-muted-foreground mb-2">
+                  Bundle keys the model actually referenced in plan/reflect responses.
+                  Higher hits = the field is doing real work.
+                </div>
+                {data.coachContextUsage.map((row) => (
+                  <div key={row.key} className="flex items-baseline gap-3">
+                    <code className="text-xs flex-1 min-w-0 break-words">{row.key}</code>
+                    <div className="text-xs text-muted-foreground tabular-nums">
+                      {row.hits} hits / {row.sessions} sessions
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="pb-2">

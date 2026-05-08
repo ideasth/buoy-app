@@ -1,0 +1,26 @@
+# Anchor pre-commit gate.
+#
+# Two checks, fail-fast:
+#   1. Block commits that contain server/baked-secret.ts or
+#      server/baked-llm-keys.ts. These are gitignored but still easy to
+#      accidentally `git add -A` past .gitignore via tooling.
+#   2. tsc --noEmit on the whole repo. Fast on incremental changes, and
+#      stops type errors from ever landing on main.
+#
+# Use `git commit --no-verify` to bypass in genuine emergencies.
+
+# 1. Refuse to commit baked secrets.
+if git diff --cached --name-only | grep -E '^server/baked-(secret|llm-keys)\.ts$' >/dev/null; then
+  echo "pre-commit: refusing to commit a baked secret file." >&2
+  echo "  Remove it from the index: git restore --staged server/baked-*.ts" >&2
+  exit 1
+fi
+
+# 2. Typecheck.
+echo "pre-commit: typechecking..."
+npx tsc --noEmit
+
+# 3. Plan-mode contract regression suite. Cheap (<1s) and catches anchor-action
+# schema drift before it ships.
+echo "pre-commit: running vitest..."
+npx vitest run --reporter=dot

@@ -11,7 +11,7 @@ import fs_promises from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import Database from "better-sqlite3";
-import { rawSqlite } from "./storage";
+import { rawSqlite, storage } from "./storage";
 
 // The cwd-relative path used by storage.ts (`new Database("data.db")`).
 const DB_PATH = path.resolve(process.cwd(), "data.db");
@@ -279,6 +279,22 @@ export function registerAdminDbRoutes(
       /* backupsReadable stays false (expected in published sandbox) */
     }
 
+    // Last OneDrive backup receipt (posted by cron 8e8b7bb5 after a successful upload).
+    let lastReceipt: ReturnType<typeof storage.latestBackupReceipt> = null;
+    try {
+      lastReceipt = storage.latestBackupReceipt();
+    } catch {
+      lastReceipt = null;
+    }
+
+    // Coach context-bundle telemetry (last 30 days, top 10 keys).
+    let coachContextUsage: Array<{ key: string; hits: number; sessions: number }> = [];
+    try {
+      coachContextUsage = storage.summariseCoachContextUsage(30).slice(0, 10);
+    } catch {
+      coachContextUsage = [];
+    }
+
     res.json({
       generatedAt: Date.now(),
       db: {
@@ -293,11 +309,38 @@ export function registerAdminDbRoutes(
         count: backupCount,
         lastLocalMtime,
         lastLocalPath,
+        lastReceipt,
         note: backupsReadable
           ? null
           : "Local backup dir not readable from this sandbox. Backups exist on the Computer-side filesystem and are uploaded to OneDrive by cron 8e8b7bb5.",
       },
       crons: KNOWN_CRONS,
+      coachContextUsage,
     });
+  });
+
+  // POST /api/admin/backup-receipt
+  // Recorded by the weekly backup cron after a successful OneDrive upload.
+  // Payload: { onedriveUrl: string, mtime?: number, sizeBytes?: number, note?: string }
+  // Auth: X-Anchor-Sync-Secret only (no user cookie); this is a cron endpoint.
+  app.post("/api/admin/backup-receipt", express.json({ limit: "4kb" }), (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const onedriveUrl = typeof body.onedriveUrl === "string" ? body.onedriveUrl.trim() : "";
+    if (!onedriveUrl || onedriveUrl.length > 2000) {
+      return res.status(400).json({ error: "onedriveUrl required (string, <=2000 chars)" });
+    }
+    const mtime = typeof body.mtime === "number" && isFinite(body.mtime) ? body.mtime : null;
+    const sizeBytes =
+      typeof body.sizeBytes === "number" && isFinite(body.sizeBytes) ? body.sizeBytes : null;
+    const note =
+      typeof body.note === "string" && body.note.length <= 500 ? body.note : null;
+    try {
+      const r = storage.recordBackupReceipt({ onedriveUrl, mtime, sizeBytes, note });
+      res.json({ ok: true, id: r.id, createdAt: r.createdAt });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "failed to record receipt", detail: msg.slice(0, 400) });
+    }
   });
 }
