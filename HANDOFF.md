@@ -4,6 +4,47 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (22:05 AEST) — Coach polish v2 + admin dashboard + CI gate DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app, bundle `index-Dr3g4p9S.js`. Commit `6859eed` on `main`. TypeScript still strict-clean and now enforced via pre-build hook. Standing rules respected: skipped security review; no cron changes; no data.db edits.
+
+**What changed**
+
+1. **Drizzle type cleanup** — removed all 5 remaining `as any` casts in `server/coach-routes.ts` around `deepThink` / `archivedAt` reads/writes. `npx tsc --noEmit` clean.
+2. **tsc CI gate** — `package.json` adds `"typecheck": "tsc --noEmit"`. `script/build.ts` runs typecheck via `spawnSync` before bundling and aborts on non-zero exit. Escape hatch: `SKIP_TYPECHECK=1 npm run build`.
+3. **Boot-time auto-archive logging** — already gated on `archived > 0` (only logs when something was actually archived). Verified, no edit required.
+4. **Coach session search (FTS5)** — new virtual table `coach_sessions_fts` (porter unicode61 tokenizer) over coachSessions.summary; AI/AU/AD triggers keep it in sync; one-shot `backfillCoachSessionsFts()` runs at boot (logs only when n>0). New endpoint `GET /api/coach/sessions/search?q=…&limit=20` returns `{q, hits:[{id, modelName, mode, status, startedAt, endedAt, snippet}]}`. Registered BEFORE `/:id` to avoid route collision. Quoted-token query construction tolerates arbitrary input.
+5. **Context-bundle preview modal at session start** — `Coach.tsx` `startSession` now creates the session, fetches the detail (which includes `contextBundle`), and pops a `Dialog` with a per-section read-only preview (`BundlePreview` + `Section` + `Empty` components) before the user starts typing. Confirm activates the session; cancel deletes/archives it.
+6. **New anchor-action kinds** — `applyAction` in `Coach.tsx` now handles `repeat_last_top3` (clones the most recent locked top-three to today) and `swap_in_underworked_project` (lock today's slot to a task from the lowest-time-spent active project). Plan-mode instructions in `coach-context.ts` updated: discriminator is now `kind` (not `type`); examples for the two new kinds. Client supports BOTH new payload shape (`taskIds`, `issueId`+`fields`) and legacy (`items`, `id`+`patch`) for backwards compatibility with old transcripts.
+7. **`/api/admin/health` endpoint** — added to `server/admin-db.ts`. Returns `{db: {sizeBytes, importEnabled}, backups: {readable, count, latestMtime?, note?}, crons: [{id, cron, description, dstNote?}]}`. Auth: accepts EITHER user cookie OR `X-Anchor-Sync-Secret` (new optional `requireUserOrOrchestrator` param threaded through `registerAdminDbRoutes` from `routes.ts`). Crons list is a static `KNOWN_CRONS` const because the published sandbox can't run `pplx-tool`; UI explains this.
+8. **`/admin` dashboard page** — new `client/src/pages/Admin.tsx` (read-only). Three cards (DB / Backups / Crons) + Refresh button, uses standard react-query client. Wired into `App.tsx` route + Layout.tsx nav link.
+
+**Smoke tests (live, post-publish)**
+- `GET /api/admin/health` → 200, db.sizeBytes=479232, importEnabled=false, backups.readable=false (expected — Computer-side fs only), crons[0].id="8e8b7bb5" ✓
+- `GET /api/coach/sessions/search?q=top` → 200, `{q:"top", hits:[]}` (no summaries yet on existing sessions, expected) ✓
+- `GET /api/admin/db/status` → 200, db.exists=true ✓
+- Pre-build typecheck hook fired and passed during `npm run build` ✓
+
+**Files modified (commit 6859eed, 11 files, 848+/31-)**
+- `client/src/App.tsx` — `/admin` route + lazy import
+- `client/src/components/Layout.tsx` — Admin nav link
+- `client/src/pages/Coach.tsx` — pendingSession state + bundle preview modal + BundlePreview/Section/Empty components + search box + searchQ query + new applyAction kinds + canonical `kind`+payload (taskIds/issueId/fields) with legacy fallback
+- `client/src/pages/Admin.tsx` (NEW, 236 lines)
+- `package.json` — `typecheck` script
+- `script/build.ts` — pre-build typecheck via spawnSync
+- `server/admin-db.ts` — `/api/admin/health` + optional `requireUserOrOrchestrator` 3rd param
+- `server/coach-context.ts` — PLAN_MODE_INSTRUCTIONS updated: `kind` discriminator + repeat_last_top3 + swap_in_underworked_project examples
+- `server/coach-routes.ts` — 5x `as any` removed; `/api/coach/sessions/search` endpoint placed before `/:id`
+- `server/routes.ts` — passes `requireUserOrOrchestrator` to `registerAdminDbRoutes`
+- `server/storage.ts` — FTS5 virtual table + AI/AU/AD triggers, `searchCoachSessions(q, limit=20)`, `backfillCoachSessionsFts()`, boot-time backfill (n>0 only)
+
+**Follow-ups / open items**
+- DST retune Sun 5 Oct 2026 — still pending (unchanged from previous entry).
+- Backup verification on first cron run Sun 10 May — still pending (unchanged).
+- Backups card on `/admin` shows `readable:false` from the published sandbox — that's by design; if a future need arises to surface backup status from the live site, a small Computer-side endpoint posting metadata to Anchor could fill the gap.
+
+---
+
 ## 2026-05-08 (21:50 AEST) — Coach polish + ops hygiene DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app, bundle `index-DX_YM7vp.js`. TypeScript now strict-clean (`tsc --noEmit` zero errors). Standing rules respected: skipped security review; no data.db edits beyond additive `coach_sessions` ALTER TABLE migrations; new weekly backup cron added with explicit user approval (cron id `8e8b7bb5`).
