@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { domainLabel } from "@/lib/anchor";
 import { Plus, Trash2, MapPin } from "lucide-react";
 
 interface SettingsView {
@@ -342,8 +341,14 @@ function SecuritySection() {
 
 function TravelLocationsSection() {
   const { toast } = useToast();
-  const q = useQuery<TravelLocation[]>({ queryKey: ["/api/travel-locations"] });
-  const locations = q.data ?? [];
+  // Server returns { locations: TravelLocation[] }. Unwrap defensively so a shape
+  // change can't blank the whole Settings page (this was the symptom we hit).
+  const q = useQuery<{ locations: TravelLocation[] } | TravelLocation[]>({
+    queryKey: ["/api/travel-locations"],
+  });
+  const locations: TravelLocation[] = Array.isArray(q.data)
+    ? q.data
+    : q.data?.locations ?? [];
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);

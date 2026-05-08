@@ -7,22 +7,27 @@ import { useState } from "react";
 import { LateModal } from "./LateModal";
 import { cn } from "@/lib/utils";
 
-const NAV = [
-  { href: "/morning", label: "Morning" },
-  { href: "/", label: "Today" },
+// Sidebar nav. `divider: true` rows render a separator instead of a link.
+// Order requested by the user; Admin is now the consolidated
+// Health + Usage + Settings page (see /pages/Admin.tsx).
+type NavItem = { href: string; label: string } | { divider: true };
+const NAV: NavItem[] = [
+  { href: "/coach", label: "Coach" },
   { href: "/capture", label: "Capture" },
+  { divider: true },
+  { href: "/", label: "Today" },
+  { href: "/calendar-planner", label: "Calendar" },
+  { href: "/morning", label: "Morning" },
+  { href: "/reflect", label: "Reflect" },
+  { href: "/review", label: "Review" },
+  { divider: true },
+  { href: "/priorities", label: "Priorities" },
   { href: "/email-status", label: "Email Status" },
   { href: "/projects", label: "Projects" },
-  { href: "/priorities", label: "Priorities" },
-  { href: "/calendar-planner", label: "Calendar" },
-  { href: "/habits", label: "Habits" },
-  { href: "/reflect", label: "Reflect" },
-  { href: "/coach", label: "Coach" },
-  { href: "/review", label: "Review" },
   { href: "/issues", label: "Issues" },
-  { href: "/usage", label: "Usage" },
+  { href: "/habits", label: "Habits" },
+  { divider: true },
   { href: "/admin", label: "Admin" },
-  { href: "/settings", label: "Settings" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -52,13 +57,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <nav className="px-2 pb-2 md:pb-0 flex md:flex-col gap-1 overflow-x-auto">
-          {NAV.map((item) => {
+          {NAV.map((item, idx) => {
+            if ("divider" in item) {
+              // On md+ a horizontal rule; on mobile (horizontal-scroll nav) a thin
+              // vertical divider so groups still feel separated.
+              return (
+                <div
+                  key={`div-${idx}`}
+                  role="separator"
+                  aria-orientation="horizontal"
+                  className="md:my-1 md:h-px md:w-full md:bg-sidebar-border md:mx-1 mx-1 my-2 w-px h-6 bg-sidebar-border self-center shrink-0"
+                />
+              );
+            }
             const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                data-testid={`link-nav-${item.label.toLowerCase()}`}
+                data-testid={`link-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
                 className={cn(
                   "px-3 py-2 rounded-md text-sm whitespace-nowrap hover-elevate active-elevate-2",
                   isActive

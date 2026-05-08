@@ -27,6 +27,35 @@ import Login from "@/pages/Login";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 
+// Wraps the hash-location hook to strip any `?query` segment from the path
+// before wouter matches routes. This lets us deep-link to /admin?tab=settings
+// (used by the SettingsRedirect / UsageRedirect components below) while still
+// matching the plain `/admin` route. The setter is unchanged, so navigations
+// can still pass a query and Admin.tsx will read it from window.location.hash.
+function useHashLocationStripQuery(): [string, (to: string, opts?: any) => void] {
+  const [hashPath, navigate] = useHashLocation();
+  const qIdx = hashPath.indexOf("?");
+  const pathOnly = qIdx >= 0 ? hashPath.slice(0, qIdx) : hashPath;
+  return [pathOnly, navigate as (to: string, opts?: any) => void];
+}
+
+// Lightweight redirect components for the legacy /settings and /usage paths.
+// They land on /admin with the right tab pre-selected via ?tab=.
+function SettingsRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/admin?tab=settings", { replace: true });
+  }, [navigate]);
+  return null;
+}
+function UsageRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/admin?tab=usage", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
 function AppRouter() {
   return (
     <Switch>
@@ -46,8 +75,9 @@ function AppRouter() {
       {/* Legacy redirects — keep deep links + bookmarks working */}
       <Route path="/calendar" component={CalendarPlanner} />
       <Route path="/planner" component={CalendarPlanner} />
-      <Route path="/settings" component={SettingsPage} />
-      <Route path="/usage" component={Usage} />
+      {/* Settings and Usage are now tabs inside /admin. Preserve old links. */}
+      <Route path="/settings" component={SettingsRedirect} />
+      <Route path="/usage" component={UsageRedirect} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
@@ -61,7 +91,7 @@ function MorningGuard() {
 
   useEffect(() => {
     if (checked.current) return;
-    if (location === "/morning" || location === "/settings") return;
+    if (location === "/morning" || location === "/admin" || location === "/settings") return;
 
     // Use Intl to read Melbourne hour cheaply.
     const melbHour = Number(
@@ -135,7 +165,7 @@ function AuthGate() {
   }
 
   return (
-    <Router hook={useHashLocation}>
+    <Router hook={useHashLocationStripQuery}>
       <MorningGuard />
       <Layout>
         <AppRouter />

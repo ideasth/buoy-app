@@ -1,13 +1,102 @@
-// /admin — read-only ops dashboard.
+// /admin — combined ops + usage + settings.
 //
-// Renders /api/admin/health: DB size + import flag, local backup directory
-// state, and the static cron manifest. Refresh button re-fetches.
+// Three tabs share this URL: Health (read-only ops dashboard backed by
+// /api/admin/health), Usage (token/cost telemetry), and Settings (user prefs).
+// Tab state is mirrored in the URL hash query (?tab=health|usage|settings)
+// so deep-links and the back button both work, and the legacy /settings and
+// /usage paths can route in via #/admin?tab=settings.
 
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
+import Usage from "@/pages/Usage";
+import SettingsPage from "@/pages/Settings";
+
+type AdminTab = "health" | "usage" | "settings";
+
+function readTabFromHash(): AdminTab {
+  if (typeof window === "undefined") return "health";
+  const hash = window.location.hash || "";
+  const qIdx = hash.indexOf("?");
+  if (qIdx < 0) return "health";
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  const t = params.get("tab");
+  if (t === "usage" || t === "settings" || t === "health") return t;
+  return "health";
+}
+
+function writeTabToHash(tab: AdminTab) {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash || "#/admin";
+  const [path] = hash.split("?");
+  const next = tab === "health" ? path : `${path}?tab=${tab}`;
+  if (next !== hash) {
+    // replaceState avoids polluting back history with each tab switch
+    window.history.replaceState(null, "", next);
+  }
+}
+
+export default function Admin() {
+  const [tab, setTab] = useState<AdminTab>(() => readTabFromHash());
+
+  // Listen for back/forward navigation and external hash changes
+  useEffect(() => {
+    const onHash = () => setTab(readTabFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const change = (next: string) => {
+    const t = (next as AdminTab) ?? "health";
+    setTab(t);
+    writeTabToHash(t);
+  };
+
+  return (
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold">Admin</h1>
+        <p className="text-sm text-muted-foreground">
+          Ops health, usage telemetry, and user settings.
+        </p>
+      </div>
+
+      <Tabs value={tab} onValueChange={change}>
+        <TabsList>
+          <TabsTrigger value="health" data-testid="tab-health">
+            Health
+          </TabsTrigger>
+          <TabsTrigger value="usage" data-testid="tab-usage">
+            Usage
+          </TabsTrigger>
+          <TabsTrigger value="settings" data-testid="tab-settings">
+            Settings
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="health" className="mt-4">
+          <HealthDashboard />
+        </TabsContent>
+
+        <TabsContent value="usage" className="mt-4">
+          {/* Re-uses the standalone Usage page component verbatim. */}
+          <Usage />
+        </TabsContent>
+
+        <TabsContent value="settings" className="mt-4">
+          {/* Re-uses the standalone Settings page component verbatim. */}
+          <SettingsPage />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ----- Health dashboard (was the entire Admin page before consolidation) -----
 
 interface HealthResponse {
   generatedAt: number;
@@ -73,20 +162,16 @@ function fmtRelative(ms: number | null | undefined): string {
   return ` (${days}d ago)`;
 }
 
-export default function Admin() {
+function HealthDashboard() {
   const q = useQuery<HealthResponse>({ queryKey: ["/api/admin/health"] });
-
   const data = q.data;
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold">Admin</h1>
-          <p className="text-sm text-muted-foreground">
-            Read-only ops dashboard. DB, local backups, and scheduled crons.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Read-only ops dashboard. DB, local backups, and scheduled crons.
+        </p>
         <Button
           size="sm"
           variant="outline"
