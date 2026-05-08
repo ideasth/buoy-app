@@ -15,6 +15,49 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (01:45 AEST) — Admin ICS feeds: published-feeds sub-section DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103, 6 published-feed labels and the `cal-07ec8bc0` repo URL all confirmed baked into `Admin-CtVXxov1.js`. Live `/api/admin/health` still returns 2 upstream feeds.
+
+**Why.** User asked to add a list of 6 named per-category ICS calendars (Oliver — Work / Personal, Family, Marieke — Art / Personal, plus Master) to the Admin page with iPhone / iPad / Mac setup instructions. The URLs they pasted first were signed `sites.pplx.app/sites/proxy/<JWT>` proxy URLs that expire Sun 10 May 17:47 AEST (~40h). I asked where the stable form lives; they pointed at `https://raw.githubusercontent.com/ideasth/cal-07ec8bc0/main/<file>.ics`. Verified all 6 return HTTP 200 with real VEVENT counts (Work: 990, Personal: 1, Family: 1242, Marieke-Art: 51, Marieke-Personal: 148, Master: 1799). The Master count of 1799 matches the live `calendar_ics_url` cache event count from yesterday's smoke, so MASTER is what `calendar_ics_url` already points to.
+
+**What was implemented**
+
+- **`client/src/pages/Admin.tsx`** — IcsFeedsCard restructured into two labelled sub-sections:
+
+  1. **Upstream feeds (Anchor reads these)** — unchanged: the existing 2-feed diagnostic block driven by `/api/admin/health.icsFeeds`, with per-feed cache status dot, event count, mask/full URL toggle by auth path. Now under an explicit uppercase tracking-wider label so it doesn't get confused with sub-section 2.
+
+  2. **Subscribe to your calendars** (NEW) — a static `PUBLISHED_FEEDS` array hard-coded into the component with the 6 GitHub raw URLs, each rendered as a card with: label, plaintext filename link (anchor with `target="_blank" rel="noopener noreferrer"`), one-line description, full URL in monospace, Copy button. The Copy state uses a `pub:` prefix in the keyspace so it doesn't collide with the upstream-feed Copy buttons. No privacy gating: these URLs are public (read-only GitHub raw, no credentials in the URL itself).
+
+- Replaced the old single "Subscribe instructions (per device)" `<details>` with three separate collapsibles — **Setup — iPhone / iPad** (with the user's exact wording about long-press → Copy), **Setup — Mac**, and **Setup — Outlook (web and desktop)**. Outlook stays on a single combined details since the user's instructions only covered iPhone / iPad and Mac; rather than drop Outlook I kept it as the same generic block as before.
+
+**Visual QA**
+
+Captured a 1280px screenshot via Playwright after signing into a local cookie session. Verified: card hierarchy is clear, no text overflow, Copy buttons sit right-edge with the URL code element flexing left, descriptions wrap cleanly on a desktop viewport, the three setup sections collapse by default. Spotted and fixed one nit — the link text generation was `f.label.replace(/\s+/g,"-").replace(/—/g,"-")` which produced `Oliver---Work.ics` (em-dash already had spaces around it). Replaced with `f.url.split("/").pop()` so it just shows the actual filename. Re-built before publish.
+
+**Live verification**
+
+```
+curl -s https://anchor-jod.pplx.app/assets/Admin-CtVXxov1.js | grep -oE "<filename>.ics|cal-07ec8bc0"
+```
+
+Returns all 6 filenames + `cal-07ec8bc0` + `raw.githubusercontent.com`. The card renders for any authenticated user; cookie-only sessions still see masked URLs in the upstream-feeds sub-section but FULL URLs in the subscribe sub-section (correct — they're meant to be subscribed to from the user's phone).
+
+**Files changed**
+
+- `client/src/pages/Admin.tsx` (+105 lines: PUBLISHED_FEEDS const, restructured IcsFeedsCard, 3 setup details)
+- `HANDOFF.md` (this entry)
+
+**Trade-off accepted**
+
+The 6 URLs are hard-coded in source. If the user adds a 7th category to `cal-07ec8bc0`, they (or I) need to ship a build to surface it. Alternative: a settings array driven by the DB, but that's overkill for a list that has changed once in 6 months and is owned by the same person who owns the build pipeline.
+
+**Follow-ups**
+
+- The `cal-07ec8bc0` repo isn't documented anywhere in this codebase or in `CONTEXT.md`. If a future agent needs to understand the relationship between Anchor, the `live-sync` project, and `cal-07ec8bc0`, they'll have to follow links from this entry. Worth a short paragraph in `CONTEXT.md` once the user confirms the relationship is stable.
+
+---
+
 ## 2026-05-09 (01:15 AEST) — Admin ICS feeds card DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103 (no test changes — UI + privacy-gated read endpoint). Privacy gating verified locally on both auth paths (sync-secret → full URL, cookie → url=null + masked only) and on the live endpoint with sync-secret (1799 events on Personal feed, 73 on AUPFHS, both fresh).
