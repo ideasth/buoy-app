@@ -72,7 +72,11 @@ export function registerCoachRoutes({
     res.json({
       available: llm.isAvailable(),
       provider: llm.providerId,
-      models: { plan: modelForMode("plan"), reflect: modelForMode("reflect") },
+      models: {
+        plan: modelForMode("plan", false),
+        planDeepThink: modelForMode("plan", true),
+        reflect: modelForMode("reflect"),
+      },
     });
   });
 
@@ -97,6 +101,8 @@ export function registerCoachRoutes({
             ? s.summary.slice(0, 220)
             : null,
         messageCount: storage.countCoachMessages(s.id),
+        deepThink: (s as any).deepThink ?? 0,
+        archivedAt: (s as any).archivedAt ?? null,
       })),
     });
   });
@@ -136,6 +142,7 @@ export function registerCoachRoutes({
     const mode = asMode(req.body?.mode);
     const linkedIssueId =
       typeof req.body?.linkedIssueId === "number" ? req.body.linkedIssueId : null;
+    const deepThink = req.body?.deepThink === true || req.body?.deepThink === 1 ? 1 : 0;
 
     const events = await getMergedPlannerEvents();
     let availableHours: ReturnType<typeof computeAvailableHoursThisWeek> | null = null;
@@ -154,9 +161,11 @@ export function registerCoachRoutes({
       linkedIssueId: linkedIssueId ?? null,
       linkedYmd: bundle.todayYmd,
       modelProvider: llm.providerId,
-      modelName: modelForMode(mode),
+      modelName: modelForMode(mode, deepThink === 1),
       totalInputTokens: 0,
       totalOutputTokens: 0,
+      deepThink,
+      archivedAt: null,
     } as any);
 
     res.json({ session, bundle });
@@ -169,9 +178,28 @@ export function registerCoachRoutes({
     const existing = storage.getCoachSession(id);
     if (!existing) return res.status(404).json({ error: "Session not found" });
     const patch: Partial<CoachSession> = {};
+    const nextMode: "plan" | "reflect" =
+      req.body?.mode === "plan" || req.body?.mode === "reflect"
+        ? req.body.mode
+        : (existing.mode as "plan" | "reflect");
+    const nextDeepThink: 0 | 1 =
+      typeof req.body?.deepThink === "boolean"
+        ? (req.body.deepThink ? 1 : 0)
+        : ((existing as any).deepThink ?? 0);
     if (req.body?.mode === "plan" || req.body?.mode === "reflect") {
       patch.mode = req.body.mode;
-      patch.modelName = modelForMode(req.body.mode);
+    }
+    if (typeof req.body?.deepThink === "boolean") {
+      (patch as any).deepThink = nextDeepThink;
+    }
+    // Whenever mode or deepThink changes, recompute modelName so /turn picks
+    // up the new value next call.
+    if (
+      req.body?.mode === "plan" ||
+      req.body?.mode === "reflect" ||
+      typeof req.body?.deepThink === "boolean"
+    ) {
+      patch.modelName = modelForMode(nextMode, nextDeepThink === 1);
     }
     if ("linkedIssueId" in (req.body ?? {})) {
       const v = req.body.linkedIssueId;
@@ -179,6 +207,19 @@ export function registerCoachRoutes({
     }
     const updated = storage.updateCoachSession(id, patch);
     res.json({ session: updated });
+  });
+
+  // --- Sessions: archive (soft, retains row + summary, drops transcript) ---
+  app.post("/api/coach/sessions/:id/archive", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = Number(req.params.id);
+    const existing = storage.getCoachSession(id);
+    if (!existing) return res.status(404).json({ error: "Session not found" });
+    if ((existing as any).archivedAt) {
+      return res.json({ ok: true, alreadyArchived: true, session: existing });
+    }
+    const updated = storage.archiveCoachSession(id);
+    res.json({ ok: true, session: updated });
   });
 
   // --- Sessions: delete -------------------------------------------------
@@ -200,6 +241,11 @@ export function registerCoachRoutes({
     const id = Number(req.params.id);
     const session = storage.getCoachSession(id);
     if (!session) return res.status(404).json({ error: "Session not found" });
+    if ((session as any).archivedAt) {
+      return res
+        .status(409)
+        .json({ error: "Session is archived (transcript purged); start a new session to continue." });
+    }
     const userText: string = String(req.body?.content ?? "").trim();
     if (!userText) return res.status(400).json({ error: "content is required" });
     if (userText.length > 8000)
@@ -245,6 +291,7 @@ export function registerCoachRoutes({
     } as any);
 
     const mode = session.mode === "reflect" ? "reflect" : "plan";
+    const deepThink: boolean = ((session as any).deepThink ?? 0) === 1;
     const bundle =
       safeParseSnapshot(session.contextSnapshot) ??
       buildCoachContextBundle({
@@ -290,7 +337,7 @@ export function registerCoachRoutes({
     });
 
     const tStart = Date.now();
-    console.log(`[coach] turn started session=${id} mode=${mode} model=${modelForMode(mode)}`);
+    console.log(`[coach] turn started session=${id} mode=${mode} deepThink=${deepThink} model=${modelForMode(mode, deepThink)}`);
 
     // Reliability over fancy: published-sandbox SSE relay can swallow
     // upstream streaming chunks. Use non-streaming complete() and emit the
@@ -298,7 +345,7 @@ export function registerCoachRoutes({
     // client can be upgraded to true streaming later without changes.
     try {
       const r = await llm.complete({
-        model: modelForMode(mode),
+        model: modelForMode(mode, deepThink),
         messages,
         temperature: mode === "reflect" ? 0.55 : 0.4,
         maxTokens: 1200,

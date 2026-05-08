@@ -440,6 +440,12 @@ export const coachSessions = sqliteTable("coach_sessions", {
   modelName: text("model_name").notNull().default("sonar-pro"),
   totalInputTokens: integer("total_input_tokens").notNull().default(0),
   totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+  // Plan-mode opt-in: if 1, plan turns use sonar-reasoning-pro instead of
+  // sonar-pro. Per-session, not global. Default 0 (off).
+  deepThink: integer("deep_think").notNull().default(0),
+  // Retention: when set, the transcript has been purged but summary kept.
+  // Display in history as read-only with the summary only.
+  archivedAt: integer("archived_at"),
 });
 export type CoachSession = typeof coachSessions.$inferSelect;
 export type InsertCoachSession = typeof coachSessions.$inferInsert;

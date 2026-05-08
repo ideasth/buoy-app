@@ -434,6 +434,9 @@ for (const stmt of [
   "ALTER TABLE projects ADD COLUMN is_primary_future_income INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE projects ADD COLUMN community_benefit INTEGER",
   "ALTER TABLE projects ADD COLUMN professional_kudos INTEGER",
+  // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
+  "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
 ]) {
   try {
     sqlite.exec(stmt);
@@ -630,6 +633,20 @@ export class Storage {
   lockTopThree(date: string): TopThree | undefined {
     db.update(topThree).set({ lockedAt: Date.now() }).where(eq(topThree.date, date)).run();
     return this.getTopThree(date);
+  }
+  /** Top-3 rows between two YYYY-MM-DD dates (inclusive), oldest first. */
+  listTopThreeBetween(fromYmd: string, toYmd: string): TopThree[] {
+    return db
+      .select()
+      .from(topThree)
+      .where(
+        and(
+          gte(topThree.date, fromYmd),
+          lte(topThree.date, toYmd),
+        ),
+      )
+      .orderBy(topThree.date)
+      .all();
   }
 
   // ----- Habits -----
@@ -1304,6 +1321,44 @@ export class Storage {
     db.delete(coachMessages).where(eq(coachMessages.sessionId, id)).run();
     db.delete(coachSessions).where(eq(coachSessions.id, id)).run();
   }
+  /**
+   * Soft-archive a session: drop the transcript but keep the session row +
+   * summary so history remains useful as long-running context. Sets
+   * archivedAt to now.
+   */
+  archiveCoachSession(id: number): CoachSession | undefined {
+    db.delete(coachMessages).where(eq(coachMessages.sessionId, id)).run();
+    db.update(coachSessions)
+      .set({ archivedAt: Date.now() })
+      .where(eq(coachSessions.id, id))
+      .run();
+    return this.getCoachSession(id);
+  }
+  /**
+   * Auto-archive sessions whose startedAt is older than `olderThanMs`. Only
+   * archives ended sessions that still have transcripts. Returns the number
+   * of sessions archived.
+   */
+  autoArchiveOldCoachSessions(olderThanMs: number): number {
+    const cutoff = Date.now() - olderThanMs;
+    const targets = db
+      .select()
+      .from(coachSessions)
+      .where(
+        and(
+          lte(coachSessions.startedAt, cutoff),
+          sql`${coachSessions.archivedAt} IS NULL`,
+          sql`${coachSessions.endedAt} IS NOT NULL`,
+        ),
+      )
+      .all();
+    let n = 0;
+    for (const s of targets) {
+      this.archiveCoachSession(s.id);
+      n += 1;
+    }
+    return n;
+  }
 
   // ----- Coach messages -----
   appendCoachMessage(input: Omit<InsertCoachMessage, "createdAt">): CoachMessage {
@@ -1330,4 +1385,18 @@ export class Storage {
 }
 
 export const storage = new Storage();
+
+// Coach session retention: on boot, auto-archive any ended sessions older
+// than 90 days (drops transcript, keeps row + summary).
+try {
+  const NINETY_DAYS_MS = 90 * 24 * 3600 * 1000;
+  const archived = storage.autoArchiveOldCoachSessions(NINETY_DAYS_MS);
+  if (archived > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[storage] auto-archived ${archived} coach session(s) older than 90 days`);
+  }
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error("[storage] coach auto-archive failed:", err);
+}
 storage.seedDefaultHabitsIfNeeded();

@@ -94,6 +94,23 @@ export interface CoachContextBundle {
   }>;
   // Projects with currentIncomePerHour set (so the model can reason about $/hr).
   pricedProjects: Array<{ id: number; name: string; currentIncomePerHour: number | null }>;
+  // Last 7 days of calendar time matched against priced projects (best-effort).
+  // Helps the coach reason about where the user actually spent time vs intent.
+  lastWeekTimeSpentPerProject: Array<{
+    projectId: number;
+    name: string;
+    minutes: number;
+    matchedEventCount: number;
+    currentIncomePerHour: number | null;
+  }>;
+  // Last 7 days of locked top-three (oldest -> newest), so the coach can see
+  // what the user has been deciding to prioritise day-by-day.
+  recentTopThreeHistory: Array<{
+    date: string;
+    slot1?: { taskId: number; name: string; status: string } | null;
+    slot2?: { taskId: number; name: string; status: string } | null;
+    slot3?: { taskId: number; name: string; status: string } | null;
+  }>;
 }
 
 
@@ -216,13 +233,73 @@ export function buildCoachContextBundle({
       summary: typeof s.summary === "string" ? s.summary : JSON.stringify(s.summary ?? {}),
     }));
 
-  const pricedProjects = storage
-    .listProjects()
+  const allProjects = storage.listProjects();
+  const pricedProjects = allProjects
     .filter((p) => (p as any).currentIncomePerHour != null)
     .map((p) => ({
       id: p.id,
       name: p.name,
       currentIncomePerHour: (p as any).currentIncomePerHour ?? null,
+    }));
+
+  // -- Last 7 days time spent per project (best-effort calendar match) --
+  // Mirrors /api/projects/top-paying-today matching: case-insensitive substring
+  // on summary+location+description, project name needle >= 3 chars. We only
+  // count active projects; a project may have multiple priced phases but the
+  // event level is too coarse to attribute to phases reliably.
+  const activeProjects = allProjects.filter((p) => p.status === "active");
+  type ProjAccum = { project: typeof activeProjects[number]; minutes: number; count: number };
+  const projAccum = new Map<number, ProjAccum>();
+  const sevenDaysAgoMs = Date.now() - 7 * 24 * 3600_000;
+  for (const ev of events) {
+    if (ev.allDay) continue;
+    const startMs = +new Date(ev.start);
+    const endMs = +new Date(ev.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+    if (endMs <= sevenDaysAgoMs) continue;
+    if (startMs > Date.now()) continue;
+    // Clip to last-7-days window so an ongoing/long event doesn't over-attribute.
+    const clippedStart = Math.max(startMs, sevenDaysAgoMs);
+    const clippedEnd = Math.min(endMs, Date.now());
+    const minutes = Math.max(0, Math.round((clippedEnd - clippedStart) / 60000));
+    if (minutes <= 0) continue;
+    const hay = `${ev.summary ?? ""} ${ev.location ?? ""} ${ev.description ?? ""}`.toLowerCase();
+    for (const p of activeProjects) {
+      const needle = p.name.trim().toLowerCase();
+      if (needle.length < 3) continue;
+      if (!hay.includes(needle)) continue;
+      const cur = projAccum.get(p.id) ?? { project: p, minutes: 0, count: 0 };
+      cur.minutes += minutes;
+      cur.count += 1;
+      projAccum.set(p.id, cur);
+    }
+  }
+  const lastWeekTimeSpentPerProject = Array.from(projAccum.values())
+    .map((a) => ({
+      projectId: a.project.id,
+      name: a.project.name,
+      minutes: a.minutes,
+      matchedEventCount: a.count,
+      currentIncomePerHour: (a.project as any).currentIncomePerHour ?? null,
+    }))
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, 10);
+
+  // -- Last 7 days locked top-three history -----------------------------
+  const topHistoryFrom = ymdMelb(new Date(Date.now() - 7 * 24 * 3600_000));
+  const slotEntry = (id: number | null | undefined) => {
+    if (id == null) return null;
+    const t = tasksById.get(id);
+    if (!t) return { taskId: id, name: `(task ${id})`, status: "unknown" };
+    return { taskId: id, name: t.name, status: t.status };
+  };
+  const recentTopThreeHistory = storage
+    .listTopThreeBetween(topHistoryFrom, today)
+    .map((row) => ({
+      date: row.date,
+      slot1: slotEntry((row as any).taskId1),
+      slot2: slotEntry((row as any).taskId2),
+      slot3: slotEntry((row as any).taskId3),
     }));
 
   return {
@@ -251,6 +328,8 @@ export function buildCoachContextBundle({
     recentReflections,
     recentCoachSessionSummaries,
     pricedProjects,
+    lastWeekTimeSpentPerProject,
+    recentTopThreeHistory,
   };
 }
 
@@ -369,8 +448,15 @@ export function buildSummaryRequestMessages(transcript: Array<{ role: "user" | "
 
 // -- Model selection ---------------------------------------------------------
 
-export function modelForMode(mode: "plan" | "reflect"): string {
-  return mode === "plan" ? "sonar-reasoning-pro" : "sonar-pro";
+/**
+ * Default model per mode. Plan now defaults to `sonar-pro` for fast turns;
+ * users can opt into deeper reasoning per session via the deepThink flag,
+ * which routes plan turns to `sonar-reasoning-pro`. Reflect always uses
+ * `sonar-pro` (Socratic mode does not benefit from chain-of-thought reasoning).
+ */
+export function modelForMode(mode: "plan" | "reflect", deepThink = false): string {
+  if (mode === "plan" && deepThink) return "sonar-reasoning-pro";
+  return "sonar-pro";
 }
 
 export const SUMMARY_MODEL = "sonar-pro";

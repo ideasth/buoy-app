@@ -37,6 +37,8 @@ interface CoachSessionRow {
   totalOutputTokens: number;
   summaryPreview: string | null;
   messageCount: number;
+  deepThink?: number;
+  archivedAt?: number | null;
 }
 
 interface CoachMessageRow {
@@ -62,12 +64,14 @@ interface CoachSessionDetail {
   totalInputTokens: number;
   totalOutputTokens: number;
   contextSnapshot: any;
+  deepThink?: number;
+  archivedAt?: number | null;
 }
 
 interface HealthResponse {
   available: boolean;
   provider: string;
-  models: { plan: string; reflect: string };
+  models: { plan: string; planDeepThink?: string; reflect: string };
 }
 
 // -- Anchor-action detection ------------------------------------------------
@@ -158,6 +162,7 @@ export default function Coach() {
   const { toast } = useToast();
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [mode, setMode] = useState<Mode>("plan");
+  const [deepThink, setDeepThink] = useState<boolean>(false);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -192,7 +197,10 @@ export default function Coach() {
   }, [messages.length, streamingText]);
 
   useEffect(() => {
-    if (session) setMode(session.mode);
+    if (session) {
+      setMode(session.mode);
+      setDeepThink((session.deepThink ?? 0) === 1);
+    }
   }, [session?.id]);
 
   async function startSession(initialMode: Mode) {
@@ -205,7 +213,10 @@ export default function Coach() {
       return;
     }
     try {
-      const res = await apiRequest("POST", "/api/coach/sessions", { mode: initialMode });
+      const res = await apiRequest("POST", "/api/coach/sessions", {
+        mode: initialMode,
+        deepThink: initialMode === "plan" ? deepThink : false,
+      });
       const data = await res.json();
       const id = data?.session?.id;
       if (typeof id === "number") {
@@ -239,6 +250,37 @@ export default function Coach() {
       await queryClient.invalidateQueries({ queryKey: ["/api/coach/sessions"] });
     } catch (e: any) {
       toast({ title: "Mode change failed", description: String(e?.message ?? e) });
+    }
+  }
+
+  async function toggleDeepThink(next: boolean) {
+    setDeepThink(next);
+    if (!session) return;
+    try {
+      await apiRequest("PATCH", `/api/coach/sessions/${session.id}`, { deepThink: next });
+      await queryClient.invalidateQueries({
+        queryKey: ["/api/coach/sessions", String(session.id)],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/coach/sessions"] });
+    } catch (e: any) {
+      toast({ title: "Deep-think toggle failed", description: String(e?.message ?? e) });
+    }
+  }
+
+  async function archiveSession() {
+    if (!session) return;
+    if (!window.confirm(
+      "Archive this session? The transcript will be removed but the summary is kept.\n\nThis cannot be undone.",
+    )) return;
+    try {
+      await apiRequest("POST", `/api/coach/sessions/${session.id}/archive`, {});
+      await queryClient.invalidateQueries({
+        queryKey: ["/api/coach/sessions", String(session.id)],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/coach/sessions"] });
+      toast({ title: "Session archived" });
+    } catch (e: any) {
+      toast({ title: "Archive failed", description: String(e?.message ?? e), variant: "destructive" });
     }
   }
 
@@ -453,7 +495,14 @@ export default function Coach() {
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium capitalize">{s.mode}</span>
+                  <span className="font-medium capitalize">
+                    {s.mode}
+                    {s.archivedAt ? (
+                      <span className="ml-1 text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
+                        archived
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="text-xs text-muted-foreground">
                     {fmtTime(s.startedAt)}
                   </span>
@@ -486,8 +535,13 @@ export default function Coach() {
                       <span className="font-mono text-xs text-muted-foreground">
                         {session.modelName}
                       </span>
+                      {session.archivedAt ? (
+                        <span className="ml-2 text-[10px] uppercase tracking-wider text-muted-foreground border rounded px-1 py-0.5 align-middle">
+                          archived
+                        </span>
+                      ) : null}
                     </CardTitle>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <div className="inline-flex rounded-md border overflow-hidden">
                         <button
                           className={cn(
@@ -497,7 +551,7 @@ export default function Coach() {
                               : "hover:bg-accent",
                           )}
                           onClick={() => changeMode("plan")}
-                          disabled={streaming}
+                          disabled={streaming || !!session.archivedAt}
                         >
                           Plan
                         </button>
@@ -509,19 +563,45 @@ export default function Coach() {
                               : "hover:bg-accent",
                           )}
                           onClick={() => changeMode("reflect")}
-                          disabled={streaming}
+                          disabled={streaming || !!session.archivedAt}
                         >
                           Reflect
                         </button>
                       </div>
+                      {mode === "plan" && !session.archivedAt && (
+                        <label
+                          className="inline-flex items-center gap-1.5 text-xs select-none cursor-pointer"
+                          title="Routes plan turns to sonar-reasoning-pro (slower, deeper). Default off."
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5"
+                            checked={deepThink}
+                            onChange={(e) => toggleDeepThink(e.target.checked)}
+                            disabled={streaming}
+                          />
+                          Deep think
+                        </label>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={endSession}
-                        disabled={streaming}
+                        disabled={streaming || !!session.archivedAt}
                       >
                         End / summarise
                       </Button>
+                      {!session.archivedAt && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={archiveSession}
+                          disabled={streaming}
+                          title="Archive: drop transcript, keep summary"
+                        >
+                          Archive
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -607,32 +687,40 @@ export default function Coach() {
               {/* Composer */}
               <Card>
                 <CardContent className="pt-4">
-                  <Textarea
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder={
-                      mode === "plan"
-                        ? "What do you want to plan? (e.g. 'help me pick a top 3 for tomorrow')"
-                        : "What are you reflecting on?"
-                    }
-                    rows={3}
-                    disabled={streaming}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        sendTurn();
-                      }
-                    }}
-                  />
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="text-xs text-muted-foreground">
-                      Cmd/Ctrl+Enter to send. Crisis terms route to Lifeline 13 11 14.
+                  {session.archivedAt ? (
+                    <div className="text-sm text-muted-foreground italic">
+                      Session archived — transcript dropped, summary kept. Start a new session to continue.
                     </div>
-                    <Button onClick={sendTurn} disabled={streaming || !draft.trim()} size="sm">
-                      <Send className="w-4 h-4 mr-1" />
-                      {streaming ? "Streaming..." : "Send"}
-                    </Button>
-                  </div>
+                  ) : (
+                    <>
+                      <Textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder={
+                          mode === "plan"
+                            ? "What do you want to plan? (e.g. 'help me pick a top 3 for tomorrow')"
+                            : "What are you reflecting on?"
+                        }
+                        rows={3}
+                        disabled={streaming}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            sendTurn();
+                          }
+                        }}
+                      />
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="text-xs text-muted-foreground">
+                          Cmd/Ctrl+Enter to send. Crisis terms route to Lifeline 13 11 14.
+                        </div>
+                        <Button onClick={sendTurn} disabled={streaming || !draft.trim()} size="sm">
+                          <Send className="w-4 h-4 mr-1" />
+                          {streaming ? "Streaming..." : "Send"}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </>

@@ -4,6 +4,57 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (21:50 AEST) — Coach polish + ops hygiene DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app, bundle `index-DX_YM7vp.js`. TypeScript now strict-clean (`tsc --noEmit` zero errors). Standing rules respected: skipped security review; no data.db edits beyond additive `coach_sessions` ALTER TABLE migrations; new weekly backup cron added with explicit user approval (cron id `8e8b7bb5`).
+
+**What changed**
+
+1. **Plan-mode latency fix** — plan now defaults to `sonar-pro` (~1.5s, was ~22s on `sonar-reasoning-pro`). Per-session opt-in **deep-think toggle** routes plan turns to `sonar-reasoning-pro` when the user wants deeper reasoning. Reflect mode unchanged (`sonar-pro`). Implemented in `server/coach-context.ts:modelForMode(mode, deepThink=false)` and wired through POST/PATCH `/api/coach/sessions` (`deepThink` body param) + `/turn` reads `session.deepThink` per call.
+   - `GET /api/coach/health` now returns `{plan, planDeepThink, reflect}` (3 model fields).
+2. **Context bundle additions** in `server/coach-context.ts:buildCoachContextBundle()`:
+   - `lastWeekTimeSpentPerProject` — best-effort calendar matching against active projects over the last 7 days. Mirrors `/api/projects/top-paying-today` matching: case-insensitive substring on `summary+location+description`, project name needle ≥ 3 chars. Clips events to the last-7-days window so a long ongoing event doesn't over-attribute. Sorted by minutes desc, limit 10.
+   - `recentTopThreeHistory` — last 7 days of locked top-three (oldest → newest), with task names + statuses resolved per slot. Backed by new `storage.listTopThreeBetween(fromYmd, toYmd)`.
+   - Smoke-tested on session 16: bundle keys grew to 14, matched 1 medicolegal event for 60 minutes.
+3. **Coach session retention (auto-archive > 90 days)**:
+   - New schema columns on `coachSessions`: `deepThink integer NOT NULL DEFAULT 0` and `archivedAt integer NULL`. Additive ALTER TABLE migrations in `server/storage.ts`, idempotent.
+   - New storage methods: `listTopThreeBetween`, `archiveCoachSession(id)` (drops messages + sets `archivedAt=Date.now()`), `autoArchiveOldCoachSessions(olderThanMs)` (only archives ENDED sessions where `archivedAt IS NULL` AND `startedAt <= cutoff`).
+   - **Boot-time auto-archive** runs once after `export const storage = new Storage()` and BEFORE `seedDefaultHabitsIfNeeded()`. 90-day cutoff (`90 * 24 * 3600 * 1000`).
+   - **Manual archive endpoint:** `POST /api/coach/sessions/:id/archive` — drops transcript, retains row + summary.
+   - `/turn` now blocks archived sessions with **409** + clear error message ("Session is archived (transcript purged); start a new session to continue.").
+4. **data.db weekly backup cron (NEW, approved):** uses the existing `GET /api/admin/db/export` endpoint (online SQLite backup API → consistent snapshot, not a JSON dump). Cron id `8e8b7bb5`, runs **Sun 03:00 AEST = `0 17 * * 6` UTC**, exact=true, background=true. Saves to `/home/user/workspace/anchor-backups/anchor-YYYY-MM-DD.db`, uploads via the OneDrive connector (sharepoint fallback), prunes to last 12 weeks, silent on success, in-app notification on failure.
+   - **DST follow-up:** Sun 5 Oct 2026 → AEDT cutover. Cron must be retuned to `0 16 * * 6` to stay at 03:00 Melbourne local. The cron's task body itself emits a one-line reminder in its success notification on/after that date so this doesn't get forgotten. Do not retune without explicit user approval (standing rule).
+5. **Pre-existing TS errors fixed (all 5):**
+   - `client/src/pages/CalendarPlanner.tsx:733` — wrapped `map.values()` in `Array.from()`; line 735 — typed sort callback as `(a: CellEntry, b: CellEntry)`.
+   - `server/routes.ts:1196,1221` — added `createdAt: Date.now()` to `createProjectPhase` and `createProjectComponent` payloads.
+6. **Coach.tsx UI** — deep-think checkbox (visible only in plan mode, hidden when archived), Archive button (with confirm: "transcript will be removed but the summary is kept"), "archived" badge in both the session rail and session header, composer disabled with explanatory message on archived sessions, mode toggles + End/summarise disabled when archived. Session list and detail responses now include `deepThink` + `archivedAt`.
+
+**Smoke tests (live)**
+- `/api/coach/health` → `{plan:"sonar-pro", planDeepThink:"sonar-reasoning-pro", reflect:"sonar-pro"}` ✓
+- Create plan session deepThink=false → modelName=`sonar-pro` ✓
+- PATCH deepThink=true → modelName recomputed to `sonar-reasoning-pro` ✓
+- POST /sessions/:id/archive → archivedAt=1778240436139 ✓
+- POST /turn on archived session → HTTP 409 with correct error body ✓
+- New context-bundle keys present and populated (lastWeekTimeSpentPerProject, recentTopThreeHistory) ✓
+- /api/admin/db/status → existing DB online (479232 bytes, importEnabled=false) ✓
+- All test sessions cleaned up after smoke test.
+
+**Files modified**
+- `shared/schema.ts` — `coachSessions`: added `deepThink`, `archivedAt`
+- `server/storage.ts` — 2 ALTER TABLE migrations; 3 new methods (`listTopThreeBetween`, `archiveCoachSession`, `autoArchiveOldCoachSessions`); boot-time auto-archive call
+- `server/coach-context.ts` — `modelForMode(mode, deepThink=false)`; bundle interface + builder extended; helpers for project-time matching and top-three history
+- `server/coach-routes.ts` — `/health` shape change, POST /sessions accepts deepThink, PATCH /sessions accepts deepThink (recomputes modelName), NEW POST /sessions/:id/archive, /turn 409-on-archived + reads session.deepThink, list endpoint exposes deepThink + archivedAt
+- `server/routes.ts` — createdAt added to createProjectPhase + createProjectComponent calls
+- `client/src/pages/CalendarPlanner.tsx` — Array.from + typed sort callback (downlevelIteration fix)
+- `client/src/pages/Coach.tsx` — deepThink state + toggle UI, archiveSession action + button, archived badge in rail and header, composer disabled when archived, mode/end disabled when archived; HealthResponse + CoachSessionRow + CoachSessionDetail interfaces extended
+
+**Follow-ups / open items**
+- **DST retune** Sun 5 Oct 2026 — cron `8e8b7bb5` from `0 17 * * 6` to `0 16 * * 6`. Reminder is baked into the cron's own task body.
+- Feature 4 (deferred weekly coach prompt) still parked — revisit ~2026-05-22 once 1-2 weeks of Feature 1+2 telemetry exist.
+- Backup verification: after the first cron run on Sun 10 May, manually confirm the OneDrive file landed and `pragma integrity_check` passes on the snapshot. The Computer-side cron will report failures via in-app notification but a one-time successful verify is cheap insurance.
+
+---
+
 ## 2026-05-08 (21:30 AEST) — Feature 5 DEPLOYED — Coach page (Sonar plan + reflect, persistent + auto-summarised)
 
 **Status:** Live on https://anchor-jod.pplx.app, bundle `index-BMs2zHHC.js`. Standing rule respected: skipped security review. No cron changes. No data.db edits beyond additive `coach_sessions` + `coach_messages` migrations done in Feature 5 schema phase. Both modes smoke-tested live. Plan-mode latency ~22s (sonar-reasoning-pro), reflect-mode ~1.5s (sonar-pro).

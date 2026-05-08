@@ -730,9 +730,9 @@ function YearGroupedTable({
       }
     }
     // Sort each cell: all-day first, then by start time.
-    for (const dayMap of map.values()) {
+    for (const dayMap of Array.from(map.values())) {
       for (const k of Object.keys(dayMap) as ColKey[]) {
-        dayMap[k].sort((a, b) => {
+        dayMap[k].sort((a: CellEntry, b: CellEntry) => {
           if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
           return a.startMs - b.startMs;
         });

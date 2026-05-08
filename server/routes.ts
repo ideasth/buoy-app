@@ -1195,6 +1195,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!name) return res.status(400).json({ error: "name required" });
     res.json(storage.createProjectPhase({
       projectId, name, orderIndex: Number(orderIndex) || 0, completed: 0,
+      createdAt: Date.now(),
     }));
   });
   app.patch("/api/phases/:id", (req, res) => {
@@ -1220,6 +1221,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!name) return res.status(400).json({ error: "name required" });
     res.json(storage.createProjectComponent({
       projectId, name, phaseId: phaseId ?? null, orderIndex: Number(orderIndex) || 0,
+      createdAt: Date.now(),
     }));
   });
   app.patch("/api/components/:id", (req, res) => {
