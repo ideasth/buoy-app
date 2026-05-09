@@ -20,6 +20,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ChevronRight, ChevronDown, Trash2, Plus, Send, AlertTriangle } from "lucide-react";
+import {
+  CoachPreSessionCheckIn,
+  isCheckinFresh,
+} from "@/components/CoachPreSessionCheckIn";
 
 // -- Types ------------------------------------------------------------------
 
@@ -137,6 +141,22 @@ function fmtTime(ts: number | null | undefined): string {
   }
 }
 
+// Stage 9b helper (2026-05-10): Melbourne YYYY-MM-DD for the freshness
+// probe in startSession(). Mirrors the helper in CheckIn.tsx and
+// CoachPreSessionCheckIn.tsx so all chip surfaces agree on "today".
+function melbourneDateStrLocal(d: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${day}`;
+}
+
 // -- Main page --------------------------------------------------------------
 
 export default function Coach() {
@@ -153,6 +173,10 @@ export default function Coach() {
   const [summaryDraft, setSummaryDraft] = useState("");
   // Bundle preview shown after POST /sessions returns. The session row exists
   // server-side at this point; we only activate it after the user confirms.
+  // Stage 9b (2026-05-10): when set, we hold off on actually starting
+  // the Coach session until the pre-session check-in modal completes.
+  // The host (this page) will call doStartSession(mode) when ready.
+  const [preCheckinMode, setPreCheckinMode] = useState<Mode | null>(null);
   const [pendingSession, setPendingSession] = useState<
     | { id: number; mode: Mode; bundle: any }
     | null
@@ -209,6 +233,10 @@ export default function Coach() {
     }
   }, [session?.id]);
 
+  // Stage 9b (2026-05-10): gate session start on a fresh chip check-in.
+  // We call /api/checkins/latest first — if isCheckinFresh() returns
+  // true we proceed straight to doStartSession; otherwise we open the
+  // pre-session modal which will call doStartSession on Save or Skip.
   async function startSession(initialMode: Mode) {
     if (!healthQ.data?.available) {
       toast({
@@ -218,6 +246,28 @@ export default function Coach() {
       });
       return;
     }
+    try {
+      const today = melbourneDateStrLocal();
+      const res = await apiRequest(
+        "GET",
+        `/api/checkins/latest?date=${today}`,
+      );
+      const latest = (await res.json()) as { capturedAt?: number } | null;
+      if (isCheckinFresh(latest)) {
+        await doStartSession(initialMode);
+      } else {
+        setPreCheckinMode(initialMode);
+      }
+    } catch {
+      // If the freshness probe fails (network blip, server hiccup),
+      // open the modal anyway — the user can Skip if they don't want
+      // to capture chip state right now. Better to nudge once than
+      // silently drop the prompt.
+      setPreCheckinMode(initialMode);
+    }
+  }
+
+  async function doStartSession(initialMode: Mode) {
     try {
       const res = await apiRequest("POST", "/api/coach/sessions", {
         mode: initialMode,
@@ -888,6 +938,18 @@ export default function Coach() {
           )}
         </main>
       </div>
+
+      {/* Stage 9b: pre-session check-in. Opens before the context bundle
+          preview when /api/checkins/latest is older than 90 minutes. */}
+      <CoachPreSessionCheckIn
+        open={preCheckinMode !== null}
+        onContinue={() => {
+          const mode = preCheckinMode;
+          setPreCheckinMode(null);
+          if (mode) void doStartSession(mode);
+        }}
+        onCancel={() => setPreCheckinMode(null)}
+      />
 
       <Dialog
         open={!!pendingSession}

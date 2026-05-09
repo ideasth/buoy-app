@@ -12,9 +12,10 @@ import Today from "@/pages/Today";
 import Capture from "@/pages/Capture";
 import Priorities from "@/pages/Priorities";
 import HabitsPage from "@/pages/Habits";
-import Reflect from "@/pages/Reflect";
+import Evening from "@/pages/Evening";
 import Review from "@/pages/Review";
 import Morning from "@/pages/Morning";
+import CheckIn from "@/pages/CheckIn";
 import EmailStatus from "@/pages/EmailStatus";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
@@ -70,6 +71,17 @@ function UsageRedirect() {
   return null;
 }
 
+// Stage 9a (2026-05-10): the page formerly known as /reflect now lives
+// at /evening. Old bookmarks and inbound links continue to work via
+// this client-side redirect.
+function ReflectRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/evening", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
 function AppRouter() {
   return (
     <Suspense fallback={<LazyFallback />}>
@@ -82,7 +94,10 @@ function AppRouter() {
       <Route path="/projects" component={Projects} />
       <Route path="/priorities" component={Priorities} />
       <Route path="/habits" component={HabitsPage} />
-      <Route path="/reflect" component={Reflect} />
+      <Route path="/evening" component={Evening} />
+      {/* Legacy redirect: /reflect → /evening (Stage 9a). */}
+      <Route path="/reflect" component={ReflectRedirect} />
+      <Route path="/checkin" component={CheckIn} />
       <Route path="/coach" component={Coach} />
       <Route path="/review" component={Review} />
       <Route path="/issues" component={Issues} />

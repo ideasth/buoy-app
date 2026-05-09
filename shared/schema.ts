@@ -238,6 +238,59 @@ export const insertMorningRoutineSchema = createInsertSchema(morningRoutines).om
 export type InsertMorningRoutine = z.infer<typeof insertMorningRoutineSchema>;
 export type MorningRoutine = typeof morningRoutines.$inferSelect;
 
+// Stage 7 (2026-05-10) — Unified daily check-ins table.
+//
+// Single source of truth for chip-style reflection state across
+// morning / midday / evening / adhoc captures. Coexists with
+// morning_routines + reflections (which keep their operational fields
+// — top-3, braindump, weekly review, evening habits — in Stage 7).
+// Reads remain on the legacy tables in Stage 7; Stage 10 switches.
+//
+// Logical uniqueness is on (date, phase, source) — same source posting
+// again the same day in the same phase updates the existing row;
+// different source same phase creates a new row (so coach_pre_session
+// can coexist with morning_page on the same morning). The unique
+// compound index is created in server/storage.ts so we can also have
+// the supporting indexes for read patterns.
+//
+// Note on PK: every other table in this schema uses an autoincrement
+// integer PK, so daily_check_ins follows that convention rather than
+// the uuid suggested in the master prompt — it keeps the codebase
+// uniform and lets ON CONFLICT(date, phase, source) drive the upsert.
+export const dailyCheckIns = sqliteTable("daily_check_ins", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull(), // YYYY-MM-DD (Melbourne local)
+  phase: text("phase").notNull(), // morning | midday | evening | adhoc
+  source: text("source").notNull(), // morning_page | evening_page | checkin_page | coach_pre_session
+  capturedAt: integer("captured_at").notNull(), // unix ms
+  // Chip text columns — same option set as Morning + Reflect.
+  arousalState: text("arousal_state"),
+  mood: text("mood"), // positive | neutral | strained
+  cognitiveLoad: text("cognitive_load"), // high | moderate | low
+  energyLabel: text("energy_label"), // low | moderate | high
+  sleepLabel: text("sleep_label"), // restorative | adequate | poor
+  focus: text("focus"), // focused | scattered
+  alignmentPeople: text("alignment_people"), // aligned | neutral | disconnected
+  alignmentActivities: text("alignment_activities"), // aligned | neutral | misaligned
+  // Numeric shadows — same Stage 5 mapping in shared/checkin-mapping.ts.
+  moodN: integer("mood_n"),
+  cognitiveLoadN: integer("cognitive_load_n"),
+  energyN: integer("energy_n"),
+  sleepN: integer("sleep_n"),
+  focusN: integer("focus_n"),
+  alignmentPeopleN: integer("alignment_people_n"),
+  alignmentActivitiesN: integer("alignment_activities_n"),
+  // Optional free-text note (e.g. one-liner from the /checkin page).
+  note: text("note"),
+});
+
+export const insertDailyCheckInSchema = createInsertSchema(dailyCheckIns).omit({
+  id: true,
+  capturedAt: true,
+});
+export type InsertDailyCheckIn = z.infer<typeof insertDailyCheckInSchema>;
+export type DailyCheckIn = typeof dailyCheckIns.$inferSelect;
+
 // Daily factors (mood + lightweight measures, one row per local YYYY-MM-DD)
 // All measure columns nullable so the user can fill in progressively.
 export const dailyFactors = sqliteTable("daily_factors", {

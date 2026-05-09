@@ -8,7 +8,9 @@ import {
   insertTimeBlockSchema,
   insertReflectionSchema,
   insertGoalSchema,
+  insertDailyCheckInSchema,
 } from "@shared/schema";
+import { upsertDailyCheckIn } from "./storage";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
@@ -226,6 +228,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.delete("/api/reflections/:id", (req, res) => {
     storage.deleteReflection(Number(req.params.id));
     res.json({ ok: true });
+  });
+
+  // ---- Daily check-ins (Stage 8 — 2026-05-10) ----
+  // Quick chip-only capture surface usable any time of day. Reads/writes
+  // the unified daily_check_ins table introduced in Stage 7. Schemes:
+  //   GET    /api/checkins?date=YYYY-MM-DD       array, capturedAt DESC
+  //   GET    /api/checkins/latest?date=YYYY-MM-DD  single most recent row
+  //   POST   /api/checkins                       insertDailyCheckInSchema
+  //   PATCH  /api/checkins/:id                   partial update, re-derives
+  //                                              numeric shadows server-side
+  app.get("/api/checkins", (req, res) => {
+    const date = String(req.query.date ?? "").trim() || melbourneDateStr();
+    res.json(storage.listDailyCheckInsForDate(date));
+  });
+  app.get("/api/checkins/latest", (req, res) => {
+    const date = String(req.query.date ?? "").trim() || melbourneDateStr();
+    const row = storage.getLatestDailyCheckIn(date);
+    if (!row) return res.json(null);
+    res.json(row);
+  });
+  app.post("/api/checkins", (req, res) => {
+    const parsed = insertDailyCheckInSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.message });
+    }
+    // Default source to checkin_page when the client omits it (the
+    // /checkin surface is the most common caller). Phase is required by
+    // the schema; if the client wants auto-derivation it should compute
+    // the phase locally and include it in the body.
+    const data = parsed.data;
+    const source = (data.source as string | undefined) ?? "checkin_page";
+    const date = data.date || melbourneDateStr();
+    // Strip out the keys upsertDailyCheckIn places back into the row so
+    // we don't pass them in `fields` and double-set them.
+    const { date: _d, phase: _p, source: _s, ...rest } = data as Record<
+      string,
+      unknown
+    >;
+    const row = upsertDailyCheckIn({
+      date,
+      phase: data.phase as "morning" | "midday" | "evening" | "adhoc",
+      source: source as
+        | "morning_page"
+        | "evening_page"
+        | "checkin_page"
+        | "coach_pre_session",
+      fields: rest,
+    });
+    res.json(row);
+  });
+  app.patch("/api/checkins/:id", (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "invalid id" });
+    }
+    const updated = storage.updateDailyCheckIn(id, req.body);
+    if (!updated) return res.status(404).json({ message: "not found" });
+    res.json(updated);
   });
 
   // ---- Goals ----
@@ -682,8 +742,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ====== MORNING ROUTINE ======
   app.get("/api/morning/today", (_req, res) => {
     const date = melbourneDateStr();
-    const row = storage.ensureMorningForDate(date);
-    res.json(row);
+    res.json(storage.ensureMorningForDate(date));
   });
 
   app.patch("/api/morning/today", (req, res) => {

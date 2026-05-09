@@ -410,8 +410,8 @@ export default function Today() {
       <section data-testid="section-today-factors">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-muted-foreground">Mood &amp; factors</h2>
-          <Link href="/reflect">
-            <span className="text-xs text-primary hover:underline">Open Reflect</span>
+          <Link href="/evening">
+            <span className="text-xs text-primary hover:underline">Open Evening</span>
           </Link>
         </div>
         <div className="rounded-lg border border-card-border bg-card p-4">
@@ -464,7 +464,7 @@ export default function Today() {
           </div>
         </div>
         <Link
-          href="/reflect"
+          href="/evening"
           className="rounded-lg border border-card-border bg-card p-4 hover-elevate active-elevate-2"
           data-testid="link-reflection-prompt"
         >

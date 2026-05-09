@@ -28,7 +28,13 @@ function isSunday(d = new Date()) {
   return d.getDay() === 0;
 }
 
-export default function Reflect() {
+// Renamed from Reflect to Evening (Stage 9a — 2026-05-10). The page
+// is reached at /evening; /reflect now redirects here so existing
+// bookmarks and sidebar muscle memory still work. "Reflection" stays as
+// the noun-of-art where it reads naturally (e.g. "Evening reflection",
+// "01 — Reflection" subhead) — the rename targets the page identity,
+// not the activity it captures.
+export default function Evening() {
   const date = todayDateStr();
   const promptQ = useQuery<{ prompt: string }>({ queryKey: ["/api/reflection-prompt"] });
   const { toast } = useToast();
@@ -188,12 +194,12 @@ export default function Reflect() {
   return (
     <div className="px-5 md:px-8 py-8 md:py-10 max-w-2xl space-y-12">
       <header>
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">Reflect</div>
+        <div className="text-xs uppercase tracking-wider text-muted-foreground">Evening</div>
         <h1 className="text-2xl font-semibold mt-1">Two minutes before you switch off.</h1>
       </header>
 
       {/* Section 1: Evening habits */}
-      <section className="space-y-4" data-testid="section-reflect-habits">
+      <section className="space-y-4" data-testid="section-evening-habits">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             Evening habits
@@ -217,7 +223,7 @@ export default function Reflect() {
       </section>
 
       {/* Section 2: Reflection — same chips as Morning */}
-      <section className="space-y-5" data-testid="section-reflect-reflection">
+      <section className="space-y-5" data-testid="section-evening-reflection">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             01 — Reflection
@@ -233,7 +239,7 @@ export default function Reflect() {
           options={AROUSAL_STATE_OPTIONS}
           current={arousalState}
           onPick={(v) => setArousalState(arousalState === v ? null : v)}
-          testIdPrefix="chip-reflect-arousal"
+          testIdPrefix="chip-evening-arousal"
         />
 
         <ReflectionChipRow
@@ -241,7 +247,7 @@ export default function Reflect() {
           options={ENERGY_OPTIONS}
           current={energyLabel}
           onPick={(v) => setEnergyLabel(energyLabel === v ? null : v)}
-          testIdPrefix="chip-reflect-energy"
+          testIdPrefix="chip-evening-energy"
         />
 
         <ReflectionChipRow
@@ -249,7 +255,7 @@ export default function Reflect() {
           options={SLEEP_OPTIONS}
           current={sleepLabel}
           onPick={(v) => setSleepLabel(sleepLabel === v ? null : v)}
-          testIdPrefix="chip-reflect-sleep"
+          testIdPrefix="chip-evening-sleep"
         />
 
         <ReflectionChipRow
@@ -257,7 +263,7 @@ export default function Reflect() {
           options={MOOD_OPTIONS}
           current={mood}
           onPick={(v) => setMood(mood === v ? null : v)}
-          testIdPrefix="chip-reflect-mood"
+          testIdPrefix="chip-evening-mood"
         />
 
         <ReflectionChipRow
@@ -265,7 +271,7 @@ export default function Reflect() {
           options={COGNITIVE_LOAD_OPTIONS}
           current={cognitiveLoad}
           onPick={(v) => setCognitiveLoad(cognitiveLoad === v ? null : v)}
-          testIdPrefix="chip-reflect-cognitive"
+          testIdPrefix="chip-evening-cognitive"
         />
 
         <ReflectionChipRow
@@ -273,7 +279,7 @@ export default function Reflect() {
           options={FOCUS_OPTIONS}
           current={focus}
           onPick={(v) => setFocus(focus === v ? null : v)}
-          testIdPrefix="chip-reflect-focus"
+          testIdPrefix="chip-evening-focus"
         />
 
         <ReflectionChipRow
@@ -281,7 +287,7 @@ export default function Reflect() {
           options={ALIGNMENT_PEOPLE_OPTIONS}
           current={alignmentPeople}
           onPick={(v) => setAlignmentPeople(alignmentPeople === v ? null : v)}
-          testIdPrefix="chip-reflect-alignment-people"
+          testIdPrefix="chip-evening-alignment-people"
         />
 
         <ReflectionChipRow
@@ -289,7 +295,7 @@ export default function Reflect() {
           options={ALIGNMENT_ACTIVITIES_OPTIONS}
           current={alignmentActivities}
           onPick={(v) => setAlignmentActivities(alignmentActivities === v ? null : v)}
-          testIdPrefix="chip-reflect-alignment-activities"
+          testIdPrefix="chip-evening-alignment-activities"
         />
 
         <div className="space-y-2 pt-2">
@@ -318,7 +324,7 @@ export default function Reflect() {
       </section>
 
       {/* Section 3: Today's top 3 — status, tick to mark done, click to edit */}
-      <section className="space-y-4 border-t pt-8" data-testid="section-reflect-top-three">
+      <section className="space-y-4 border-t pt-8" data-testid="section-evening-top-three">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             02 — Today's top 3
@@ -390,7 +396,7 @@ export default function Reflect() {
       </section>
 
       {/* Section 4: Braindump — optional evening capture */}
-      <section className="space-y-3 border-t pt-8" data-testid="section-reflect-braindump">
+      <section className="space-y-3 border-t pt-8" data-testid="section-evening-braindump">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             03 — Braindump
@@ -413,7 +419,7 @@ export default function Reflect() {
       </section>
 
       {/* Section 5: Life issues */}
-      <section className="space-y-4 border-t pt-8" data-testid="section-reflect-issues">
+      <section className="space-y-4 border-t pt-8" data-testid="section-evening-issues">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             04 — Life issues
@@ -441,7 +447,7 @@ export default function Reflect() {
       </section>
 
       {/* Section 6: Weekly review */}
-      <section className="space-y-3 border-t pt-8" data-testid="section-reflect-weekly">
+      <section className="space-y-3 border-t pt-8" data-testid="section-evening-weekly">
         <header>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
             05 — Weekly review

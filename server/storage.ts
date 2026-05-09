@@ -17,6 +17,7 @@ import {
   projectPhases,
   projectComponents,
   projectTasks,
+  dailyCheckIns,
   dailyFactors,
   issues,
   travelLocations,
@@ -59,6 +60,8 @@ import type {
   InsertProjectComponent,
   ProjectTask,
   InsertProjectTask,
+  DailyCheckIn,
+  InsertDailyCheckIn,
   DailyFactors,
   InsertDailyFactors,
   Issue,
@@ -76,6 +79,21 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, gte, lte, isNull, sql } from "drizzle-orm";
 import { evaluateEmailPriority } from "@shared/email-priority";
+import {
+  MORNING_LABEL_TO_NUM,
+  MORNING_NUM_DRIZZLE_KEY,
+  MORNING_NUM_SQL_COL,
+  MORNING_TEXT_SQL_COL,
+  labelToNum,
+} from "@shared/checkin-mapping";
+// Re-export so existing imports (server/routes.ts, tests, ad-hoc scripts)
+// that pulled MORNING_LABEL_TO_NUM from "./storage" keep compiling.
+export {
+  MORNING_LABEL_TO_NUM,
+  MORNING_NUM_DRIZZLE_KEY,
+  MORNING_NUM_SQL_COL,
+  labelToNum,
+};
 
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
@@ -569,72 +587,16 @@ for (const stmt of [
   }
 }
 
-// Stage 5 (2026-05-09) — Morning numerical tracking values.
+// Stage 5/6/7 numerical tracking — mapping moved to @shared/checkin-mapping
+// (imported above and re-exported for backwards-compatible callers).
 //
-// Maps each Reflection text label to a small ordinal integer where higher =
-// "more positive / better day". Cognitive load is inverted (low load = 3).
-// Direction matches what a chart-of-the-day would intuitively rank as good.
-//
-// The text columns remain the canonical UI source. These integers are a
-// shadow for analytics. If a label has no mapping (e.g. an unknown legacy
-// value), the numeric column stays NULL.
-export const MORNING_LABEL_TO_NUM: Record<string, Record<string, number>> = {
-  mood: { positive: 3, neutral: 2, strained: 1 },
-  energyLabel: { high: 3, moderate: 2, low: 1 },
-  cognitiveLoad: { low: 3, moderate: 2, high: 1 },
-  sleepLabel: { restorative: 3, adequate: 2, poor: 1 },
-  focus: { focused: 2, scattered: 1 },
-  alignmentPeople: { aligned: 3, neutral: 2, disconnected: 1 },
-  alignmentActivities: { aligned: 3, neutral: 2, misaligned: 1 },
-};
-
-// Camel-case label field -> camelCase Drizzle column key on morningRoutines
-// (used in updateMorning's set() merge object).
-const MORNING_NUM_DRIZZLE_KEY: Record<string, string> = {
-  mood: "moodN",
-  energyLabel: "energyN",
-  cognitiveLoad: "cognitiveLoadN",
-  sleepLabel: "sleepN",
-  focus: "focusN",
-  alignmentPeople: "alignmentPeopleN",
-  alignmentActivities: "alignmentActivitiesN",
-};
-
-// Camel-case label field -> snake_case raw SQL column name (used in the
-// boot-time backfill UPDATE statements).
-const MORNING_NUM_SQL_COL: Record<string, string> = {
-  mood: "mood_n",
-  energyLabel: "energy_n",
-  cognitiveLoad: "cognitive_load_n",
-  sleepLabel: "sleep_n",
-  focus: "focus_n",
-  alignmentPeople: "alignment_people_n",
-  alignmentActivities: "alignment_activities_n",
-};
-
-function labelToNum(field: string, value: unknown): number | null {
-  if (typeof value !== "string") return null;
-  const m = MORNING_LABEL_TO_NUM[field];
-  if (!m) return null;
-  return field in MORNING_LABEL_TO_NUM && value in m ? m[value] : null;
-}
-
 // One-shot idempotent backfill: populate *_n columns from existing text rows
 // where the *_n cell is currently NULL. Cheap (one UPDATE per (field, value)
 // pair, conditioned on IS NULL) and safe to re-run on every boot.
 function backfillMorningNumericShadows(): void {
-  const fieldToTextCol: Record<string, string> = {
-    mood: "mood",
-    energyLabel: "energy_label",
-    cognitiveLoad: "cognitive_load",
-    sleepLabel: "sleep_label",
-    focus: "focus",
-    alignmentPeople: "alignment_people",
-    alignmentActivities: "alignment_activities",
-  };
   for (const [field, mapping] of Object.entries(MORNING_LABEL_TO_NUM)) {
     const numCol = MORNING_NUM_SQL_COL[field];
-    const textCol = fieldToTextCol[field];
+    const textCol = MORNING_TEXT_SQL_COL[field];
     if (!numCol || !textCol) continue;
     for (const [labelValue, numValue] of Object.entries(mapping)) {
       try {
@@ -653,6 +615,293 @@ try {
   backfillMorningNumericShadows();
 } catch {
   // Never fail boot on a backfill error.
+}
+
+// Stage 7 (2026-05-10) — Unified daily_check_ins table.
+//
+// Idempotent CREATE TABLE + indexes for the new daily_check_ins.
+// The (date, phase, source) compound is unique so ON CONFLICT can drive
+// upsertDailyCheckIn cleanly. Two read indexes:
+//   idx_checkins_date_phase    — supports per-phase lookups (e.g. Stage 10
+//                                read of today's morning row)
+//   idx_checkins_date_captured — supports the "latest" lookup used by the
+//                                Coach pre-session modal in Stage 9b
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS daily_check_ins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  source TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  arousal_state TEXT,
+  mood TEXT,
+  cognitive_load TEXT,
+  energy_label TEXT,
+  sleep_label TEXT,
+  focus TEXT,
+  alignment_people TEXT,
+  alignment_activities TEXT,
+  mood_n INTEGER,
+  cognitive_load_n INTEGER,
+  energy_n INTEGER,
+  sleep_n INTEGER,
+  focus_n INTEGER,
+  alignment_people_n INTEGER,
+  alignment_activities_n INTEGER,
+  note TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_checkins_date_phase_source ON daily_check_ins(date, phase, source);
+CREATE INDEX IF NOT EXISTS idx_checkins_date_phase ON daily_check_ins(date, phase);
+CREATE INDEX IF NOT EXISTS idx_checkins_date_captured ON daily_check_ins(date, captured_at DESC);
+`);
+
+// Internal helper: derive numeric shadows from a chip-label patch using the
+// shared mapping. Returns a record suitable for spreading into the row's
+// values/set object. Null/undefined label values clear the shadow too.
+function deriveCheckinShadows(
+  patch: Partial<DailyCheckIn> | Record<string, unknown>,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const labelField of Object.keys(MORNING_LABEL_TO_NUM)) {
+    if (!(labelField in patch)) continue;
+    const drizzleKey = MORNING_NUM_DRIZZLE_KEY[labelField];
+    if (!drizzleKey) continue;
+    const v = (patch as any)[labelField];
+    if (v === null || v === undefined) {
+      out[drizzleKey] = null;
+    } else {
+      out[drizzleKey] = labelToNum(labelField, v);
+    }
+  }
+  return out;
+}
+
+// upsertDailyCheckIn: write a row keyed on (date, phase, source).
+// Same key updates; different source same phase creates a new row
+// (so coach_pre_session can coexist with morning_page on the same morning).
+// Numeric shadows are derived from the chip-label fields via the shared
+// mapping. If capturedAt is omitted, we stamp Date.now().
+export interface UpsertDailyCheckInArgs {
+  date: string;
+  phase: "morning" | "midday" | "evening" | "adhoc";
+  source: "morning_page" | "evening_page" | "checkin_page" | "coach_pre_session";
+  fields: Partial<Omit<DailyCheckIn, "id" | "date" | "phase" | "source" | "capturedAt">>;
+  capturedAt?: number;
+}
+
+export function upsertDailyCheckIn(args: UpsertDailyCheckInArgs): DailyCheckIn {
+  const captured = args.capturedAt ?? Date.now();
+  const shadows = deriveCheckinShadows(args.fields);
+  const row: Record<string, unknown> = {
+    ...args.fields,
+    ...shadows,
+    date: args.date,
+    phase: args.phase,
+    source: args.source,
+    capturedAt: captured,
+  };
+  // Try insert; on conflict (date, phase, source) update. Drizzle's
+  // onConflictDoUpdate handles this cleanly with the unique index above.
+  // Cast through `any` because the chip-text columns are stored as
+  // free-form text but our InsertDailyCheckIn type narrows them to
+  // string union members (the drizzle inferred type also requires
+  // captured_at which we set in `row` above). The runtime row is
+  // well-formed; this is a pure type assertion.
+  return db
+    .insert(dailyCheckIns)
+    .values(row as any)
+    .onConflictDoUpdate({
+      target: [dailyCheckIns.date, dailyCheckIns.phase, dailyCheckIns.source],
+      set: { ...row, capturedAt: captured } as any,
+    })
+    .returning()
+    .get();
+}
+
+// Stage 7: list of chip-text fields that flow from morning_routines /
+// reflections patches into the daily_check_ins mirror. Numeric shadows
+// are derived inside upsertDailyCheckIn from these labels, so we only
+// need to forward the chip text + arousalState + an optional note.
+const CHECKIN_CHIP_FIELDS = [
+  "arousalState",
+  "mood",
+  "cognitiveLoad",
+  "energyLabel",
+  "sleepLabel",
+  "focus",
+  "alignmentPeople",
+  "alignmentActivities",
+] as const;
+
+// Stage 7: extract just the chip-text subset from a patch object so we
+// can forward it to upsertDailyCheckIn without leaking unrelated columns
+// (e.g. braindumpRaw, topThreeIds, completedAt) into daily_check_ins.
+// Returns an empty object if no chip fields are present, in which case
+// the caller skips the dual-write entirely.
+function pickCheckinChipFields(
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of CHECKIN_CHIP_FIELDS) {
+    if (f in patch) out[f] = patch[f];
+  }
+  return out;
+}
+
+// One-shot idempotent backfill: ensure every morning_routines row with chip
+// data has a matching daily_check_ins (phase='morning', source='morning_page')
+// row, and likewise for reflections (phase='evening', source='evening_page').
+// Skip if a matching row already exists. Logs count inserted on completion.
+function backfillDailyCheckInsFromLegacy(): void {
+  const chipCols = [
+    "mood",
+    "cognitive_load",
+    "energy_label",
+    "sleep_label",
+    "focus",
+    "alignment_people",
+    "alignment_activities",
+  ];
+  const shadowCols = [
+    "mood_n",
+    "cognitive_load_n",
+    "energy_n",
+    "sleep_n",
+    "focus_n",
+    "alignment_people_n",
+    "alignment_activities_n",
+  ];
+
+  type LegacyRow = {
+    date: string;
+    captured_at: number | null;
+  } & Record<string, string | number | null>;
+
+  const insertSql = `INSERT INTO daily_check_ins
+    (date, phase, source, captured_at,
+     arousal_state, mood, cognitive_load, energy_label, sleep_label, focus,
+     alignment_people, alignment_activities,
+     mood_n, cognitive_load_n, energy_n, sleep_n, focus_n,
+     alignment_people_n, alignment_activities_n)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const insertStmt = sqlite.prepare(insertSql);
+  const existsStmt = sqlite.prepare(
+    `SELECT 1 FROM daily_check_ins WHERE date = ? AND phase = ? AND source = ? LIMIT 1`,
+  );
+
+  let inserted = 0;
+
+  // Morning legacy rows.
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT date, started_at AS captured_at,
+                NULL AS arousal_state,
+                mood, cognitive_load, energy_label, sleep_label, focus,
+                alignment_people, alignment_activities,
+                mood_n, cognitive_load_n, energy_n, sleep_n, focus_n,
+                alignment_people_n, alignment_activities_n
+           FROM morning_routines
+          WHERE COALESCE(mood, cognitive_load, energy_label, sleep_label, focus,
+                         alignment_people, alignment_activities) IS NOT NULL`,
+      )
+      .all() as LegacyRow[];
+    for (const r of rows) {
+      if (existsStmt.get(r.date, "morning", "morning_page")) continue;
+      const captured =
+        typeof r.captured_at === "number" && r.captured_at > 0
+          ? r.captured_at
+          : Date.parse(`${r.date}T00:00:00`); // midnight local fallback
+      insertStmt.run(
+        r.date,
+        "morning",
+        "morning_page",
+        captured,
+        null,
+        r.mood ?? null,
+        r.cognitive_load ?? null,
+        r.energy_label ?? null,
+        r.sleep_label ?? null,
+        r.focus ?? null,
+        r.alignment_people ?? null,
+        r.alignment_activities ?? null,
+        r.mood_n ?? null,
+        r.cognitive_load_n ?? null,
+        r.energy_n ?? null,
+        r.sleep_n ?? null,
+        r.focus_n ?? null,
+        r.alignment_people_n ?? null,
+        r.alignment_activities_n ?? null,
+      );
+      inserted += 1;
+    }
+  } catch {
+    // Legacy table or columns may not exist yet — ignore.
+  }
+
+  // Evening legacy rows (kind = 'daily' only — weekly reviews don't carry chips).
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT date,
+                NULL AS captured_at,
+                arousal_state,
+                mood, cognitive_load, energy_label, sleep_label, focus,
+                alignment_people, alignment_activities,
+                mood_n, cognitive_load_n, energy_n, sleep_n, focus_n,
+                alignment_people_n, alignment_activities_n
+           FROM reflections
+          WHERE COALESCE(arousal_state, mood, cognitive_load, energy_label,
+                         sleep_label, focus, alignment_people,
+                         alignment_activities) IS NOT NULL
+            AND (kind IS NULL OR kind = 'daily')`,
+      )
+      .all() as LegacyRow[];
+    for (const r of rows) {
+      if (existsStmt.get(r.date, "evening", "evening_page")) continue;
+      const captured = Date.parse(`${r.date}T18:30:00`); // 18:30 local fallback for evenings
+      insertStmt.run(
+        r.date,
+        "evening",
+        "evening_page",
+        captured,
+        r.arousal_state ?? null,
+        r.mood ?? null,
+        r.cognitive_load ?? null,
+        r.energy_label ?? null,
+        r.sleep_label ?? null,
+        r.focus ?? null,
+        r.alignment_people ?? null,
+        r.alignment_activities ?? null,
+        r.mood_n ?? null,
+        r.cognitive_load_n ?? null,
+        r.energy_n ?? null,
+        r.sleep_n ?? null,
+        r.focus_n ?? null,
+        r.alignment_people_n ?? null,
+        r.alignment_activities_n ?? null,
+      );
+      inserted += 1;
+    }
+  } catch {
+    // Legacy table or columns may not exist yet — ignore.
+  }
+
+  // chipCols / shadowCols are reserved for a future drift-check; mark them used.
+  void chipCols;
+  void shadowCols;
+
+  if (inserted > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[storage] backfillDailyCheckInsFromLegacy inserted ${inserted} rows`);
+  }
+}
+try {
+  backfillDailyCheckInsFromLegacy();
+} catch (err) {
+  // Never fail boot on a backfill error.
+  // eslint-disable-next-line no-console
+  console.error("[storage] backfillDailyCheckInsFromLegacy failed:", err);
 }
 
 // ICS URL (including GitHub PAT) must be set via ANCHOR_ICS_URL env var.
@@ -925,34 +1174,52 @@ export class Storage {
     return db.select().from(reflections).orderBy(desc(reflections.date)).all();
   }
   createReflection(input: InsertReflection): Reflection {
-    // Stage 6 (2026-05-09): mirror Morning's Stage 5 dual-write so any
-    // categorical chip label submitted from the Reflect page also populates
-    // its numeric shadow column. Reuses MORNING_LABEL_TO_NUM verbatim so the
-    // two pages share one mapping and one source of truth.
-    const enriched: Record<string, unknown> = { ...input };
-    for (const field of Object.keys(MORNING_LABEL_TO_NUM)) {
-      if (field in enriched) {
-        const numKey = MORNING_NUM_DRIZZLE_KEY[field];
-        if (numKey) enriched[numKey] = labelToNum(field, enriched[field]);
-      }
-    }
-    return db
+    const row = db
       .insert(reflections)
-      .values(enriched as InsertReflection)
+      .values(input)
       .returning()
       .get();
+    // Stage 7 (2026-05-10): dual-write — daily reflections mirror chip
+    // text into daily_check_ins (phase='evening'). Weekly/quarterly
+    // reflections are skipped. Wrapped in try/catch so a mirror failure
+    // cannot break the canonical reflection write.
+    try {
+      if ((row.kind ?? "daily") === "daily") {
+        const chip = pickCheckinChipFields(input as Record<string, unknown>);
+        if (Object.keys(chip).length > 0) {
+          upsertDailyCheckIn({
+            date: row.date,
+            phase: "evening",
+            source: "evening_page",
+            fields: chip,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[storage] createReflection daily_check_ins write failed:", err);
+    }
+    return row;
   }
   updateReflection(id: number, patch: Partial<Reflection>): Reflection | undefined {
-    // Mirror createReflection's dual-write so PATCHes also update shadows.
-    const enriched: Record<string, unknown> = { ...patch };
-    for (const field of Object.keys(MORNING_LABEL_TO_NUM)) {
-      if (field in enriched) {
-        const numKey = MORNING_NUM_DRIZZLE_KEY[field];
-        if (numKey) enriched[numKey] = labelToNum(field, enriched[field]);
+    db.update(reflections).set(patch).where(eq(reflections.id, id)).run();
+    const row = db.select().from(reflections).where(eq(reflections.id, id)).get();
+    // Stage 7 (2026-05-10): dual-write to daily_check_ins for daily kind.
+    try {
+      if (row && (row.kind ?? "daily") === "daily") {
+        const chip = pickCheckinChipFields(patch as Record<string, unknown>);
+        if (Object.keys(chip).length > 0) {
+          upsertDailyCheckIn({
+            date: row.date,
+            phase: "evening",
+            source: "evening_page",
+            fields: chip,
+          });
+        }
       }
+    } catch (err) {
+      console.error("[storage] updateReflection daily_check_ins write failed:", err);
     }
-    db.update(reflections).set(enriched).where(eq(reflections.id, id)).run();
-    return db.select().from(reflections).where(eq(reflections.id, id)).get();
+    return row;
   }
   deleteReflection(id: number) {
     db.delete(reflections).where(eq(reflections.id, id)).run();
@@ -1072,23 +1339,27 @@ export class Storage {
   }
   updateMorning(date: string, patch: Partial<MorningRoutine>): MorningRoutine | undefined {
     const existing = this.ensureMorningForDate(date);
-    // Stage 5 dual-write: when a label field is being updated, also derive
-    // and write its numeric shadow column. Setting the label to null clears
-    // the shadow too. Unknown values (no mapping) leave the shadow at null.
-    const merged: Record<string, unknown> = { ...patch };
-    for (const labelField of Object.keys(MORNING_LABEL_TO_NUM)) {
-      if (labelField in patch) {
-        const drizzleKey = MORNING_NUM_DRIZZLE_KEY[labelField];
-        if (!drizzleKey) continue;
-        const v = (patch as any)[labelField];
-        if (v === null || v === undefined) {
-          (merged as any)[drizzleKey] = null;
-        } else {
-          (merged as any)[drizzleKey] = labelToNum(labelField, v);
-        }
+    db.update(morningRoutines)
+      .set(patch as any)
+      .where(eq(morningRoutines.id, existing.id))
+      .run();
+    // Stage 7 (2026-05-10): dual-write — chip writes mirror to
+    // daily_check_ins (phase='morning', source='morning_page'). Wrapped
+    // in try/catch so a mirror failure cannot break the canonical
+    // morning_routines patch.
+    try {
+      const chip = pickCheckinChipFields(patch as Record<string, unknown>);
+      if (Object.keys(chip).length > 0) {
+        upsertDailyCheckIn({
+          date,
+          phase: "morning",
+          source: "morning_page",
+          fields: chip,
+        });
       }
+    } catch (err) {
+      console.error("[storage] updateMorning daily_check_ins write failed:", err);
     }
-    db.update(morningRoutines).set(merged as any).where(eq(morningRoutines.id, existing.id)).run();
     return this.getMorningByDate(date);
   }
   recentMorningRoutines(limit = 7): MorningRoutine[] {
@@ -1098,6 +1369,57 @@ export class Storage {
       .orderBy(desc(morningRoutines.date))
       .limit(limit)
       .all();
+  }
+
+  // ----- Daily check-ins (Stage 8 — 2026-05-10) -----
+  // List all check-ins for a given Melbourne-local date, newest first.
+  // Used by the /checkin page's "recent today" strip and by the Stage 11
+  // aggregation routes when filtering server-side.
+  listDailyCheckInsForDate(date: string): DailyCheckIn[] {
+    return db
+      .select()
+      .from(dailyCheckIns)
+      .where(eq(dailyCheckIns.date, date))
+      .orderBy(desc(dailyCheckIns.capturedAt))
+      .all();
+  }
+  // Single most recent check-in for a date (any phase, any source). Used
+  // by GET /api/checkins/latest which the Coach pre-session modal calls
+  // in Stage 9b to decide whether to prompt for a fresh check-in.
+  getLatestDailyCheckIn(date: string): DailyCheckIn | undefined {
+    return db
+      .select()
+      .from(dailyCheckIns)
+      .where(eq(dailyCheckIns.date, date))
+      .orderBy(desc(dailyCheckIns.capturedAt))
+      .limit(1)
+      .get();
+  }
+  // Patch an existing check-in by id, re-deriving numeric shadows for any
+  // chip-text fields touched. Returns the row after update, or undefined
+  // if no row matches the id.
+  updateDailyCheckIn(
+    id: number,
+    patch: Partial<DailyCheckIn>,
+  ): DailyCheckIn | undefined {
+    const merged: Record<string, unknown> = { ...patch };
+    for (const labelField of Object.keys(MORNING_LABEL_TO_NUM)) {
+      if (labelField in patch) {
+        const drizzleKey = MORNING_NUM_DRIZZLE_KEY[labelField];
+        if (!drizzleKey) continue;
+        const v = (patch as any)[labelField];
+        merged[drizzleKey] = v == null ? null : labelToNum(labelField, v);
+      }
+    }
+    db.update(dailyCheckIns)
+      .set(merged as any)
+      .where(eq(dailyCheckIns.id, id))
+      .run();
+    return db
+      .select()
+      .from(dailyCheckIns)
+      .where(eq(dailyCheckIns.id, id))
+      .get();
   }
 
   // ----- Inbox scan queue -----
