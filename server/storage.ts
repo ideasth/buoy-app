@@ -515,12 +515,144 @@ for (const stmt of [
   "ALTER TABLE morning_routines ADD COLUMN mood TEXT",
   "ALTER TABLE morning_routines ADD COLUMN cognitive_load TEXT",
   "ALTER TABLE morning_routines ADD COLUMN alignment TEXT",
+  // Morning alignment split (2026-05-09): two-axis alignment supersedes
+  // the legacy yes/no alignment column. Legacy column kept for historical rows.
+  "ALTER TABLE morning_routines ADD COLUMN alignment_people TEXT",
+  "ALTER TABLE morning_routines ADD COLUMN alignment_activities TEXT",
+  // Reflect-aligned label columns (2026-05-09): mirror Reflect option sets so
+  // Morning + Reflect tracking is comparable. Legacy 1–5 numeric energy and
+  // sleep_quality columns retained untouched for historical analytics.
+  "ALTER TABLE morning_routines ADD COLUMN energy_label TEXT",
+  "ALTER TABLE morning_routines ADD COLUMN sleep_label TEXT",
+  "ALTER TABLE morning_routines ADD COLUMN focus TEXT",
+  // Numeric shadow columns for analytics (2026-05-09 — Stage 5).
+  // Text columns above remain canonical; these mirror labels onto small
+  // ordinal scales. Mapping in MORNING_LABEL_TO_NUM below. Backfill runs once
+  // on boot to populate existing rows.
+  "ALTER TABLE morning_routines ADD COLUMN mood_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN energy_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN cognitive_load_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN sleep_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN focus_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN alignment_people_n INTEGER",
+  "ALTER TABLE morning_routines ADD COLUMN alignment_activities_n INTEGER",
+  // Reflect page restructure (Stage 6 — 2026-05-09).
+  // Evening habit tickboxes (medication, bed by 11pm) on the reflections table.
+  // Reflect-aligned chip labels mirroring the Morning reflection chips so the
+  // two pages share the same shared option arrays. Numeric shadows mirror the
+  // Stage 5 mapping for cross-page comparability. All nullable so existing
+  // legacy reflection rows remain valid.
+  "ALTER TABLE reflections ADD COLUMN medication_done INTEGER",
+  "ALTER TABLE reflections ADD COLUMN bed_by_11pm_done INTEGER",
+  "ALTER TABLE reflections ADD COLUMN arousal_state TEXT",
+  "ALTER TABLE reflections ADD COLUMN mood TEXT",
+  "ALTER TABLE reflections ADD COLUMN cognitive_load TEXT",
+  "ALTER TABLE reflections ADD COLUMN energy_label TEXT",
+  "ALTER TABLE reflections ADD COLUMN sleep_label TEXT",
+  "ALTER TABLE reflections ADD COLUMN focus TEXT",
+  "ALTER TABLE reflections ADD COLUMN alignment_people TEXT",
+  "ALTER TABLE reflections ADD COLUMN alignment_activities TEXT",
+  "ALTER TABLE reflections ADD COLUMN mood_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN cognitive_load_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN energy_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN sleep_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN focus_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN alignment_people_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN alignment_activities_n INTEGER",
+  "ALTER TABLE reflections ADD COLUMN top_three_status TEXT",
+  "ALTER TABLE reflections ADD COLUMN braindump_raw TEXT",
 ]) {
   try {
     sqlite.exec(stmt);
   } catch {
     // Column already exists — ignore.
   }
+}
+
+// Stage 5 (2026-05-09) — Morning numerical tracking values.
+//
+// Maps each Reflection text label to a small ordinal integer where higher =
+// "more positive / better day". Cognitive load is inverted (low load = 3).
+// Direction matches what a chart-of-the-day would intuitively rank as good.
+//
+// The text columns remain the canonical UI source. These integers are a
+// shadow for analytics. If a label has no mapping (e.g. an unknown legacy
+// value), the numeric column stays NULL.
+export const MORNING_LABEL_TO_NUM: Record<string, Record<string, number>> = {
+  mood: { positive: 3, neutral: 2, strained: 1 },
+  energyLabel: { high: 3, moderate: 2, low: 1 },
+  cognitiveLoad: { low: 3, moderate: 2, high: 1 },
+  sleepLabel: { restorative: 3, adequate: 2, poor: 1 },
+  focus: { focused: 2, scattered: 1 },
+  alignmentPeople: { aligned: 3, neutral: 2, disconnected: 1 },
+  alignmentActivities: { aligned: 3, neutral: 2, misaligned: 1 },
+};
+
+// Camel-case label field -> camelCase Drizzle column key on morningRoutines
+// (used in updateMorning's set() merge object).
+const MORNING_NUM_DRIZZLE_KEY: Record<string, string> = {
+  mood: "moodN",
+  energyLabel: "energyN",
+  cognitiveLoad: "cognitiveLoadN",
+  sleepLabel: "sleepN",
+  focus: "focusN",
+  alignmentPeople: "alignmentPeopleN",
+  alignmentActivities: "alignmentActivitiesN",
+};
+
+// Camel-case label field -> snake_case raw SQL column name (used in the
+// boot-time backfill UPDATE statements).
+const MORNING_NUM_SQL_COL: Record<string, string> = {
+  mood: "mood_n",
+  energyLabel: "energy_n",
+  cognitiveLoad: "cognitive_load_n",
+  sleepLabel: "sleep_n",
+  focus: "focus_n",
+  alignmentPeople: "alignment_people_n",
+  alignmentActivities: "alignment_activities_n",
+};
+
+function labelToNum(field: string, value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const m = MORNING_LABEL_TO_NUM[field];
+  if (!m) return null;
+  return field in MORNING_LABEL_TO_NUM && value in m ? m[value] : null;
+}
+
+// One-shot idempotent backfill: populate *_n columns from existing text rows
+// where the *_n cell is currently NULL. Cheap (one UPDATE per (field, value)
+// pair, conditioned on IS NULL) and safe to re-run on every boot.
+function backfillMorningNumericShadows(): void {
+  const fieldToTextCol: Record<string, string> = {
+    mood: "mood",
+    energyLabel: "energy_label",
+    cognitiveLoad: "cognitive_load",
+    sleepLabel: "sleep_label",
+    focus: "focus",
+    alignmentPeople: "alignment_people",
+    alignmentActivities: "alignment_activities",
+  };
+  for (const [field, mapping] of Object.entries(MORNING_LABEL_TO_NUM)) {
+    const numCol = MORNING_NUM_SQL_COL[field];
+    const textCol = fieldToTextCol[field];
+    if (!numCol || !textCol) continue;
+    for (const [labelValue, numValue] of Object.entries(mapping)) {
+      try {
+        sqlite
+          .prepare(
+            `UPDATE morning_routines SET ${numCol} = ? WHERE ${textCol} = ? AND ${numCol} IS NULL`,
+          )
+          .run(numValue, labelValue);
+      } catch {
+        // Column may not yet exist on a partially-migrated DB — ignore.
+      }
+    }
+  }
+}
+try {
+  backfillMorningNumericShadows();
+} catch {
+  // Never fail boot on a backfill error.
 }
 
 // ICS URL (including GitHub PAT) must be set via ANCHOR_ICS_URL env var.
@@ -793,10 +925,33 @@ export class Storage {
     return db.select().from(reflections).orderBy(desc(reflections.date)).all();
   }
   createReflection(input: InsertReflection): Reflection {
-    return db.insert(reflections).values(input).returning().get();
+    // Stage 6 (2026-05-09): mirror Morning's Stage 5 dual-write so any
+    // categorical chip label submitted from the Reflect page also populates
+    // its numeric shadow column. Reuses MORNING_LABEL_TO_NUM verbatim so the
+    // two pages share one mapping and one source of truth.
+    const enriched: Record<string, unknown> = { ...input };
+    for (const field of Object.keys(MORNING_LABEL_TO_NUM)) {
+      if (field in enriched) {
+        const numKey = MORNING_NUM_DRIZZLE_KEY[field];
+        if (numKey) enriched[numKey] = labelToNum(field, enriched[field]);
+      }
+    }
+    return db
+      .insert(reflections)
+      .values(enriched as InsertReflection)
+      .returning()
+      .get();
   }
   updateReflection(id: number, patch: Partial<Reflection>): Reflection | undefined {
-    db.update(reflections).set(patch).where(eq(reflections.id, id)).run();
+    // Mirror createReflection's dual-write so PATCHes also update shadows.
+    const enriched: Record<string, unknown> = { ...patch };
+    for (const field of Object.keys(MORNING_LABEL_TO_NUM)) {
+      if (field in enriched) {
+        const numKey = MORNING_NUM_DRIZZLE_KEY[field];
+        if (numKey) enriched[numKey] = labelToNum(field, enriched[field]);
+      }
+    }
+    db.update(reflections).set(enriched).where(eq(reflections.id, id)).run();
     return db.select().from(reflections).where(eq(reflections.id, id)).get();
   }
   deleteReflection(id: number) {
@@ -917,7 +1072,23 @@ export class Storage {
   }
   updateMorning(date: string, patch: Partial<MorningRoutine>): MorningRoutine | undefined {
     const existing = this.ensureMorningForDate(date);
-    db.update(morningRoutines).set(patch).where(eq(morningRoutines.id, existing.id)).run();
+    // Stage 5 dual-write: when a label field is being updated, also derive
+    // and write its numeric shadow column. Setting the label to null clears
+    // the shadow too. Unknown values (no mapping) leave the shadow at null.
+    const merged: Record<string, unknown> = { ...patch };
+    for (const labelField of Object.keys(MORNING_LABEL_TO_NUM)) {
+      if (labelField in patch) {
+        const drizzleKey = MORNING_NUM_DRIZZLE_KEY[labelField];
+        if (!drizzleKey) continue;
+        const v = (patch as any)[labelField];
+        if (v === null || v === undefined) {
+          (merged as any)[drizzleKey] = null;
+        } else {
+          (merged as any)[drizzleKey] = labelToNum(labelField, v);
+        }
+      }
+    }
+    db.update(morningRoutines).set(merged as any).where(eq(morningRoutines.id, existing.id)).run();
     return this.getMorningByDate(date);
   }
   recentMorningRoutines(limit = 7): MorningRoutine[] {

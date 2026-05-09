@@ -34,31 +34,20 @@ type TopPayingTodayResponse = {
   matchedEvent: { uid: string; summary: string | null; start: string; end: string } | null;
 };
 
-// Arousal state — clinical autonomic-arousal axis (replaces older calm/anxious/scattered/flat
-// options as of 2026-05-09). Historical rows may carry legacy values; the UI just won't
-// pre-select them.
-const AROUSAL_STATE_OPTIONS = [
-  { value: "hypo", label: "Hypo" },
-  { value: "calm", label: "Calm" },
-  { value: "hyper", label: "Hyper" },
-];
-
-const MOOD_OPTIONS = [
-  { value: "positive", label: "Positive" },
-  { value: "neutral", label: "Neutral" },
-  { value: "strained", label: "Strained" },
-];
-
-const COGNITIVE_LOAD_OPTIONS = [
-  { value: "low", label: "Low / clear" },
-  { value: "moderate", label: "Moderate" },
-  { value: "high", label: "High (overloaded)" },
-];
-
-const ALIGNMENT_OPTIONS = [
-  { value: "yes", label: "Yes" },
-  { value: "no", label: "No" },
-];
+// Reflection chip option sets and the shared ReflectionChipRow live in
+// client/src/lib/morningOptions.tsx so the Reflect page can reuse the exact
+// same option arrays and visual style (Stage 6 — 2026-05-09).
+import {
+  AROUSAL_STATE_OPTIONS,
+  MOOD_OPTIONS,
+  COGNITIVE_LOAD_OPTIONS,
+  ENERGY_OPTIONS,
+  SLEEP_OPTIONS,
+  FOCUS_OPTIONS,
+  ALIGNMENT_PEOPLE_OPTIONS,
+  ALIGNMENT_ACTIVITIES_OPTIONS,
+  ReflectionChipRow,
+} from "@/lib/morningOptions";
 
 function fmtMelbourneToday(): string {
   const fmt = new Intl.DateTimeFormat("en-AU", {
@@ -112,11 +101,16 @@ export default function Morning() {
   const [medicationDone, setMedicationDone] = useState(false);
   // Reflection
   const [arousalState, setArousalState] = useState<string | null>(null);
-  const [energy, setEnergy] = useState<number | null>(null);
-  const [sleep, setSleep] = useState<number | null>(null);
+  // Energy + Sleep moved to Reflect-aligned text labels (2026-05-09).
+  // Legacy 1–5 numeric values remain in the database but are no longer rendered
+  // or written by the Morning UI; Stage 5 will formalise the numeric mapping.
+  const [energyLabel, setEnergyLabel] = useState<string | null>(null);
+  const [sleepLabel, setSleepLabel] = useState<string | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
   const [mood, setMood] = useState<string | null>(null);
   const [cognitiveLoad, setCognitiveLoad] = useState<string | null>(null);
-  const [alignment, setAlignment] = useState<string | null>(null);
+  const [alignmentPeople, setAlignmentPeople] = useState<string | null>(null);
+  const [alignmentActivities, setAlignmentActivities] = useState<string | null>(null);
   // Bottom-of-page reflective prompts
   const [gratitude, setGratitude] = useState("");
   const [notes, setNotes] = useState("");
@@ -138,11 +132,13 @@ export default function Morning() {
     setBreathingDone((morning.breathingDone ?? 0) === 1);
     setMedicationDone((morning.medicationDone ?? 0) === 1);
     setArousalState(morning.state ?? null);
-    setEnergy(morning.energy ?? null);
-    setSleep(morning.sleepQuality ?? null);
+    setEnergyLabel((morning as any).energyLabel ?? null);
+    setSleepLabel((morning as any).sleepLabel ?? null);
+    setFocus((morning as any).focus ?? null);
     setMood(morning.mood ?? null);
     setCognitiveLoad(morning.cognitiveLoad ?? null);
-    setAlignment(morning.alignment ?? null);
+    setAlignmentPeople((morning as any).alignmentPeople ?? null);
+    setAlignmentActivities((morning as any).alignmentActivities ?? null);
     setGratitude(morning.gratitude ?? "");
     setAvoided(morning.avoidedTask ?? "");
     setNotes(morning.notes ?? "");
@@ -193,13 +189,20 @@ export default function Morning() {
     setArousalState(next);
     queuePatch({ state: next });
   };
-  const setEnergyAndSave = (n: number) => {
-    setEnergy(n);
-    queuePatch({ energy: n });
+  const setEnergyLabelAndSave = (s: string) => {
+    const next = energyLabel === s ? null : s;
+    setEnergyLabel(next);
+    queuePatch({ energyLabel: next });
   };
-  const setSleepAndSave = (n: number) => {
-    setSleep(n);
-    queuePatch({ sleepQuality: n });
+  const setSleepLabelAndSave = (s: string) => {
+    const next = sleepLabel === s ? null : s;
+    setSleepLabel(next);
+    queuePatch({ sleepLabel: next });
+  };
+  const setFocusAndSave = (s: string) => {
+    const next = focus === s ? null : s;
+    setFocus(next);
+    queuePatch({ focus: next });
   };
   const setMoodAndSave = (s: string) => {
     const next = mood === s ? null : s;
@@ -211,10 +214,15 @@ export default function Morning() {
     setCognitiveLoad(next);
     queuePatch({ cognitiveLoad: next });
   };
-  const setAlignmentAndSave = (s: string) => {
-    const next = alignment === s ? null : s;
-    setAlignment(next);
-    queuePatch({ alignment: next });
+  const setAlignmentPeopleAndSave = (s: string) => {
+    const next = alignmentPeople === s ? null : s;
+    setAlignmentPeople(next);
+    queuePatch({ alignmentPeople: next });
+  };
+  const setAlignmentActivitiesAndSave = (s: string) => {
+    const next = alignmentActivities === s ? null : s;
+    setAlignmentActivities(next);
+    queuePatch({ alignmentActivities: next });
   };
   const toggleExpress = (v: boolean) => {
     setExpress(v);
@@ -316,7 +324,7 @@ export default function Morning() {
 
   // Section completion booleans. Reflection is done when at least the two
   // required quick-tap fields are set (energy + arousal state).
-  const reflectDone = !!energy && !!arousalState;
+  const reflectDone = !!energyLabel && !!arousalState;
   const braindumpComplete = !!braindump && braindump.trim().length > 0;
   const topDone = topThree.length >= 1;
   const allDone = reflectDone && braindumpComplete && topDone;
@@ -460,134 +468,69 @@ export default function Morning() {
           <h2 className="text-xl font-semibold mt-1">How are you arriving?</h2>
         </header>
 
-        {/* Arousal state */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Arousal state</div>
-          <div className="flex flex-wrap gap-2">
-            {AROUSAL_STATE_OPTIONS.map((s) => (
-              <button
-                key={s.value}
-                onClick={() => setArousalAndSave(s.value)}
-                data-testid={`chip-arousal-${s.value}`}
-                className={cn(
-                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
-                  arousalState === s.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border bg-secondary text-secondary-foreground",
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Arousal state"
+          options={AROUSAL_STATE_OPTIONS}
+          current={arousalState}
+          onPick={setArousalAndSave}
+          testIdPrefix="chip-arousal"
+        />
 
-        {/* Energy */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Energy</div>
-          <div className="flex gap-2">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                onClick={() => setEnergyAndSave(n)}
-                data-testid={`button-energy-${n}`}
-                className={cn(
-                  "h-10 w-10 rounded-full border text-sm font-medium hover-elevate active-elevate-2",
-                  energy === n
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border bg-secondary text-secondary-foreground",
-                )}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Energy"
+          options={ENERGY_OPTIONS}
+          current={energyLabel}
+          onPick={setEnergyLabelAndSave}
+          testIdPrefix="chip-energy"
+        />
 
-        {/* Sleep */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Sleep quality</div>
-          <div className="flex gap-1.5">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                onClick={() => setSleepAndSave(n)}
-                data-testid={`button-sleep-${n}`}
-                aria-label={`sleep quality ${n}`}
-                className={cn(
-                  "h-3 w-8 rounded-full transition-colors",
-                  (sleep ?? 0) >= n ? "bg-primary" : "bg-muted",
-                )}
-              />
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Sleep quality"
+          options={SLEEP_OPTIONS}
+          current={sleepLabel}
+          onPick={setSleepLabelAndSave}
+          testIdPrefix="chip-sleep"
+        />
 
-        {/* Mood */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Mood</div>
-          <div className="flex flex-wrap gap-2">
-            {MOOD_OPTIONS.map((s) => (
-              <button
-                key={s.value}
-                onClick={() => setMoodAndSave(s.value)}
-                data-testid={`chip-mood-${s.value}`}
-                className={cn(
-                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
-                  mood === s.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border bg-secondary text-secondary-foreground",
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Mood"
+          options={MOOD_OPTIONS}
+          current={mood}
+          onPick={setMoodAndSave}
+          testIdPrefix="chip-mood"
+        />
 
-        {/* Cognitive load */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Cognitive load</div>
-          <div className="flex flex-wrap gap-2">
-            {COGNITIVE_LOAD_OPTIONS.map((s) => (
-              <button
-                key={s.value}
-                onClick={() => setCognitiveLoadAndSave(s.value)}
-                data-testid={`chip-cognitive-${s.value}`}
-                className={cn(
-                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
-                  cognitiveLoad === s.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border bg-secondary text-secondary-foreground",
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Cognitive load"
+          options={COGNITIVE_LOAD_OPTIONS}
+          current={cognitiveLoad}
+          onPick={setCognitiveLoadAndSave}
+          testIdPrefix="chip-cognitive"
+        />
 
-        {/* Feeling of alignment (Yes / No) */}
-        <div className="space-y-2">
-          <div className="text-sm text-muted-foreground">Feeling of alignment</div>
-          <div className="flex flex-wrap gap-2">
-            {ALIGNMENT_OPTIONS.map((s) => (
-              <button
-                key={s.value}
-                onClick={() => setAlignmentAndSave(s.value)}
-                data-testid={`chip-alignment-${s.value}`}
-                className={cn(
-                  "px-4 py-2 rounded-full border text-sm hover-elevate active-elevate-2",
-                  alignment === s.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border bg-secondary text-secondary-foreground",
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ReflectionChipRow
+          label="Focus"
+          options={FOCUS_OPTIONS}
+          current={focus}
+          onPick={setFocusAndSave}
+          testIdPrefix="chip-focus"
+        />
+
+        <ReflectionChipRow
+          label="Alignment — with those around me"
+          options={ALIGNMENT_PEOPLE_OPTIONS}
+          current={alignmentPeople}
+          onPick={setAlignmentPeopleAndSave}
+          testIdPrefix="chip-alignment-people"
+        />
+
+        <ReflectionChipRow
+          label="Alignment — activities and what I value"
+          options={ALIGNMENT_ACTIVITIES_OPTIONS}
+          current={alignmentActivities}
+          onPick={setAlignmentActivitiesAndSave}
+          testIdPrefix="chip-alignment-activities"
+        />
 
         {!reflectDone && (
           <div className="text-xs text-muted-foreground">

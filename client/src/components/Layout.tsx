@@ -15,9 +15,9 @@ type NavItem = { href: string; label: string } | { divider: true };
 const NAV: NavItem[] = [
   { href: "/coach", label: "Coach" },
   { href: "/capture", label: "Capture" },
-  { divider: true },
   { href: "/", label: "Today" },
   { href: "/calendar-planner", label: "Calendar" },
+  { divider: true },
   { href: "/morning", label: "Morning" },
   { href: "/reflect", label: "Reflect" },
   { href: "/review", label: "Review" },
@@ -58,7 +58,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen w-full flex flex-col md:flex-row bg-background">
       {/* Sidebar */}
-      <aside className="md:w-56 md:flex-shrink-0 md:min-h-screen md:border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <aside className="md:w-56 md:flex-shrink-0 md:sticky md:top-0 md:self-start md:h-screen md:overflow-y-auto md:border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
         <div className="px-5 py-5 flex items-center justify-between md:block">
           <div className="flex items-center gap-2">
             <Logo className="h-5 w-5 text-primary" />

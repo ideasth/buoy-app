@@ -704,6 +704,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "mood",
       "cognitiveLoad",
       "alignment",
+      // Two-axis alignment split (added 2026-05-09)
+      "alignmentPeople",
+      "alignmentActivities",
+      // Reflect-aligned label fields (added 2026-05-09)
+      "energyLabel",
+      "sleepLabel",
+      "focus",
     ]) {
       if (k in req.body) allowed[k] = req.body[k];
     }

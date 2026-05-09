@@ -127,10 +127,45 @@ export const reflections = sqliteTable("reflections", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   date: text("date").notNull(),
   kind: text("kind").notNull().default("daily"), // daily / weekly / quarterly
-  energy: integer("energy"), // 1-5
-  state: text("state"), // calm / anxious / scattered / flat
+  // Legacy daily-reflection fields (kept for historical analytics; new
+  // submissions from the Stage 6 Reflect UI leave these NULL).
+  energy: integer("energy"), // legacy 1-5
+  state: text("state"), // legacy calm / anxious / scattered / flat
   avoidedTask: text("avoided_task"),
   notes: text("notes"),
+  // Reflect page restructure (Stage 6 — 2026-05-09):
+  // Evening habit tickboxes mirroring Morning's habit pattern.
+  medicationDone: integer("medication_done"),
+  bedBy11pmDone: integer("bed_by_11pm_done"),
+  // Reflect-aligned chip labels matching the Morning reflection chips so
+  // both pages share the same ChipOption arrays from morningOptions.tsx and
+  // tracking is comparable across morning + evening.
+  arousalState: text("arousal_state"), // hypo | calm | hyper
+  mood: text("mood"), // positive | neutral | strained
+  cognitiveLoad: text("cognitive_load"), // high | moderate | low
+  energyLabel: text("energy_label"), // low | moderate | high
+  sleepLabel: text("sleep_label"), // restorative | adequate | poor
+  focus: text("focus"), // focused | scattered
+  alignmentPeople: text("alignment_people"), // aligned | neutral | disconnected
+  alignmentActivities: text("alignment_activities"), // aligned | neutral | misaligned
+  // Numeric shadow columns matching the Stage 5 mapping. Text columns above
+  // remain canonical; these mirror categorical labels onto a small ordinal
+  // scale for charts/correlations. Mapping in server/storage.ts (same
+  // MORNING_LABEL_TO_NUM table reused; no shadow for arousalState).
+  moodN: integer("mood_n"),
+  cognitiveLoadN: integer("cognitive_load_n"),
+  energyN: integer("energy_n"),
+  sleepN: integer("sleep_n"),
+  focusN: integer("focus_n"),
+  alignmentPeopleN: integer("alignment_people_n"),
+  alignmentActivitiesN: integer("alignment_activities_n"),
+  // Top-3 status snapshot at reflect-time (JSON array of {id, done} pairs).
+  // Optional: lets a row record the per-task tick state at end-of-day even if
+  // the underlying task is later re-opened. Read from /api/top-three when
+  // rendering live state.
+  topThreeStatus: text("top_three_status"),
+  // Optional braindump captured during the evening reflection.
+  braindumpRaw: text("braindump_raw"),
 });
 
 export const insertReflectionSchema = createInsertSchema(reflections).omit({ id: true });
@@ -157,6 +192,8 @@ export const morningRoutines = sqliteTable("morning_routines", {
   date: text("date").notNull().unique(),
   startedAt: integer("started_at"),
   completedAt: integer("completed_at"),
+  // Legacy 1–5 numeric columns (kept for historical analytics, no longer
+  // written by the Morning UI as of 2026-05-09). New label columns below.
   energy: integer("energy"),
   state: text("state"),
   sleepQuality: integer("sleep_quality"),
@@ -175,7 +212,26 @@ export const morningRoutines = sqliteTable("morning_routines", {
   // so the Morning page is self-contained and can lock without a second API.
   mood: text("mood"), // positive | neutral | strained
   cognitiveLoad: text("cognitive_load"), // high | moderate | low
-  alignment: text("alignment"), // yes | no  (replaces the legacy three-option valuesAlignment for the Morning surface)
+  alignment: text("alignment"), // legacy yes | no — kept nullable for backward compatibility; superseded by alignmentPeople + alignmentActivities (added 2026-05-09)
+  // Two-axis alignment split (added 2026-05-09):
+  alignmentPeople: text("alignment_people"), // aligned | neutral | disconnected
+  alignmentActivities: text("alignment_activities"), // aligned | neutral | misaligned
+  // Reflect-aligned text labels (added 2026-05-09): same option set as the
+  // Reflect Mood & Factors check-in, so Morning + Reflect tracking is comparable.
+  energyLabel: text("energy_label"), // low | moderate | high
+  sleepLabel: text("sleep_label"), // restorative | adequate | poor
+  focus: text("focus"), // focused | scattered
+  // Numeric shadows for analytics (added 2026-05-09 — Stage 5).
+  // Text columns above remain the canonical UI source; these mirror the
+  // categorical labels onto a small ordinal scale for charts/correlations.
+  // Mapping is defined in server/storage.ts (MORNING_LABEL_TO_NUM).
+  moodN: integer("mood_n"),
+  energyN: integer("energy_n"),
+  cognitiveLoadN: integer("cognitive_load_n"),
+  sleepN: integer("sleep_n"),
+  focusN: integer("focus_n"),
+  alignmentPeopleN: integer("alignment_people_n"),
+  alignmentActivitiesN: integer("alignment_activities_n"),
 });
 
 export const insertMorningRoutineSchema = createInsertSchema(morningRoutines).omit({ id: true });
