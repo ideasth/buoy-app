@@ -234,23 +234,83 @@ export function registerAdminDbRoutes(
 
   // -------- HEALTH --------
   // GET /api/admin/health — read-only ops dashboard endpoint.
-  // Returns DB size + import flag, local backup directory state (best-effort
-  // — only readable when the server runs in the Computer sandbox), and a
-  // static manifest of the scheduled crons that orchestrate this app.
-  // Cron live status is NOT polled here; the published sandbox can't reach
-  // pplx-tool. The user checks runs in the Perplexity scheduler UI.
-  const BACKUPS_DIR = "/home/user/workspace/anchor-backups";
-  const KNOWN_CRONS: Array<{
+  //
+  // Stage 12c (post-VPS-migration) shape:
+  //   db                  — sqlite file size + import flag.
+  //   backups             — last 5 OneDrive receipts (no local backup dir scan;
+  //                         the wmu systemd timer writes straight to OneDrive
+  //                         from /var/tmp, no persistent local backup dir).
+  //   perplexityCrons     — the 3 recurring Perplexity crons that survive the
+  //                         Stage 12b VPS offload, sourced from cron-inventory.
+  //   systemdTimers       — the 6 wmu systemd timers (informational only; we
+  //                         don't poll them here, the user runs
+  //                         `systemctl list-timers` on the VPS to see live state).
+  //   cronHeartbeats      — last heartbeat per Perplexity cron in the allowlist.
+  //   icsFeeds            — upstream ICS feed cache status (URLs always masked).
+  //   coachContextUsage   — last 30 days of coach-context bundle key hits.
+  const PERPLEXITY_CRONS: Array<{
     id: string;
     name: string;
     cron: string;
     note: string;
   }> = [
     {
-      id: "8e8b7bb5",
-      name: "Anchor data.db weekly backup",
-      cron: "0 17 * * 6",
-      note: "Saturdays 17:00 UTC = Sundays 03:00 AEST. Retune to '0 16 * * 6' on/after 2026-10-05 (AEDT cutover).",
+      id: "17df3d7e",
+      name: "Outlook + Capture bridge",
+      cron: "54 0,2,4,6,8,10,12,20,22 * * *",
+      note: "Every 2h, 06:00–22:00 AEST. Retune to '54 23,1,3,5,7,9,11,19,21 * * *' on/after 2026-10-05 (AEDT cutover).",
+    },
+    {
+      id: "2928f9fa",
+      name: "Oliver's calendar sync (ICS-only)",
+      cron: "0 8,20 * * *",
+      note: "06:00 and 18:00 AEST daily. Retune to '0 7,19 * * *' on/after 2026-10-05 (AEDT cutover).",
+    },
+    {
+      id: "c751741f",
+      name: "Email Status pull (6-hourly)",
+      cron: "0 20,2,8,14 * * *",
+      note: "00:00, 06:00, 12:00, 18:00 AEST daily. Retune to '0 19,1,7,13 * * *' on/after 2026-10-05 (AEDT cutover).",
+    },
+  ];
+
+  // wmu VPS systemd timers (Stage 12b offload). Schedules are Melbourne local
+  // time set via OnCalendar in /etc/systemd/system/anchor-*.timer. These do
+  // NOT need AEDT retuning — systemd handles the cutover automatically.
+  const SYSTEMD_TIMERS: Array<{
+    name: string;
+    schedule: string;
+    description: string;
+  }> = [
+    {
+      name: "anchor-backup-datadb",
+      schedule: "daily 02:00",
+      description: "Pulls a consistent snapshot from /api/admin/db/export, compresses with zstd, uploads to onedrive:Backups/Anchor/YYYY/MM/, POSTs a backup receipt.",
+    },
+    {
+      name: "anchor-prune-backups",
+      schedule: "Sun 03:25",
+      description: "Retention sweep: keep 90 daily, 1 yr weekly, forever monthly. Dry-run by default; deletes when ANCHOR_PRUNE_APPLY=1.",
+    },
+    {
+      name: "anchor-warm-calendar",
+      schedule: "daily 05:55 and 17:55",
+      description: "Warms the calendar ICS cache by hitting /api/calendar.",
+    },
+    {
+      name: "anchor-warm-morning",
+      schedule: "daily 05:55",
+      description: "Warms the morning-briefing endpoints (capture, today's plan).",
+    },
+    {
+      name: "anchor-warm-weekly-review",
+      schedule: "Sun 18:25",
+      description: "Warms the weekly-review endpoints before the user's Sunday review.",
+    },
+    {
+      name: "anchor-verify-backup-receipt",
+      schedule: "Sat 06:31",
+      description: "Posts an alert to the in-memory error ring if no backup receipt has landed in the last 36 hours.",
     },
   ];
 
@@ -269,39 +329,23 @@ export function registerAdminDbRoutes(
       /* dbExists stays false */
     }
 
-    // Backups (best-effort read of local Computer-sandbox path).
-    let backupCount = 0;
-    let lastLocalMtime: number | null = null;
-    let lastLocalPath: string | null = null;
-    let backupsReadable = false;
-    try {
-      const entries = fs.readdirSync(BACKUPS_DIR);
-      backupsReadable = true;
-      const dbFiles = entries.filter((f) => f.startsWith("anchor-") && f.endsWith(".db"));
-      backupCount = dbFiles.length;
-      for (const f of dbFiles) {
-        try {
-          const full = path.join(BACKUPS_DIR, f);
-          const st = fs.statSync(full);
-          const mtime = st.mtimeMs;
-          if (lastLocalMtime === null || mtime > lastLocalMtime) {
-            lastLocalMtime = mtime;
-            lastLocalPath = full;
-          }
-        } catch {
-          /* skip */
-        }
-      }
-    } catch {
-      /* backupsReadable stays false (expected in published sandbox) */
-    }
-
-    // Last OneDrive backup receipt (posted by cron 8e8b7bb5 after a successful upload).
+    // Last OneDrive backup receipt (posted by the wmu anchor-backup-datadb
+    // systemd timer after each successful upload). Backups land directly on
+    // OneDrive from /var/tmp on the VPS — there is no persistent local backup
+    // dir to scan since the Stage 12b migration.
     let lastReceipt: ReturnType<typeof storage.latestBackupReceipt> = null;
     try {
       lastReceipt = storage.latestBackupReceipt();
     } catch {
       lastReceipt = null;
+    }
+
+    // Last 5 OneDrive backups (recent receipts), for the dashboard tile.
+    let recentReceipts: ReturnType<typeof storage.recentBackupReceipts> = [];
+    try {
+      recentReceipts = storage.recentBackupReceipts(5);
+    } catch {
+      recentReceipts = [];
     }
 
     // Cron heartbeats (Option 3 canary). One row per known cron with the
@@ -331,15 +375,16 @@ export function registerAdminDbRoutes(
     // ICS feeds (Admin dashboard). Privacy: full URLs are ONLY revealed when
     // the request authenticated via X-Anchor-Sync-Secret. Cookie-only callers
     // see the masked URL plus last-fetch + count metadata.
-    // We detect sync-secret presence by re-checking the header here rather
-    // than threading a flag through Authed (keeps the auth helpers untouched
-    // and avoids leaking auth state to other middleware).
-    const usedSyncSecret = hasSyncSecret ? hasSyncSecret(req) : false;
+    // We no longer reveal the raw URL even when the sync-secret is presented
+    // (Stage 12c — ICS publish URLs embed a PAT and there's no admin UX that
+    // needs the unmasked form). hasSyncSecret is still imported for future
+    // use; reference it once here to keep the dependency explicit without
+    // tripping unused-import lints.
+    void hasSyncSecret;
     const maskUrl = (u: string): string =>
       u ? u.replace(/\/\/.*@/, "//[secret]@") : "";
     let icsFeeds: Array<{
       label: string;
-      url: string | null;
       urlMasked: string;
       hasUrl: boolean;
       lastFetchedAt: number | null;
@@ -361,7 +406,12 @@ export function registerAdminDbRoutes(
         }
         return {
           label,
-          url: usedSyncSecret ? (url || null) : null,
+          // Stage 12c: never return the raw URL from this endpoint, even when
+          // the request authed via X-Anchor-Sync-Secret. The credential
+          // portion of the URL (e.g. Outlook publish PAT) is sensitive and
+          // there's no Admin UX that needs the raw form — the user maintains
+          // the URLs in Settings, which has its own auth path. The masked
+          // URL is sufficient for the cache-status display.
           urlMasked: maskUrl(url),
           hasUrl: Boolean(url),
           lastFetchedAt: status ? status.fetchedAt : null,
@@ -396,17 +446,12 @@ export function registerAdminDbRoutes(
         importEnabled: IMPORT_ENABLED,
       },
       backups: {
-        dir: BACKUPS_DIR,
-        readable: backupsReadable,
-        count: backupCount,
-        lastLocalMtime,
-        lastLocalPath,
         lastReceipt,
-        note: backupsReadable
-          ? null
-          : "Local backup dir not readable from this sandbox. Backups exist on the Computer-side filesystem and are uploaded to OneDrive by cron 8e8b7bb5.",
+        recent: recentReceipts,
+        note: "Daily backups land directly on OneDrive from the wmu VPS via the anchor-backup-datadb systemd timer. There is no persistent local backup directory.",
       },
-      crons: KNOWN_CRONS,
+      perplexityCrons: PERPLEXITY_CRONS,
+      systemdTimers: SYSTEMD_TIMERS,
       cronHeartbeats,
       icsFeeds,
       coachContextUsage,

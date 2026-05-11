@@ -129,11 +129,6 @@ interface HealthResponse {
     importEnabled: boolean;
   };
   backups: {
-    dir: string;
-    readable: boolean;
-    count: number;
-    lastLocalMtime: number | null;
-    lastLocalPath: string | null;
     lastReceipt: {
       id: number;
       onedriveUrl: string;
@@ -142,13 +137,26 @@ interface HealthResponse {
       note: string | null;
       createdAt: number;
     } | null;
+    recent: Array<{
+      id: number;
+      onedriveUrl: string;
+      mtime: number | null;
+      sizeBytes: number | null;
+      note: string | null;
+      createdAt: number;
+    }>;
     note: string | null;
   };
-  crons: Array<{
+  perplexityCrons: Array<{
     id: string;
     name: string;
     cron: string;
     note: string;
+  }>;
+  systemdTimers: Array<{
+    name: string;
+    schedule: string;
+    description: string;
   }>;
   cronHeartbeats?: Array<{
     cronId: string;
@@ -158,7 +166,10 @@ interface HealthResponse {
   }>;
   icsFeeds?: Array<{
     label: string;
-    url: string | null; // present only when authed via X-Anchor-Sync-Secret
+    // Stage 12c: the raw URL is no longer returned from /api/admin/health
+    // even when the request authed via X-Anchor-Sync-Secret. The user
+    // maintains the URLs in Settings; the masked URL is enough for the
+    // dashboard cache-status display.
     urlMasked: string;
     hasUrl: boolean;
     lastFetchedAt: number | null;
@@ -200,8 +211,14 @@ function fmtAbs(ms: number | null | undefined): string {
 function fmtRelative(ms: number | null | undefined): string {
   if (!ms) return "";
   const diff = Date.now() - ms;
-  if (diff < 0) return " (in the future)";
+  // Tolerate small clock skew between server and client — a ~2-minute
+  // negative diff is almost certainly clock drift, not a real future
+  // timestamp. Only show "in the future" when the value is more than
+  // 2 minutes ahead of the client clock.
+  if (diff < -2 * 60 * 1000) return " (in the future)";
+  if (diff < 0) return " (just now)";
   const mins = Math.round(diff / 60000);
+  if (mins < 1) return " (just now)";
   if (mins < 60) return ` (${mins}m ago)`;
   const hours = Math.round(mins / 60);
   if (hours < 24) return ` (${hours}h ago)`;
@@ -354,8 +371,8 @@ function IcsFeedsCard({
           Upstream feeds (Anchor reads these)
         </div>
         <div className="text-xs text-muted-foreground -mt-3">
-          Full URLs are only shown when this page is loaded with the sync
-          secret; otherwise the credential portion is masked.
+          The credential portion of the URL is always masked here. Manage the
+          raw URLs in Settings.
         </div>
 
         {feeds.length === 0 && (
@@ -365,8 +382,6 @@ function IcsFeedsCard({
         )}
 
         {feeds.map((f) => {
-          const displayUrl = f.url ?? f.urlMasked;
-          const canCopy = Boolean(f.url);
           const dotClass =
             f.cacheStatus === "fresh"
               ? "bg-emerald-500"
@@ -411,25 +426,14 @@ function IcsFeedsCard({
                       className="text-[11px] font-mono break-all bg-muted/40 rounded px-2 py-1 flex-1 min-w-0"
                       data-testid={`ics-url-${f.label}`}
                     >
-                      {displayUrl || "(empty)"}
+                      {f.urlMasked || "(empty)"}
                     </code>
-                    {canCopy ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => copyUrl(f.label, f.url!)}
-                        data-testid={`copy-ics-${f.label}`}
-                      >
-                        {copied === f.label ? "Copied" : "Copy"}
-                      </Button>
-                    ) : (
-                      <span
-                        className="text-[11px] text-muted-foreground italic"
-                        title="Reload this page with the X-Anchor-Sync-Secret header to reveal the full URL."
-                      >
-                        masked
-                      </span>
-                    )}
+                    <span
+                      className="text-[11px] text-muted-foreground italic"
+                      title="The credential portion of the URL is masked here. Manage the raw URL in Settings."
+                    >
+                      masked
+                    </span>
                   </div>
 
                   <div className="text-xs text-muted-foreground">
@@ -598,7 +602,7 @@ function HealthDashboard() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
-          Read-only ops dashboard. DB, local backups, and scheduled crons.
+          Read-only ops dashboard. DB, OneDrive backups, Perplexity crons, and wmu systemd timers.
         </p>
         <Button
           size="sm"
@@ -661,40 +665,13 @@ function HealthDashboard() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Local backups</CardTitle>
+              <CardTitle className="text-base">OneDrive backups</CardTitle>
             </CardHeader>
             <CardContent className="text-sm space-y-1">
-              <Row k="Directory" v={<code className="text-xs">{data.backups.dir}</code>} />
-              <Row
-                k="Readable from server"
-                v={
-                  data.backups.readable
-                    ? "yes"
-                    : <span className="text-muted-foreground">no</span>
-                }
-              />
-              <Row k="Count" v={String(data.backups.count)} />
-              <Row
-                k="Last mtime"
-                v={
-                  <>
-                    {fmtAbs(data.backups.lastLocalMtime)}
-                    <span className="text-muted-foreground">
-                      {fmtRelative(data.backups.lastLocalMtime)}
-                    </span>
-                  </>
-                }
-              />
-              {data.backups.lastLocalPath && (
-                <Row
-                  k="Last path"
-                  v={<code className="text-xs">{data.backups.lastLocalPath}</code>}
-                />
-              )}
-              {data.backups.lastReceipt && (
+              {data.backups.lastReceipt ? (
                 <>
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground mt-3">
-                    Last OneDrive backup
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Last backup
                   </div>
                   <Row
                     k="Recorded"
@@ -710,14 +687,9 @@ function HealthDashboard() {
                   <Row
                     k="OneDrive URL"
                     v={
-                      <a
-                        href={data.backups.lastReceipt.onedriveUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs underline break-all"
-                      >
+                      <code className="text-xs break-all">
                         {data.backups.lastReceipt.onedriveUrl}
-                      </a>
+                      </code>
                     }
                   />
                   {data.backups.lastReceipt.sizeBytes != null && (
@@ -732,13 +704,42 @@ function HealthDashboard() {
                     </div>
                   )}
                 </>
-              )}
-              {!data.backups.lastReceipt && (
-                <div className="text-xs text-muted-foreground italic mt-2">
-                  No OneDrive backup receipt recorded yet. The cron will POST one
-                  on its next successful run.
+              ) : (
+                <div className="text-xs text-muted-foreground italic">
+                  No OneDrive backup receipt recorded yet. The systemd timer
+                  on wmu will POST one on its next successful run.
                 </div>
               )}
+
+              {data.backups.recent.length > 1 && (
+                <>
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground mt-3">
+                    Last {data.backups.recent.length} backups
+                  </div>
+                  <div className="space-y-1">
+                    {data.backups.recent.map((r) => (
+                      <div
+                        key={r.id}
+                        className="text-xs flex items-baseline gap-3 flex-wrap"
+                        data-testid={`backup-receipt-${r.id}`}
+                      >
+                        <span className="tabular-nums text-muted-foreground w-44 shrink-0">
+                          {fmtAbs(r.createdAt)}
+                        </span>
+                        <code className="text-[11px] flex-1 min-w-0 break-all">
+                          {r.onedriveUrl}
+                        </code>
+                        {r.sizeBytes != null && (
+                          <span className="text-muted-foreground tabular-nums">
+                            {fmtBytes(r.sizeBytes)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
               {data.backups.note && (
                 <div className="text-xs text-muted-foreground italic mt-2">
                   {data.backups.note}
@@ -855,13 +856,13 @@ function HealthDashboard() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Scheduled crons</CardTitle>
+              <CardTitle className="text-base">Perplexity crons</CardTitle>
             </CardHeader>
             <CardContent className="text-sm space-y-3">
-              {data.crons.length === 0 && (
+              {data.perplexityCrons.length === 0 && (
                 <div className="text-sm italic text-muted-foreground">No crons known.</div>
               )}
-              {data.crons.map((c) => {
+              {data.perplexityCrons.map((c) => {
                 const hb = (data.cronHeartbeats ?? []).find(
                   (h) => h.cronId === c.id,
                 );
@@ -882,7 +883,7 @@ function HealthDashboard() {
                       <code className="text-xs text-muted-foreground">{c.id}</code>
                     </div>
                     <div className="text-xs mt-1">
-                      Schedule: <code className="font-mono">{c.cron}</code>
+                      Schedule (UTC): <code className="font-mono">{c.cron}</code>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">{c.note}</div>
                     {hb && (
@@ -915,6 +916,33 @@ function HealthDashboard() {
                 only shows static cron metadata baked into the build, plus the
                 most-recent heartbeat per cron.
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">VPS systemd timers (wmu)</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-3">
+              <div className="text-xs text-muted-foreground">
+                These six timers replaced the corresponding Perplexity crons
+                during the Stage 12b migration. Schedules are Melbourne local
+                time — systemd handles the AEDT cutover automatically.
+                Run <code>systemctl list-timers anchor-*</code> on wmu to see
+                live state.
+              </div>
+              {data.systemdTimers.length === 0 && (
+                <div className="text-sm italic text-muted-foreground">No timers known.</div>
+              )}
+              {data.systemdTimers.map((t) => (
+                <div key={t.name} className="rounded-md border p-3">
+                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                    <code className="font-medium text-xs">{t.name}</code>
+                    <span className="text-xs text-muted-foreground">{t.schedule}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">{t.description}</div>
+                </div>
+              ))}
             </CardContent>
           </Card>
 

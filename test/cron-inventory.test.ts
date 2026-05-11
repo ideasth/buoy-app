@@ -15,20 +15,29 @@ import {
 // and this test will keep the AEDT body in sync.
 
 describe("AEDT retune inventory", () => {
-  it("contains every known retune candidate (and NOT 236aa4a4 itself, which is the reminder cron)", () => {
+  it("contains only the recurring Perplexity crons that survive the Stage 12b VPS offload", () => {
+    // Stage 12c trim: the six crons offloaded to systemd timers on wmu
+    // (8e8b7bb5, 0697627f, 67fb0e91, b4a58a27, 28a67578, d08f13f1) were
+    // deleted from Perplexity. The reminder cron 236aa4a4 is itself one-shot
+    // and is intentionally NOT in this list — it references the list.
     const ids = AEDT_RETUNE_INVENTORY.map((e) => e.id).sort();
     expect(ids).toEqual([
-      "0697627f",
       "17df3d7e",
-      "28a67578",
       "2928f9fa",
-      "67fb0e91",
-      "8e8b7bb5",
-      "b4a58a27",
       "c751741f",
-      "d08f13f1",
     ].sort());
     expect(ids).not.toContain("236aa4a4");
+    // Sanity: none of the offloaded ids leaked back in.
+    for (const offloaded of [
+      "8e8b7bb5",
+      "0697627f",
+      "67fb0e91",
+      "b4a58a27",
+      "28a67578",
+      "d08f13f1",
+    ]) {
+      expect(ids, `offloaded cron ${offloaded} should not be in inventory`).not.toContain(offloaded);
+    }
   });
 
   it.each(AEDT_RETUNE_INVENTORY)(

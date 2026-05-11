@@ -2226,6 +2226,37 @@ export class Storage {
     return row ?? null;
   }
 
+  /**
+   * Last N backup receipts, newest first. Used by the Admin dashboard's
+   * "Last N OneDrive backups" tile so the user can confirm the daily systemd
+   * timer is firing without having to log into OneDrive.
+   */
+  recentBackupReceipts(limit: number): Array<{
+    id: number;
+    onedriveUrl: string;
+    mtime: number | null;
+    sizeBytes: number | null;
+    note: string | null;
+    createdAt: number;
+  }> {
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit), 50));
+    return sqlite
+      .prepare(
+        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note, created_at as createdAt
+         FROM backup_receipts
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(safeLimit) as Array<{
+        id: number;
+        onedriveUrl: string;
+        mtime: number | null;
+        sizeBytes: number | null;
+        note: string | null;
+        createdAt: number;
+      }>;
+  }
+
   // ----- Cron heartbeats (Option 3 canary) -----
   // Each known cron POSTs a heartbeat as step 0 of its task body. Anomalies
   // (unknown cronId, off-window fire, double-fire) are recorded in
