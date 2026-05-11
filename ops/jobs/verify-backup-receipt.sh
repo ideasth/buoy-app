@@ -6,9 +6,13 @@
 # Behaviour:
 #   - GET /api/admin/health
 #   - Parse backups.lastReceipt
-#   - If null              → exit 2 (systemd logs failure; weekly status alert via mail/journal)
-#   - If older than 8 days → exit 3
+#   - If null              → exit 2 (systemd logs failure; surfaces in list-timers)
+#   - If older than 36h    → exit 3
 #   - Else                 → log OK and exit 0
+#
+# 36h is chosen because the daily backup timer (anchor-backup-datadb) fires
+# every ~24h. Anything older than 36h means at least one daily run was missed
+# — investigate the same day rather than waiting a week.
 #
 # This is run by a oneshot service; non-zero exit shows up as failed in
 # `systemctl list-timers` and `journalctl -u anchor-verify-backup-receipt`.
@@ -19,7 +23,7 @@ set -euo pipefail
 JOB_TAG="anchor-verify-backup-receipt"
 ANCHOR_BASE="${ANCHOR_BASE:-https://anchor.thinhalo.com}"
 ANCHOR_SECRET_FILE="${ANCHOR_SECRET_FILE:-/opt/anchor/.secrets/anchor_sync_secret}"
-STALE_AFTER_SECS="${ANCHOR_BACKUP_STALE_SECS:-$((8 * 86400))}"
+STALE_AFTER_SECS="${ANCHOR_BACKUP_STALE_SECS:-$((36 * 3600))}"
 
 log() { printf '[%s] [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$JOB_TAG" "$*"; }
 

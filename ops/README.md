@@ -21,7 +21,7 @@ which is `chmod 600` and gitignored.
 | `jobs/warm-calendar.sh` | Pre-warm `/api/calendar-events?days=14` and `/api/today-events`, then self-log to `/api/usage/cron-run`. Migrated from Perplexity cron `b4a58a27`. | Twice daily via systemd timer at 05:55 + 17:55 local. |
 | `jobs/warm-morning.sh` | Pre-warm `/api/morning/today` and `/api/briefing`, then self-log. Migrated from Perplexity cron `0697627f`. | Daily via systemd timer at 05:55 local. |
 | `jobs/warm-weekly-review.sh` | Pre-warm `/api/weekly-review` and `/api/morning/today`, then self-log. Migrated from Perplexity cron `67fb0e91`. | Weekly via systemd timer Sun 18:25 local. |
-| `jobs/verify-backup-receipt.sh` | GET `/api/admin/health`, inspect `backups.lastReceipt`, exit non-zero if null or older than `ANCHOR_BACKUP_STALE_SECS` (default 8 days). Migrated from Perplexity cron `d08f13f1`. | Weekly via systemd timer Sat 06:30 local. |
+| `jobs/verify-backup-receipt.sh` | GET `/api/admin/health`, inspect `backups.lastReceipt`, exit non-zero if null or older than `ANCHOR_BACKUP_STALE_SECS` (default 36h — catches a single missed daily run). Migrated from Perplexity cron `d08f13f1`. | Weekly via systemd timer Sat 06:30 local. |
 | `install-backup-timer.sh` | Install all six (service, timer) unit pairs at once. Idempotent — re-running picks up edits to units or scripts, and auto-fixes missing exec bits on job scripts. | Once after rclone is configured; again after editing any units or scripts. |
 
 ## systemd units (in `ops/systemd/`)
@@ -35,7 +35,7 @@ which is `chmod 600` and gitignored.
 | `anchor-warm-calendar.{service,timer}` | Runs `jobs/warm-calendar.sh` at 05:55 + 17:55 local with 30s jitter. |
 | `anchor-warm-morning.{service,timer}` | Runs `jobs/warm-morning.sh` daily at 05:55 local with 30s jitter. |
 | `anchor-warm-weekly-review.{service,timer}` | Runs `jobs/warm-weekly-review.sh` Sundays at 18:25 local with 30s jitter. |
-| `anchor-verify-backup-receipt.{service,timer}` | Runs `jobs/verify-backup-receipt.sh` Saturdays at 06:30 local with 2min jitter (after Friday-night backup). A non-zero exit shows as a failed unit in `systemctl list-timers`. |
+| `anchor-verify-backup-receipt.{service,timer}` | Runs `jobs/verify-backup-receipt.sh` Saturdays at 06:30 local with 2min jitter (after Friday-night backup). Stale threshold is 36h (`ANCHOR_BACKUP_STALE_SECS=$((36*3600))`) — daily backup means anything older means at least one missed run, investigate same day. A non-zero exit shows as a failed unit in `systemctl list-timers`. |
 
 ## Cron offload from Perplexity (Stage 12b)
 
