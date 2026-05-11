@@ -16,6 +16,24 @@ interface WeeklyReview {
   avgEnergy: number;
   reflections: Reflection[];
   completedTasks: Task[];
+  calm?: {
+    totalCount: number;
+    countByVariant: {
+      grounding_only: number;
+      grounding_plus_reflection: number;
+    };
+    avgIntensityDeltaByVariant: {
+      grounding_only: number;
+      grounding_plus_reflection: number;
+    };
+    topTags: Array<{ tag: string; count: number }>;
+    linkedIssues: Array<{
+      entityType: string;
+      entityId: number | null;
+      label: string;
+      count: number;
+    }>;
+  };
 }
 
 export default function Review() {
@@ -98,6 +116,74 @@ export default function Review() {
         </div>
       </section>
 
+      {w?.calm && w.calm.totalCount > 0 && (
+        <section>
+          <h2 className="text-sm font-medium mb-3">Calm sessions</h2>
+          <div className="rounded-lg border bg-card p-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Grounding only
+                </div>
+                <div className="mt-0.5 tabular-nums">
+                  {w.calm.countByVariant.grounding_only}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    (avg Δ {fmtDelta(w.calm.avgIntensityDeltaByVariant.grounding_only)})
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Grounding + reflection
+                </div>
+                <div className="mt-0.5 tabular-nums">
+                  {w.calm.countByVariant.grounding_plus_reflection}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    (avg Δ{" "}
+                    {fmtDelta(w.calm.avgIntensityDeltaByVariant.grounding_plus_reflection)})
+                  </span>
+                </div>
+              </div>
+            </div>
+            {w.calm.topTags.length > 0 && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+                  Most-tagged feelings
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {w.calm.topTags.map((t) => (
+                    <span
+                      key={t.tag}
+                      className="text-xs px-2 py-1 rounded-full bg-muted"
+                    >
+                      {t.tag} <span className="text-muted-foreground">×{t.count}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {w.calm.linkedIssues.length > 0 && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+                  Linked issues
+                </div>
+                <ul className="text-sm space-y-1">
+                  {w.calm.linkedIssues.map((li, i) => (
+                    <li key={`${li.entityType}-${li.entityId ?? i}`}>
+                      <span className="text-xs text-muted-foreground mr-2">
+                        {li.entityType}
+                      </span>
+                      {li.label}{" "}
+                      <span className="text-xs text-muted-foreground">×{li.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="text-sm font-medium mb-3">Quarterly reviews</h2>
         {quarterlies.length === 0 ? (
@@ -119,6 +205,11 @@ export default function Review() {
       </section>
     </div>
   );
+}
+
+function fmtDelta(n: number): string {
+  if (n === 0) return "0";
+  return n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1);
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

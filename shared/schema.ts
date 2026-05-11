@@ -547,7 +547,7 @@ export const coachSessions = sqliteTable("coach_sessions", {
   endedAt: integer("ended_at"),
   // Last-active mode. Switches mid-session are allowed; this stores the most
   // recent value at session-end time.
-  mode: text("mode").notNull().default("plan"), // 'plan' | 'reflect'
+  mode: text("mode").notNull().default("plan"), // 'plan' | 'reflect' | 'calm'
   // JSON snapshot of the context bundle loaded at session start. Stored for
   // auditability — lets the user see exactly what the coach saw.
   contextSnapshot: text("context_snapshot").notNull().default("{}"),
@@ -568,6 +568,23 @@ export const coachSessions = sqliteTable("coach_sessions", {
   // Retention: when set, the transcript has been purged but summary kept.
   // Display in history as read-only with the summary only.
   archivedAt: integer("archived_at"),
+  // Stage 13 (2026-05-11) — Calm mode columns. All nullable; only populated
+  // when mode='calm'. Additive on the existing coach_sessions table.
+  calmVariant: text("calm_variant"), // 'grounding_only' | 'grounding_plus_reflection'
+  issueEntityType: text("issue_entity_type"), // 'task' | 'project' | 'inbox_item' | 'freetext'
+  issueEntityId: integer("issue_entity_id"),
+  issueFreetext: text("issue_freetext"),
+  preTags: text("pre_tags"), // JSON array of strings
+  preIntensity: integer("pre_intensity"), // 0-10
+  groundingObservations: text("grounding_observations"), // JSON {see, hear, feel}
+  reframeText: text("reframe_text"),
+  reflectionWorstStory: text("reflection_worst_story"),
+  reflectionAccurateStory: text("reflection_accurate_story"),
+  reflectionNextAction: text("reflection_next_action"),
+  postTags: text("post_tags"), // JSON array
+  postIntensity: integer("post_intensity"), // 0-10
+  postNote: text("post_note"),
+  completedAt: integer("completed_at"),
 });
 export type CoachSession = typeof coachSessions.$inferSelect;
 export type InsertCoachSession = typeof coachSessions.$inferInsert;

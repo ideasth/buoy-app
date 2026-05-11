@@ -474,3 +474,19 @@ export function modelForMode(mode: "plan" | "reflect", deepThink = false): strin
 }
 
 export const SUMMARY_MODEL = "sonar-pro";
+
+// -- Calm mode (Stage 13, 2026-05-11) ---------------------------------------
+//
+// Calm prompts + helpers live in ./calm-prompts so they can be tested
+// without pulling in storage.ts (which opens the live data.db on import).
+// Re-exported here for callers that already import from this module.
+export {
+  CALM_REFRAME_SYSTEM_PROMPT,
+  CALM_ACKNOWLEDGE_SYSTEM_PROMPT,
+  buildCalmReframeMessages,
+  buildCalmAcknowledgeMessages,
+  CALM_REFRAME_FALLBACK,
+  CALM_ACKNOWLEDGE_FALLBACK,
+  CALM_REFLECTION_PROMPTS,
+  stripThinkTags,
+} from "./calm-prompts";

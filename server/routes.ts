@@ -719,6 +719,76 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         : 0;
     const totalEstimated = completed.reduce((a, t) => a + (t.estimateMinutes || 0), 0);
     const totalActual = completed.reduce((a, t) => a + (t.actualMinutes || 0), 0);
+
+    // Stage 13 (2026-05-11) — Calm sessions aggregates for the weekly review.
+    const calmSessions = storage
+      .listCalmSessionsBetween(start, today)
+      .filter((s) => s.completedAt != null);
+    type CalmVariant = "grounding_only" | "grounding_plus_reflection";
+    const calmCountByVariant: Record<CalmVariant, number> = {
+      grounding_only: 0,
+      grounding_plus_reflection: 0,
+    };
+    const calmDeltaSumByVariant: Record<CalmVariant, number> = {
+      grounding_only: 0,
+      grounding_plus_reflection: 0,
+    };
+    const tagCounts = new Map<string, number>();
+    const linkedKey = new Map<string, { entityType: string; entityId: number | null; label: string; count: number }>();
+    const parseTags = (s: string | null | undefined): string[] => {
+      if (!s) return [];
+      try {
+        const v = JSON.parse(s);
+        return Array.isArray(v) ? v.filter((t) => typeof t === "string") : [];
+      } catch {
+        return [];
+      }
+    };
+    for (const s of calmSessions) {
+      const v: CalmVariant = s.calmVariant === "grounding_plus_reflection"
+        ? "grounding_plus_reflection"
+        : "grounding_only";
+      calmCountByVariant[v] += 1;
+      const pre = s.preIntensity ?? 0;
+      const post = s.postIntensity ?? pre;
+      calmDeltaSumByVariant[v] += post - pre;
+      for (const t of [...parseTags(s.preTags), ...parseTags(s.postTags)]) {
+        tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+      }
+      const entityType = s.issueEntityType ?? "freetext";
+      const entityId = s.issueEntityId ?? null;
+      const label = storage.resolveCalmIssueLabel(
+        entityType,
+        entityId,
+        s.issueFreetext,
+      );
+      const key = `${entityType}:${entityId ?? label}`;
+      const cur = linkedKey.get(key);
+      if (cur) cur.count += 1;
+      else linkedKey.set(key, { entityType, entityId, label, count: 1 });
+    }
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const calmAvgDeltaByVariant = {
+      grounding_only:
+        calmCountByVariant.grounding_only > 0
+          ? round1(calmDeltaSumByVariant.grounding_only / calmCountByVariant.grounding_only)
+          : 0,
+      grounding_plus_reflection:
+        calmCountByVariant.grounding_plus_reflection > 0
+          ? round1(
+              calmDeltaSumByVariant.grounding_plus_reflection /
+                calmCountByVariant.grounding_plus_reflection,
+            )
+          : 0,
+    };
+    const calmTopTags = Array.from(tagCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([tag, count]) => ({ tag, count }));
+    const calmLinkedIssues = Array.from(linkedKey.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
     res.json({
       from: start,
       to: today,
@@ -730,6 +800,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       avgEnergy: Math.round(avgEnergy * 10) / 10,
       reflections,
       completedTasks: completed,
+      calm: {
+        totalCount: calmSessions.length,
+        countByVariant: calmCountByVariant,
+        avgIntensityDeltaByVariant: calmAvgDeltaByVariant,
+        topTags: calmTopTags,
+        linkedIssues: calmLinkedIssues,
+      },
     });
   });
 

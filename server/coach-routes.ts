@@ -23,6 +23,12 @@ import {
   modelForMode,
   SUMMARY_MODEL,
   type CoachContextBundle,
+  buildCalmReframeMessages,
+  buildCalmAcknowledgeMessages,
+  CALM_REFRAME_FALLBACK,
+  CALM_ACKNOWLEDGE_FALLBACK,
+  CALM_REFLECTION_PROMPTS,
+  stripThinkTags as stripThinkTagsShared,
 } from "./coach-context";
 import { scheduleCoachSummaryBackfill } from "./coach-summary-backfill";
 import { scheduleCoachTelemetrySweeper } from "./coach-telemetry-sweeper";
@@ -504,6 +510,233 @@ export function registerCoachRoutes({
     const updated = storage.updateCoachSession(id, {
       summary,
       summaryEditedByUser: 1,
+    });
+    res.json({ session: updated });
+  });
+
+  // --- Calm mode (Stage 13, 2026-05-11) -------------------------------
+  // Non-conversational coach mode. The grounding flow is client-local;
+  // the server only persists state and brokers two LLM calls (reframe +
+  // acknowledge) with strict timeouts and deterministic fallbacks.
+
+  function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`${tag} timeout after ${ms}ms`)), ms);
+      p.then(
+        (v) => {
+          clearTimeout(t);
+          resolve(v);
+        },
+        (e) => {
+          clearTimeout(t);
+          reject(e);
+        },
+      );
+    });
+  }
+
+  app.get("/api/coach/calm/issue-candidates", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json(storage.listCalmIssueCandidates());
+  });
+
+  app.post("/api/coach/calm/sessions", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const body = req.body ?? {};
+    const calmVariant = body.calm_variant === "grounding_plus_reflection"
+      ? "grounding_plus_reflection"
+      : "grounding_only";
+    const issueEntityType =
+      body.issue_entity_type === "task" ||
+      body.issue_entity_type === "project" ||
+      body.issue_entity_type === "inbox_item" ||
+      body.issue_entity_type === "freetext"
+        ? body.issue_entity_type
+        : null;
+    if (!issueEntityType) {
+      return res.status(400).json({ error: "issue_entity_type is required" });
+    }
+    const issueEntityId =
+      typeof body.issue_entity_id === "number" ? body.issue_entity_id : null;
+    const issueFreetext =
+      typeof body.issue_freetext === "string" ? body.issue_freetext.slice(0, 500) : null;
+    const preTags: string[] = Array.isArray(body.pre_tags)
+      ? body.pre_tags.filter((t: unknown): t is string => typeof t === "string").slice(0, 12)
+      : [];
+    const preIntensity =
+      typeof body.pre_intensity === "number"
+        ? Math.max(0, Math.min(10, Math.round(body.pre_intensity)))
+        : 0;
+    if (issueEntityType === "freetext" && !issueFreetext) {
+      return res.status(400).json({ error: "issue_freetext is required when entity is freetext" });
+    }
+    if (issueEntityType !== "freetext" && issueEntityId == null) {
+      return res.status(400).json({ error: "issue_entity_id is required for this entity type" });
+    }
+    const session = storage.createCalmSession({
+      calmVariant,
+      issueEntityType,
+      issueEntityId,
+      issueFreetext,
+      preTags,
+      preIntensity,
+    });
+    res.json({ id: session.id, session });
+  });
+
+  app.post("/api/coach/calm/sessions/:id/reframe", async (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = Number(req.params.id);
+    const session = storage.getCoachSession(id);
+    if (!session || session.mode !== "calm") {
+      return res.status(404).json({ error: "Calm session not found" });
+    }
+    const body = req.body ?? {};
+    const obs = body.grounding_observations ?? {};
+    const grounding = {
+      see: typeof obs.see === "string" ? obs.see.slice(0, 240) : "",
+      hear: typeof obs.hear === "string" ? obs.hear.slice(0, 240) : "",
+      feel: typeof obs.feel === "string" ? obs.feel.slice(0, 240) : "",
+    };
+    const issueLabel = storage.resolveCalmIssueLabel(
+      session.issueEntityType,
+      session.issueEntityId,
+      session.issueFreetext,
+    );
+    let preTags: string[] = [];
+    try {
+      preTags = JSON.parse(session.preTags ?? "[]");
+      if (!Array.isArray(preTags)) preTags = [];
+    } catch {
+      preTags = [];
+    }
+    const messages = buildCalmReframeMessages({
+      issueLabel,
+      preTags,
+      preIntensity: session.preIntensity ?? 0,
+      groundingObservations: grounding,
+    });
+    let reframeText = CALM_REFRAME_FALLBACK;
+    let fallback = true;
+    if (llm.isAvailable()) {
+      try {
+        const r = await withTimeout(
+          llm.complete({
+            model: "sonar-pro",
+            messages,
+            temperature: 0.5,
+            maxTokens: 220,
+            disableSearch: true,
+          }),
+          8000,
+          "calm.reframe",
+        );
+        const clean = stripThinkTagsShared(r.fullText).trim();
+        if (clean.length > 0) {
+          reframeText = clean;
+          fallback = false;
+          storage.updateCalmSession(id, {
+            totalInputTokens:
+              (session.totalInputTokens ?? 0) + (r.usage.inputTokens ?? 0),
+            totalOutputTokens:
+              (session.totalOutputTokens ?? 0) + (r.usage.outputTokens ?? 0),
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[calm] reframe failed: ${msg.slice(0, 200)}`);
+      }
+    }
+    storage.updateCalmSession(id, {
+      groundingObservations: grounding,
+      reframeText,
+    });
+    res.json({ reframe_text: reframeText, fallback });
+  });
+
+  app.post("/api/coach/calm/sessions/:id/acknowledge", async (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = Number(req.params.id);
+    const session = storage.getCoachSession(id);
+    if (!session || session.mode !== "calm") {
+      return res.status(404).json({ error: "Calm session not found" });
+    }
+    const body = req.body ?? {};
+    const questionKey: "worst" | "accurate" | "next" =
+      body.question_key === "accurate" || body.question_key === "next"
+        ? body.question_key
+        : "worst";
+    const answer = typeof body.answer === "string" ? body.answer.slice(0, 2000) : "";
+    if (!answer.trim()) {
+      return res.status(400).json({ error: "answer is required" });
+    }
+    const patch: Parameters<typeof storage.updateCalmSession>[1] = {};
+    if (questionKey === "worst") patch.reflectionWorstStory = answer;
+    if (questionKey === "accurate") patch.reflectionAccurateStory = answer;
+    if (questionKey === "next") patch.reflectionNextAction = answer;
+    storage.updateCalmSession(id, patch);
+
+    const questionLabel = CALM_REFLECTION_PROMPTS[questionKey];
+    let acknowledgement = CALM_ACKNOWLEDGE_FALLBACK;
+    let fallback = true;
+    if (llm.isAvailable()) {
+      try {
+        const r = await withTimeout(
+          llm.complete({
+            model: "sonar-pro",
+            messages: buildCalmAcknowledgeMessages({
+              questionLabel,
+              userAnswer: answer,
+            }),
+            temperature: 0.4,
+            maxTokens: 60,
+            disableSearch: true,
+          }),
+          3000,
+          "calm.acknowledge",
+        );
+        const clean = stripThinkTagsShared(r.fullText).trim();
+        if (clean.length > 0) {
+          acknowledgement = clean;
+          fallback = false;
+          storage.updateCalmSession(id, {
+            totalInputTokens:
+              (session.totalInputTokens ?? 0) + (r.usage.inputTokens ?? 0),
+            totalOutputTokens:
+              (session.totalOutputTokens ?? 0) + (r.usage.outputTokens ?? 0),
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[calm] acknowledge failed: ${msg.slice(0, 200)}`);
+      }
+    }
+    res.json({ acknowledgement, fallback });
+  });
+
+  app.post("/api/coach/calm/sessions/:id/complete", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = Number(req.params.id);
+    const session = storage.getCoachSession(id);
+    if (!session || session.mode !== "calm") {
+      return res.status(404).json({ error: "Calm session not found" });
+    }
+    const body = req.body ?? {};
+    const postTags: string[] = Array.isArray(body.post_tags)
+      ? body.post_tags.filter((t: unknown): t is string => typeof t === "string").slice(0, 12)
+      : [];
+    const postIntensity =
+      typeof body.post_intensity === "number"
+        ? Math.max(0, Math.min(10, Math.round(body.post_intensity)))
+        : 0;
+    const postNote = typeof body.post_note === "string" ? body.post_note.slice(0, 500) : null;
+    const now = Date.now();
+    const updated = storage.updateCalmSession(id, {
+      postTags,
+      postIntensity,
+      postNote,
+      completedAt: now,
+      endedAt: now,
     });
     res.json({ session: updated });
   });

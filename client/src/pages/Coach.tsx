@@ -5,6 +5,7 @@
 // summary, delete a session, and confirm anchor-action side-effects.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient, buildApiUrl, buildAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -161,6 +162,7 @@ function melbourneDateStrLocal(d: Date = new Date()): string {
 
 export default function Coach() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [mode, setMode] = useState<Mode>("plan");
   const [deepThink, setDeepThink] = useState<boolean>(false);
@@ -594,6 +596,14 @@ export default function Coach() {
             disabled={streaming}
           >
             <Plus className="w-4 h-4 mr-1" /> Reflect session
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setLocation("/calm")}
+            disabled={streaming}
+          >
+            <Plus className="w-4 h-4 mr-1" /> Calm session
           </Button>
         </div>
       </div>

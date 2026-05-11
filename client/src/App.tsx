@@ -28,6 +28,7 @@ import { apiRequest } from "@/lib/queryClient";
 // initial paint doesn't have to download Coach + CalendarPlanner + the
 // Settings/Usage panels embedded in Admin. Loaded on first navigation.
 const Coach = lazy(() => import("@/pages/Coach"));
+const Calm = lazy(() => import("@/pages/Calm"));
 const CalendarPlanner = lazy(() => import("@/pages/CalendarPlanner"));
 const Admin = lazy(() => import("@/pages/Admin"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
@@ -99,6 +100,7 @@ function AppRouter() {
       <Route path="/reflect" component={ReflectRedirect} />
       <Route path="/checkin" component={CheckIn} />
       <Route path="/coach" component={Coach} />
+      <Route path="/calm" component={Calm} />
       <Route path="/review" component={Review} />
       <Route path="/issues" component={Issues} />
       <Route path="/calendar-planner" component={CalendarPlanner} />

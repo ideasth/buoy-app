@@ -524,6 +524,23 @@ for (const stmt of [
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
+  // Stage 13 (2026-05-11) — Calm mode columns. All nullable; only set when
+  // mode='calm'. Idempotent ADD COLUMN inside the try/catch loop.
+  "ALTER TABLE coach_sessions ADD COLUMN calm_variant TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN issue_entity_type TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN issue_entity_id INTEGER",
+  "ALTER TABLE coach_sessions ADD COLUMN issue_freetext TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN pre_tags TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN pre_intensity INTEGER",
+  "ALTER TABLE coach_sessions ADD COLUMN grounding_observations TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN reframe_text TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN reflection_worst_story TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN reflection_accurate_story TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN reflection_next_action TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN post_tags TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN post_intensity INTEGER",
+  "ALTER TABLE coach_sessions ADD COLUMN post_note TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN completed_at INTEGER",
   // Morning page restructure (2026-05-09):
   // - Habits tickboxes (calm focused breathing, medication)
   // - Reflection mirror columns (mood, cognitive_load, alignment) so the
@@ -2001,6 +2018,176 @@ export class Storage {
       .prepare("SELECT COUNT(*) as c FROM coach_messages WHERE session_id = ?")
       .get(sessionId) as { c: number };
     return row.c;
+  }
+
+  // ----- Calm sessions (Stage 13, 2026-05-11) -----
+  // Calm sessions reuse the coach_sessions table with mode='calm' plus the
+  // additive calm_* columns. createCalmSession inserts a row at the
+  // pre-capture step; updateCalmSession patches subsequent fields as the
+  // user moves through the state machine.
+  createCalmSession(input: {
+    calmVariant: "grounding_only" | "grounding_plus_reflection";
+    issueEntityType: "task" | "project" | "inbox_item" | "freetext";
+    issueEntityId?: number | null;
+    issueFreetext?: string | null;
+    preTags: string[];
+    preIntensity: number;
+  }): CoachSession {
+    const now = Date.now();
+    const todayYmd = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Australia/Melbourne",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    return db
+      .insert(coachSessions)
+      .values({
+        startedAt: now,
+        mode: "calm",
+        contextSnapshot: "{}",
+        modelProvider: "perplexity",
+        modelName: "sonar-pro",
+        linkedYmd: todayYmd,
+        calmVariant: input.calmVariant,
+        issueEntityType: input.issueEntityType,
+        issueEntityId: input.issueEntityId ?? null,
+        issueFreetext: input.issueFreetext ?? null,
+        preTags: JSON.stringify(input.preTags ?? []),
+        preIntensity: input.preIntensity,
+      })
+      .returning()
+      .get();
+  }
+
+  updateCalmSession(
+    id: number,
+    patch: {
+      groundingObservations?: { see: string; hear: string; feel: string };
+      reframeText?: string | null;
+      reflectionWorstStory?: string | null;
+      reflectionAccurateStory?: string | null;
+      reflectionNextAction?: string | null;
+      postTags?: string[];
+      postIntensity?: number | null;
+      postNote?: string | null;
+      completedAt?: number | null;
+      endedAt?: number | null;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+    },
+  ): CoachSession | undefined {
+    const set: Partial<CoachSession> = {};
+    if (patch.groundingObservations !== undefined) {
+      set.groundingObservations = JSON.stringify(patch.groundingObservations);
+    }
+    if (patch.reframeText !== undefined) set.reframeText = patch.reframeText;
+    if (patch.reflectionWorstStory !== undefined)
+      set.reflectionWorstStory = patch.reflectionWorstStory;
+    if (patch.reflectionAccurateStory !== undefined)
+      set.reflectionAccurateStory = patch.reflectionAccurateStory;
+    if (patch.reflectionNextAction !== undefined)
+      set.reflectionNextAction = patch.reflectionNextAction;
+    if (patch.postTags !== undefined) set.postTags = JSON.stringify(patch.postTags);
+    if (patch.postIntensity !== undefined) set.postIntensity = patch.postIntensity;
+    if (patch.postNote !== undefined) set.postNote = patch.postNote;
+    if (patch.completedAt !== undefined) set.completedAt = patch.completedAt;
+    if (patch.endedAt !== undefined) set.endedAt = patch.endedAt;
+    if (patch.totalInputTokens !== undefined) set.totalInputTokens = patch.totalInputTokens;
+    if (patch.totalOutputTokens !== undefined) set.totalOutputTokens = patch.totalOutputTokens;
+    if (Object.keys(set).length === 0) return this.getCoachSession(id);
+    db.update(coachSessions).set(set).where(eq(coachSessions.id, id)).run();
+    return this.getCoachSession(id);
+  }
+
+  /**
+   * Issue candidates for the Calm pre-capture picker. Returns three flat
+   * arrays in the documented order: open tasks, active projects, unprocessed
+   * inbox items. Each entry is { id, label }.
+   */
+  listCalmIssueCandidates(): {
+    tasks: Array<{ id: number; label: string }>;
+    projects: Array<{ id: number; label: string }>;
+    inboxItems: Array<{ id: number; label: string }>;
+  } {
+    const tasksRows = sqlite
+      .prepare(
+        `SELECT id, title FROM tasks
+         WHERE status != 'done' AND status != 'dropped'
+         ORDER BY COALESCE(created_at, 0) DESC
+         LIMIT 50`,
+      )
+      .all() as Array<{ id: number; title: string }>;
+    const projectsRows = sqlite
+      .prepare(
+        `SELECT id, name FROM projects
+         WHERE status = 'active'
+         ORDER BY updated_at DESC
+         LIMIT 50`,
+      )
+      .all() as Array<{ id: number; name: string }>;
+    const inboxRows = sqlite
+      .prepare(
+        `SELECT id, subject FROM inbox_scan_queue
+         WHERE decided_at IS NULL AND status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT 50`,
+      )
+      .all() as Array<{ id: number; subject: string | null }>;
+    return {
+      tasks: tasksRows.map((r) => ({ id: r.id, label: r.title })),
+      projects: projectsRows.map((r) => ({ id: r.id, label: r.name })),
+      inboxItems: inboxRows.map((r) => ({ id: r.id, label: r.subject ?? `(no subject)` })),
+    };
+  }
+
+  /**
+   * Resolve a human-readable label for a calm session's chosen issue.
+   * Used by the reframe call so the LLM has something concrete to anchor on.
+   */
+  resolveCalmIssueLabel(
+    entityType: string | null | undefined,
+    entityId: number | null | undefined,
+    freetext: string | null | undefined,
+  ): string {
+    if (entityType === "freetext") return (freetext ?? "").trim() || "Something on my mind";
+    if (entityType === "task" && entityId != null) {
+      const row = sqlite
+        .prepare("SELECT title FROM tasks WHERE id = ?")
+        .get(entityId) as { title?: string } | undefined;
+      return row?.title?.trim() || `Task #${entityId}`;
+    }
+    if (entityType === "project" && entityId != null) {
+      const row = sqlite
+        .prepare("SELECT name FROM projects WHERE id = ?")
+        .get(entityId) as { name?: string } | undefined;
+      return row?.name?.trim() || `Project #${entityId}`;
+    }
+    if (entityType === "inbox_item" && entityId != null) {
+      const row = sqlite
+        .prepare("SELECT subject FROM inbox_scan_queue WHERE id = ?")
+        .get(entityId) as { subject?: string } | undefined;
+      return row?.subject?.trim() || `Inbox item #${entityId}`;
+    }
+    return (freetext ?? "").trim() || "Something on my mind";
+  }
+
+  /**
+   * List completed calm sessions within a date window (linked_ymd, inclusive).
+   * Used by the weekly-review aggregations.
+   */
+  listCalmSessionsBetween(fromYmd: string, toYmd: string): CoachSession[] {
+    return db
+      .select()
+      .from(coachSessions)
+      .where(
+        and(
+          eq(coachSessions.mode, "calm"),
+          gte(coachSessions.linkedYmd, fromYmd),
+          lte(coachSessions.linkedYmd, toYmd),
+        ),
+      )
+      .all();
   }
 
   // ----- Coach session search (FTS5) -----
