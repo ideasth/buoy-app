@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily Anchor data.db backup to OneDrive (timer)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# Daily at 02:00 in the system's local timezone.
+# AEST/AEDT depending on the season — that's fine, the timestamp on the
+# backup file is UTC anyway, so DST cutover doesn't break anything.
+OnCalendar=*-*-* 02:00:00
+# If the system was off at 02:00 (or boot was delayed), run as soon as possible.
+Persistent=true
+# Avoid all 02:00 jobs firing at the same instant.
+RandomizedDelaySec=10min
+# Tracks the service unit by the same base name.
+Unit=anchor-backup-datadb.service
+
+[Install]
+WantedBy=timers.target

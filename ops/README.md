@@ -15,8 +15,15 @@ which is `chmod 600` and gitignored.
 |---|---|---|
 | `bootstrap-vps.sh` | One-time setup of a fresh Ubuntu 24.04 VPS: installs Node, pm2, Caddy, rclone, clones repo, writes Caddyfile, opens firewall. | Once per VPS, as root. |
 | `deploy.sh` | Pull latest main, bake secrets, build, restart pm2, health check. Auto-rolls back on health failure. | Every code change. As deploy user (`jod`). |
-| `backup-datadb.sh` *(coming Stage 11b)* | Pull fresh data.db from Anchor admin export, compress with zstd, upload to OneDrive via rclone. | Daily via systemd timer at 02:00 local. |
-| `install-backup-timer.sh` *(coming Stage 11b)* | Install the systemd timer unit for `backup-datadb.sh`. Idempotent. | Once after OneDrive rclone is configured. |
+| `jobs/backup-datadb.sh` | Pull fresh data.db from `/api/admin/db/export`, compress with zstd, upload to OneDrive via rclone, POST a receipt to `/api/admin/backup-receipt`. | Daily via systemd timer at 02:00 local. |
+| `install-backup-timer.sh` | Install the `anchor-backup-datadb.{service,timer}` systemd units. Idempotent. | Once after rclone is configured; again after editing the unit files. |
+
+## systemd units (in `ops/systemd/`)
+
+| Unit | Purpose |
+|---|---|
+| `anchor-backup-datadb.service` | Type=oneshot job that runs `jobs/backup-datadb.sh` as `jod`. Hardened (NoNewPrivileges, ProtectSystem=strict, ReadWritePaths constrained). Logs to journalctl under SyslogIdentifier `anchor-backup-datadb`. |
+| `anchor-backup-datadb.timer` | Calls the service daily at 02:00 local time, with 10min random jitter and `Persistent=true` so a missed run catches up at boot. |
 
 ## Environment variables (deploy.sh)
 

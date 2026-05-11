@@ -1,0 +1,42 @@
+[Unit]
+Description=Anchor data.db daily backup to OneDrive
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+After=network-online.target
+Wants=network-online.target
+# Only run if Anchor is responding to /api/health.
+ConditionPathExists=/opt/anchor/.secrets/anchor_sync_secret
+
+[Service]
+Type=oneshot
+User=jod
+Group=jod
+ExecStart=/opt/anchor/ops/jobs/backup-datadb.sh
+WorkingDirectory=/opt/anchor
+
+# Reasonable security hardening — this is a backup script, not the app.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/tmp /var/log /opt/anchor/.secrets /home/jod/.config/rclone
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+# Run with low priority so it doesn't fight the app for CPU.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+# Cap how long a single run can take (network upload of a small file should
+# never need this long).
+TimeoutStartSec=30min
+
+# Log everything to journalctl with a clean identifier.
+SyslogIdentifier=anchor-backup-datadb
+
+[Install]
+WantedBy=multi-user.target
