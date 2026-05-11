@@ -1,0 +1,36 @@
+[Unit]
+Description=Anchor backup retention pruning (OneDrive)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jod
+Group=jod
+ExecStart=/opt/anchor/ops/jobs/prune-backups.sh
+WorkingDirectory=/opt/anchor
+
+# Security hardening (same as backup-datadb).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/tmp /var/log /home/jod/.config/rclone
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+# Low priority — pruning can wait if the system is busy.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+TimeoutStartSec=30min
+SyslogIdentifier=anchor-prune-backups
+
+[Install]
+WantedBy=multi-user.target

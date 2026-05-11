@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Install (or refresh) the anchor-backup-datadb systemd timer.
+# Install (or refresh) the Anchor backup systemd timers.
 #
-# Idempotent. Safe to re-run after editing the unit files or the backup script.
+# Installs both:
+#   - anchor-backup-datadb.{service,timer}  — daily 02:00 backup to OneDrive
+#   - anchor-prune-backups.{service,timer}  — weekly Sun 03:00 retention prune
+#
+# Idempotent. Safe to re-run after editing the unit files or the scripts.
 #
 # Usage (as root, on the VPS):
 #   sudo /opt/anchor/ops/install-backup-timer.sh
-#
-# What it does:
-#   1. Copies the .service and .timer files from the repo into /etc/systemd/system
-#   2. Reloads systemd
-#   3. Enables and starts the timer
-#   4. Prints the next scheduled run
 #
 # Prerequisites:
 #   - Repo present at /opt/anchor
@@ -23,8 +21,12 @@ REPO_DIR="${ANCHOR_REPO_DIR:-/opt/anchor}"
 SECRET_FILE="${ANCHOR_SECRET_FILE:-/opt/anchor/.secrets/anchor_sync_secret}"
 UNITS_SRC="${REPO_DIR}/ops/systemd"
 UNITS_DEST="/etc/systemd/system"
-TIMER_NAME="anchor-backup-datadb.timer"
-SERVICE_NAME="anchor-backup-datadb.service"
+
+# All (service, timer) unit pairs we install. Add new ones here.
+UNIT_PAIRS=(
+  "anchor-backup-datadb"
+  "anchor-prune-backups"
+)
 
 log() { printf '[install-backup-timer] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
@@ -35,9 +37,12 @@ fail() { log "FAIL: $*"; exit 1; }
 
 [ $EUID -eq 0 ] || fail "must run as root (use sudo)"
 [ -d "$UNITS_SRC" ] || fail "unit source dir missing: $UNITS_SRC"
-[ -f "$UNITS_SRC/$SERVICE_NAME" ] || fail "missing $UNITS_SRC/$SERVICE_NAME"
-[ -f "$UNITS_SRC/$TIMER_NAME" ] || fail "missing $UNITS_SRC/$TIMER_NAME"
+for base in "${UNIT_PAIRS[@]}"; do
+  [ -f "$UNITS_SRC/$base.service" ] || fail "missing $UNITS_SRC/$base.service"
+  [ -f "$UNITS_SRC/$base.timer" ]   || fail "missing $UNITS_SRC/$base.timer"
+done
 [ -x "$REPO_DIR/ops/jobs/backup-datadb.sh" ] || fail "backup script not executable: $REPO_DIR/ops/jobs/backup-datadb.sh"
+[ -x "$REPO_DIR/ops/jobs/prune-backups.sh" ]  || fail "prune script not executable: $REPO_DIR/ops/jobs/prune-backups.sh"
 [ -r "$SECRET_FILE" ] || fail "sync secret missing: $SECRET_FILE"
 
 # Confirm rclone remote configured for the jod user.
@@ -50,51 +55,57 @@ fi
 # ---------------------------------------------------------------------------
 
 log "Installing systemd units into $UNITS_DEST..."
-install -m 0644 "$UNITS_SRC/$SERVICE_NAME" "$UNITS_DEST/$SERVICE_NAME"
-install -m 0644 "$UNITS_SRC/$TIMER_NAME"   "$UNITS_DEST/$TIMER_NAME"
+for base in "${UNIT_PAIRS[@]}"; do
+  install -m 0644 "$UNITS_SRC/$base.service" "$UNITS_DEST/$base.service"
+  install -m 0644 "$UNITS_SRC/$base.timer"   "$UNITS_DEST/$base.timer"
+  log "  installed $base.{service,timer}"
+done
 
 log "Reloading systemd..."
 systemctl daemon-reload
 
-log "Enabling + starting timer..."
-systemctl enable --now "$TIMER_NAME"
+log "Enabling + starting timers..."
+for base in "${UNIT_PAIRS[@]}"; do
+  systemctl enable --now "$base.timer"
+  log "  enabled $base.timer"
+done
 
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
 echo
-log "Timer status:"
-systemctl status "$TIMER_NAME" --no-pager | head -20 || true
-
-echo
 log "Next scheduled runs:"
-systemctl list-timers "$TIMER_NAME" --no-pager || true
+systemctl list-timers 'anchor-*' --no-pager || true
 
 echo
 cat <<EOF
 ============================================================
-  Backup timer installed.
+  Backup + prune timers installed.
 ============================================================
 
 Useful commands:
 
-  # Trigger a manual run right now (does not affect the schedule):
-  sudo systemctl start ${SERVICE_NAME}
+  # Trigger a manual daily backup right now:
+  sudo systemctl start anchor-backup-datadb.service
 
-  # Watch the run live:
-  journalctl -u ${SERVICE_NAME} -f
+  # Trigger a manual prune right now (dry-run first is safer):
+  sudo -u jod env ANCHOR_PRUNE_DRY_RUN=1 /opt/anchor/ops/jobs/prune-backups.sh
+  sudo systemctl start anchor-prune-backups.service
 
-  # See the last run's output:
-  journalctl -u ${SERVICE_NAME} --since today
+  # Watch a job live:
+  journalctl -u anchor-backup-datadb -f
+  journalctl -u anchor-prune-backups -f
 
-  # Disable the timer (e.g. while travelling, large maintenance window):
-  sudo systemctl disable --now ${TIMER_NAME}
+  # See today's logs:
+  journalctl -u anchor-backup-datadb --since today
+  journalctl -u anchor-prune-backups --since today
 
-  # Re-enable:
-  sudo systemctl enable --now ${TIMER_NAME}
+  # Disable / re-enable a timer:
+  sudo systemctl disable --now anchor-backup-datadb.timer
+  sudo systemctl enable --now  anchor-backup-datadb.timer
 
-  # Re-install (after editing units or the backup script):
+  # Re-install (after editing units or scripts):
   sudo ${REPO_DIR}/ops/install-backup-timer.sh
 
 ============================================================

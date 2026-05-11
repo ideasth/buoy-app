@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly Anchor backup retention pruning (timer)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# Sundays at 03:00 local time (one hour after the daily backup runs at 02:00,
+# so today's backup is in place before we prune).
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=30min
+Unit=anchor-prune-backups.service
+
+[Install]
+WantedBy=timers.target
