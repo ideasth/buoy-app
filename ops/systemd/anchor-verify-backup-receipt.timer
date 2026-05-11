@@ -1,0 +1,16 @@
+[Unit]
+Description=Anchor weekly backup-receipt verification (Saturday morning)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# Saturday 06:30 Australia/Melbourne local — runs after the Friday
+# overnight 02:00 daily backup, before the weekend.
+# A failure here surfaces in `journalctl -u anchor-verify-backup-receipt`
+# and as a failed unit in `systemctl list-timers`.
+OnCalendar=Sat *-*-* 06:30:00
+Persistent=true
+RandomizedDelaySec=2min
+Unit=anchor-verify-backup-receipt.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Anchor weekly-review warm (Sunday evening)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# Sundays 18:25 Australia/Melbourne local — 5 min before the user
+# typically does their Sunday evening review.
+OnCalendar=Sun *-*-* 18:25:00
+Persistent=true
+RandomizedDelaySec=30s
+Unit=anchor-warm-weekly-review.service
+
+[Install]
+WantedBy=timers.target

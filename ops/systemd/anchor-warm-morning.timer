@@ -1,0 +1,14 @@
+[Unit]
+Description=Anchor morning briefing warm (daily)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# 05:55 Australia/Melbourne local — 5 min before the user typically
+# opens Anchor's Morning page.
+OnCalendar=*-*-* 05:55:00
+Persistent=true
+RandomizedDelaySec=30s
+Unit=anchor-warm-morning.service
+
+[Install]
+WantedBy=timers.target

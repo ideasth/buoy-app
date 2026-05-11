@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Install (or refresh) the Anchor backup systemd timers.
+# Install (or refresh) all Anchor systemd timers.
 #
-# Installs both:
-#   - anchor-backup-datadb.{service,timer}  — daily 02:00 backup to OneDrive
-#   - anchor-prune-backups.{service,timer}  — weekly Sun 03:00 retention prune
+# Installs these (service, timer) unit pairs:
+#   - anchor-backup-datadb           — daily 02:00 OneDrive backup           (Stage 11b)
+#   - anchor-prune-backups           — weekly Sun 03:00 retention prune       (Stage 11c)
+#   - anchor-warm-calendar           — twice daily 05:55 / 17:55 cache warm   (Stage 12b)
+#   - anchor-warm-morning            — daily 05:55 morning briefing warm     (Stage 12b)
+#   - anchor-warm-weekly-review      — weekly Sun 18:25 review warm          (Stage 12b)
+#   - anchor-verify-backup-receipt   — weekly Sat 06:30 backup health check  (Stage 12b)
 #
-# Idempotent. Safe to re-run after editing the unit files or the scripts.
+# Idempotent. Safe to re-run after editing any unit file or job script.
 #
 # Usage (as root, on the VPS):
 #   sudo /opt/anchor/ops/install-backup-timer.sh
 #
 # Prerequisites:
-#   - Repo present at /opt/anchor
+#   - Repo present at /opt/anchor (symlink or real dir)
 #   - User `jod` exists and has rclone configured (rclone lsd onedrive: works)
 #   - /opt/anchor/.secrets/anchor_sync_secret exists and is mode 600
 
@@ -26,6 +30,20 @@ UNITS_DEST="/etc/systemd/system"
 UNIT_PAIRS=(
   "anchor-backup-datadb"
   "anchor-prune-backups"
+  "anchor-warm-calendar"
+  "anchor-warm-morning"
+  "anchor-warm-weekly-review"
+  "anchor-verify-backup-receipt"
+)
+
+# Job scripts we expect to be present and executable.
+JOB_SCRIPTS=(
+  "ops/jobs/backup-datadb.sh"
+  "ops/jobs/prune-backups.sh"
+  "ops/jobs/warm-calendar.sh"
+  "ops/jobs/warm-morning.sh"
+  "ops/jobs/warm-weekly-review.sh"
+  "ops/jobs/verify-backup-receipt.sh"
 )
 
 log() { printf '[install-backup-timer] %s\n' "$*"; }
@@ -41,8 +59,16 @@ for base in "${UNIT_PAIRS[@]}"; do
   [ -f "$UNITS_SRC/$base.service" ] || fail "missing $UNITS_SRC/$base.service"
   [ -f "$UNITS_SRC/$base.timer" ]   || fail "missing $UNITS_SRC/$base.timer"
 done
-[ -x "$REPO_DIR/ops/jobs/backup-datadb.sh" ] || fail "backup script not executable: $REPO_DIR/ops/jobs/backup-datadb.sh"
-[ -x "$REPO_DIR/ops/jobs/prune-backups.sh" ]  || fail "prune script not executable: $REPO_DIR/ops/jobs/prune-backups.sh"
+for rel in "${JOB_SCRIPTS[@]}"; do
+  if [ ! -x "$REPO_DIR/$rel" ]; then
+    if [ -f "$REPO_DIR/$rel" ]; then
+      log "  fixing exec bit on $rel"
+      chmod +x "$REPO_DIR/$rel"
+    else
+      fail "job script missing: $REPO_DIR/$rel"
+    fi
+  fi
+done
 [ -r "$SECRET_FILE" ] || fail "sync secret missing: $SECRET_FILE"
 
 # Confirm rclone remote configured for the jod user.
@@ -81,29 +107,35 @@ systemctl list-timers 'anchor-*' --no-pager || true
 echo
 cat <<EOF
 ============================================================
-  Backup + prune timers installed.
+  Anchor systemd timers installed.
 ============================================================
 
 Useful commands:
 
-  # Trigger a manual daily backup right now:
-  sudo systemctl start anchor-backup-datadb.service
+  # Show all next firings:
+  systemctl list-timers 'anchor-*' --no-pager
 
-  # Trigger a manual prune right now (dry-run first is safer):
-  sudo -u jod env ANCHOR_PRUNE_DRY_RUN=1 /opt/anchor/ops/jobs/prune-backups.sh
+  # Trigger a job right now:
+  sudo systemctl start anchor-backup-datadb.service
   sudo systemctl start anchor-prune-backups.service
+  sudo systemctl start anchor-warm-calendar.service
+  sudo systemctl start anchor-warm-morning.service
+  sudo systemctl start anchor-warm-weekly-review.service
+  sudo systemctl start anchor-verify-backup-receipt.service
+
+  # Dry-run the prune logic without deleting:
+  sudo -u jod env ANCHOR_PRUNE_DRY_RUN=1 /opt/anchor/ops/jobs/prune-backups.sh
 
   # Watch a job live:
   journalctl -u anchor-backup-datadb -f
-  journalctl -u anchor-prune-backups -f
+  journalctl -u anchor-warm-morning -f
 
   # See today's logs:
-  journalctl -u anchor-backup-datadb --since today
-  journalctl -u anchor-prune-backups --since today
+  journalctl -u anchor-warm-calendar --since today
 
   # Disable / re-enable a timer:
-  sudo systemctl disable --now anchor-backup-datadb.timer
-  sudo systemctl enable --now  anchor-backup-datadb.timer
+  sudo systemctl disable --now anchor-warm-morning.timer
+  sudo systemctl enable  --now anchor-warm-morning.timer
 
   # Re-install (after editing units or scripts):
   sudo ${REPO_DIR}/ops/install-backup-timer.sh

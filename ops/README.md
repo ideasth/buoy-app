@@ -17,7 +17,12 @@ which is `chmod 600` and gitignored.
 | `deploy.sh` | Pull latest main, bake secrets, build, restart pm2, health check. Auto-rolls back on health failure. | Every code change. As deploy user (`jod`). |
 | `jobs/backup-datadb.sh` | Pull fresh data.db from `/api/admin/db/export`, compress with zstd, upload to OneDrive via rclone, POST a receipt to `/api/admin/backup-receipt`. | Daily via systemd timer at 02:00 local. |
 | `jobs/prune-backups.sh` | Walk `onedrive:Backups/Anchor/` and delete snapshots that fall outside the retention policy (90d daily / 365d weekly-first / monthly-first forever). Supports `ANCHOR_PRUNE_DRY_RUN=1`. | Weekly via systemd timer at Sun 03:00 local. |
-| `install-backup-timer.sh` | Install both the backup and prune systemd unit pairs. Idempotent — re-running picks up edits to units or scripts. | Once after rclone is configured; again after editing any units or scripts. |
+| `jobs/_warm_lib.sh` | Shared helpers (`warm_init`, `warm_get`, `warm_self_log`, `warm_run`) sourced by the per-job warmers. Not executable on its own. | n/a (library) |
+| `jobs/warm-calendar.sh` | Pre-warm `/api/calendar-events?days=14` and `/api/today-events`, then self-log to `/api/usage/cron-run`. Migrated from Perplexity cron `b4a58a27`. | Twice daily via systemd timer at 05:55 + 17:55 local. |
+| `jobs/warm-morning.sh` | Pre-warm `/api/morning/today` and `/api/briefing`, then self-log. Migrated from Perplexity cron `0697627f`. | Daily via systemd timer at 05:55 local. |
+| `jobs/warm-weekly-review.sh` | Pre-warm `/api/weekly-review` and `/api/morning/today`, then self-log. Migrated from Perplexity cron `67fb0e91`. | Weekly via systemd timer Sun 18:25 local. |
+| `jobs/verify-backup-receipt.sh` | GET `/api/admin/health`, inspect `backups.lastReceipt`, exit non-zero if null or older than `ANCHOR_BACKUP_STALE_SECS` (default 8 days). Migrated from Perplexity cron `d08f13f1`. | Weekly via systemd timer Sat 06:30 local. |
+| `install-backup-timer.sh` | Install all six (service, timer) unit pairs at once. Idempotent — re-running picks up edits to units or scripts, and auto-fixes missing exec bits on job scripts. | Once after rclone is configured; again after editing any units or scripts. |
 
 ## systemd units (in `ops/systemd/`)
 
@@ -27,6 +32,27 @@ which is `chmod 600` and gitignored.
 | `anchor-backup-datadb.timer` | Calls the service daily at 02:00 local time, with 10min random jitter and `Persistent=true` so a missed run catches up at boot. |
 | `anchor-prune-backups.service` | Type=oneshot job that runs `jobs/prune-backups.sh` as `jod`. Same hardening as the backup service. Logs under SyslogIdentifier `anchor-prune-backups`. Low priority (`Nice=15`). |
 | `anchor-prune-backups.timer` | Calls the prune service weekly on Sundays at 03:00 local (one hour after the daily backup), with 30min random jitter and `Persistent=true`. |
+| `anchor-warm-calendar.{service,timer}` | Runs `jobs/warm-calendar.sh` at 05:55 + 17:55 local with 30s jitter. |
+| `anchor-warm-morning.{service,timer}` | Runs `jobs/warm-morning.sh` daily at 05:55 local with 30s jitter. |
+| `anchor-warm-weekly-review.{service,timer}` | Runs `jobs/warm-weekly-review.sh` Sundays at 18:25 local with 30s jitter. |
+| `anchor-verify-backup-receipt.{service,timer}` | Runs `jobs/verify-backup-receipt.sh` Saturdays at 06:30 local with 2min jitter (after Friday-night backup). A non-zero exit shows as a failed unit in `systemctl list-timers`. |
+
+## Cron offload from Perplexity (Stage 12b)
+
+The table below records the Perplexity cron → systemd timer migration. Crons that **stay** on Perplexity do so because they need connectors (Outlook, MS To Do) or Perplexity-only tools (`deploy_website`, GitHub via `api_credentials`).
+
+| Perplexity cron | Name | Disposition |
+|---|---|---|
+| `b4a58a27` | Anchor — calendar refresh | → `anchor-warm-calendar.timer` |
+| `0697627f` | Anchor — daily morning briefing | → `anchor-warm-morning.timer` |
+| `67fb0e91` | Anchor — weekly review | → `anchor-warm-weekly-review.timer` |
+| `d08f13f1` | Anchor — verify backup-receipt loop | → `anchor-verify-backup-receipt.timer` |
+| `28a67578` | Anchor — weekly data.db snapshot (workspace) | **delete** — superseded by Stage 11 |
+| `8e8b7bb5` | Anchor data.db weekly backup (older path) | **delete** — superseded by Stage 11 |
+| `c751741f` | Email Status pull | stays on Perplexity (Outlook connector) |
+| `17df3d7e` | Anchor — Outlook + Capture bridge | stays on Perplexity (Outlook + MS To Do) |
+| `2928f9fa` | Oliver's calendar sync (ICS-only) | stays on Perplexity (`deploy_website`, GitHub) |
+| `236aa4a4` | Anchor — AEDT cutover retune reminder | stays on Perplexity (one-shot Oct 5) |
 
 ## Retention policy (`prune-backups.sh`)
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Anchor calendar cache warm (twice daily)
+Documentation=https://github.com/ideasth/anchor-app/blob/main/ops/README.md
+
+[Timer]
+# 05:55 and 17:55 Australia/Melbourne local time. systemd honours the
+# unit-file timezone via OnCalendar's implicit local-time interpretation.
+# 5 min before typical morning/evening use of Anchor.
+OnCalendar=*-*-* 05:55:00
+OnCalendar=*-*-* 17:55:00
+Persistent=true
+RandomizedDelaySec=30s
+Unit=anchor-warm-calendar.service
+
+[Install]
+WantedBy=timers.target
