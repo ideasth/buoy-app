@@ -15,6 +15,77 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-12 (09:25 AEST) — Stage 11 / 12 / 12c: VPS migration + cron offload + admin dashboard refresh — DEPLOYED
+
+**Status:** All migration work complete and live. HEAD on `main` is `f976e06` (deployed via `sudo -u jod /opt/anchor/ops/deploy.sh` at 2026-05-11 23:21:45Z). 124/124 vitest tests green. Live health endpoint confirmed shape.
+
+**Topology change**
+
+Anchor moved off the platform-hosted `anchor-jod.pplx.app` sandbox onto the `wmu` VPS (Ubuntu 24.04, Sydney, user `jod`, repo at `/home/jod/anchor`, symlinked from `/opt/anchor`). Reverse proxy is Caddy → pm2 process `anchor` on port 5000. Live URL is now `https://anchor.thinhalo.com`. The old `site_id` is dormant — do not deploy to it. Canonical deploy command: `sudo -u jod /opt/anchor/ops/deploy.sh` (pulls main, rebakes secret, npm ci, npm run build, pm2 reload, health probe; log to `/var/log/anchor/deploy-<UTC>.log`).
+
+One-time prereq if `/var/log/anchor` or `/var/backups/anchor` are missing on a new box: `sudo install -d -o jod -g jod -m 0755 /var/log/anchor /var/backups/anchor`. This bit us once on first deploy — script now assumes the dirs exist.
+
+**Stage 11 — OneDrive backups (`STAGE_11_*` workspace docs)**
+
+- New Entra app registration in AUPFHS tenant: "Anchor VPS Backup" — `STAGE_11_ENTRA_APP_REGISTRATION.md` has the full client-id / tenant-id / scope set.
+- rclone v1.74.1 installed on `wmu`, OAuth completed, remote name `onedrive:`.
+- Backup path convention: `onedrive:Backups/Anchor/YYYY/MM/anchor-data-YYYY-MM-DDTHHMMSSZ.db.zst`.
+- Each upload writes a row to a new `backup_receipts` table; the most recent 5 are surfaced at `/api/admin/health` under `backups.recent[]`.
+- AWS S3 setup notes archived in `STAGE_11a_AWS_S3_SETUP.md` (not active — OneDrive won).
+
+**Stage 12 — `ops/deploy.sh`**
+
+In-repo deploy script. Replaced the ad-hoc "pull / build / pm2 reload" sequence I'd been running by hand. Health check at the end aborts the deploy if `/api/health` doesn't 200 within the probe window.
+
+**Stage 12b — cron offload + 6 deletes (`STAGE_12b_CRON_*` workspace docs)**
+
+Moved everything that doesn't need an LLM off Perplexity onto systemd timers on `wmu`. Final split:
+
+*Perplexity crons remaining (3 + 1 one-shot):*
+- `17df3d7e` — Outlook + Capture bridge, every 2h 06:00–22:00
+- `2928f9fa` — calendar sync, 06:00 + 18:00
+- `c751741f` — Email Status pull, 6-hourly
+- `236aa4a4` — one-shot AEDT cutover reminder, fires Oct 2026
+
+*Crons deleted from Perplexity:*
+- `0697627f` (daily morning briefing) — replaced by `anchor-warm-morning.timer`
+- `67fb0e91` (weekly review) — replaced by `anchor-warm-weekly-review.timer`
+- `b4a58a27` (calendar refresh) — replaced by `anchor-warm-calendar.timer`
+- `28a67578` (weekly data.db snapshot) — replaced by `anchor-backup-datadb.timer` + `anchor-prune-backups.timer` + OneDrive upload
+- `8e8b7bb5` (admin verify) — replaced by `anchor-verify-backup-receipt.timer`
+- one other (legacy briefing variant)
+
+*Six wmu systemd timers added:* `anchor-backup-datadb` (daily 02:00), `anchor-prune-backups` (Sun 03:25, requires `ANCHOR_PRUNE_APPLY=1` for live deletes; retention 90 daily / 1yr weekly / forever monthly), `anchor-warm-calendar` (05:55 + 17:55), `anchor-warm-morning` (05:55), `anchor-warm-weekly-review` (Sun 18:25), `anchor-verify-backup-receipt` (Sat 06:31, alert threshold 36h — tightened from the initial 8 days at user's request).
+
+Full pre-migration cron snapshot in workspace: `anchor_crons_export_pre_migration.md`. Post-migration: `anchor_crons_export.md`.
+
+**Stage 12c — admin dashboard refresh (commit `f976e06`)**
+
+The `/api/admin/health` endpoint and `Admin.tsx` UI were still modelled around the old 7-cron world. Rebuilt to reflect the split:
+
+- `shared/cron-inventory.ts` — `AEDT_RETUNE_INVENTORY` trimmed from 9 entries to the 3 surviving recurring Perplexity crons. Test (`test/cron-inventory.test.ts`) asserts the IDs.
+- `server/admin-db.ts` — replaced `KNOWN_CRONS` with `PERPLEXITY_CRONS` + new `SYSTEMD_TIMERS`. Removed the `BACKUPS_DIR` filesystem scan (there's no persistent local backup dir on the VPS). Added `backups.recent` (last 5 receipts via `storage.recentBackupReceipts(5)`). `icsFeeds` always masks `url` even when called with the sync secret — the calendar ICS URL has an embedded PAT and must not leak through admin responses.
+- `server/storage.ts` — new `recentBackupReceipts(limit)` method.
+- `client/src/pages/Admin.tsx` — three cards ("OneDrive backups", "Perplexity crons", "VPS systemd timers (wmu)"). New shape: `backups.recent`, `perplexityCrons`, `systemdTimers`. `IcsFeedsCard` no longer has a "copy with secret" affordance. `fmtRelative` tolerates ±2 minutes of clock skew, so a freshly written heartbeat no longer renders as "in the future".
+- `test/cron-heartbeat.test.ts` — fixtures repointed (`8e8b7bb5` → `c751741f`, `0697627f` → `c751741f`); one new assertion confirms `8e8b7bb5` is now `unknown_cron_id`.
+
+Deploy of `f976e06` failed first time with `mkdir: cannot create directory '/var/log/anchor': Permission denied`. Fix: `sudo install -d -o jod -g jod -m 0755 /var/log/anchor /var/backups/anchor`. Second deploy succeeded. Bundle md5 `2b6d456c7282c694fe52b764d7cdca78`. Live `/api/admin/health` confirmed: 3 `perplexityCrons`, 6 `systemdTimers`, 5 `recent` receipts, icsFeeds masked, clock skew 84ms.
+
+**Stage 12c — documentation pass**
+
+- `CONTEXT.md` rewritten end-to-end for the VPS topology. Previous version archived as `CONTEXT_PRE_STAGE_12c_ARCHIVE_20260512.md` in the space.
+- This HANDOFF entry written.
+- Backup restore drill: pending (next step in this thread).
+
+**Follow-ups / known watch items**
+
+- DST cutover Sun 5 Oct 2026: retune the 3 surviving recurring Perplexity crons. Inventory in `shared/cron-inventory.ts`.
+- The verify staleness threshold is now 36h. If the OneDrive backup pipeline ever has a transient failure, the Saturday verifier will alert quickly — that's deliberate.
+- The platform-hosted `anchor-jod.pplx.app` site_id is dormant but not deleted. Add to standing rules: do not deploy to it.
+- Bake-time fix for `aupfhs_ics_url` and `calendar_ics_url` still pending from the 2026-05-08 entry below.
+
+---
+
 ## 2026-05-09 (23:30 AEST) — Anchor staged restructure (Stages 0–6): BUILT, NOT YET PUBLISHED
 
 **Status:** All six stages implemented in workspace, clean tsc + vite build, vitest 103/103 passing. **Nothing has been published.** Per the user's release policy, this thread stops at the build/report step and lets the user decide which release groups (A=0+1, B=2+3, C=4, D=5, E=6) to push and in which order.
