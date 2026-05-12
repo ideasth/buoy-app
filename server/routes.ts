@@ -667,7 +667,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       );
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="anchor-planner-${from}-to-${to}.xlsx"`,
+        `attachment; filename="buoy-planner-${from}-to-${to}.xlsx"`,
       );
       res.send(buf);
     } catch (err) {

@@ -1109,11 +1109,21 @@ function ExportDialog({
         localStorage.getItem("anchor_token");
     } catch {}
     if (token) params.set("t", token);
-    const apiBase = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
-    const url = `${apiBase}/api/planner/export?${params.toString()}`;
+    // Stage 14b: build the export URL against the current page origin
+    // explicitly. The legacy `__PORT_5000__` placeholder dance produced a
+    // relative path that, under hash routing, the browser occasionally
+    // resolved against the wrong base (e.g. proxy 404s on some setups).
+    // location.origin is always the canonical site origin and survives
+    // hash routing untouched.
+    const origin =
+      typeof window !== "undefined" && window.location
+        ? window.location.origin
+        : "";
+    const url = `${origin}/api/planner/export?${params.toString()}`;
     const a = document.createElement("a");
     a.href = url;
     a.download = `buoy-planner-${from}-to-${to}.xlsx`;
+    a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
     a.remove();

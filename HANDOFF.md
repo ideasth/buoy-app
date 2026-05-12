@@ -2,6 +2,22 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-12 (PM AEST) — Stage 14b: Calendar Planner export hotfix
+
+User reported that the Excel download from the Calendar Planner Export dialog failed with a Chrome "Site wasn't available" error. Root cause investigation: live server endpoint `/api/planner/export` was healthy (HTTP 200 with valid xlsx when called with sync secret; HTTP 401 JSON when called without auth — both correct), and the built client bundle did resolve the `__PORT_5000__` placeholder to an empty string producing a same-origin relative URL. We could not reproduce the failure from outside the user's browser, so the suspected residual cause was the placeholder-based URL build interacting badly with the hash-routed page (`/#/calendar`) under the user's specific browser/proxy session.
+
+Fix shipped (client + server, one commit):
+- `client/src/pages/CalendarPlanner.tsx`: replaced the `"__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__"` placeholder dance with an explicit `window.location.origin` prefix so the export URL is always a fully-qualified absolute URL against the canonical site origin, immune to hash-routing edge cases.
+- `server/routes.ts:670`: fixed the `Content-Disposition` filename header that Stage 14 Phase 2 missed — was still emitting `anchor-planner-${from}-to-${to}.xlsx`, now `buoy-planner-${from}-to-${to}.xlsx`. (Same-origin downloads were already using the client's `<a download="buoy-planner-...">` attribute so users were already seeing the right name in their download history, but the server header was inconsistent.)
+
+Tests: 205 passed (no new tests added — pure refactor + string change). tsc clean. Build clean. No baked secret leak in client bundle.
+
+Not touched (explicit non-asks): Admin Export DB button (user said "I don't need the Export DB button"); hash routing (deferred); cron renames (pending — user runs from owning sessions).
+
+Follow-ups still open from Stage 14 closeout:
+- Phase 1 cron renames — four crons (`17df3d7e` Outlook bridge, `2928f9fa` ICS sync, `c751741f` Email Status pull, `236aa4a4` AEDT cutover reminder) still emit `X-Anchor-Sync-Secret` and the substitutions are documented; user must run the rename prompt from each owning session.
+- 2-week sanity sweep ~2026-05-26 to consider dropping back-compat code paths.
+
 ## 2026-05-12 (13:14 AEST) — Routine redeploy via redeploy-republish-buoy skill — DEPLOYED
 
 **Commit deployed:** `f65d13c` (chore(stage14): phase 2 — rename remaining client/server anchor refs to buoy). Fast-forward from previous LKG `db17b33`, 8 files changed (+215 / -13), three new test files: `admin-db-filenames.test.ts`, `ics-user-agent.test.ts`, `query-client-token.test.ts`.
