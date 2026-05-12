@@ -91,7 +91,65 @@ Adds three distinct virtual hosts to a single Buoy process. Apex `buoy.thinhalo.
 - Availability ICS endpoint (`/elgin.ics`) does not require ICS calendar clients to store a session cookie — the token must be in the URL on every request (`/elgin.ics?t=<token>`).
 - The 15-minute privacy buffer on available blocks (both before and after a busy block) ensures no exact start/end times of blocked events are inferrable.
 
-**Status:** Pushed to `main`. Awaits deploy via `redeploy-republish-buoy` skill + operator DNS + Caddy steps above.
+**Status:** SHIPPED and deployed (see follow-up entry above for hotfixes + Settings nav link).
+
+---
+
+## 2026-05-13 (02:30 AEST) — Stage 17 follow-up: deploy, hotfixes, Settings nav link
+
+Stage 17 (above) was pushed but the first deploy failed health check and auto-rolled back. Root cause + three follow-up commits below.
+
+**1. Express 5 / path-to-regexp 8 hotfix (commit `41d8ae3`)**
+
+First deploy of Stage 17 failed: pm2 logged `Missing parameter name at index 9: /assets/*` at router construction time. The Buoy app upgraded to Express 5 (path-to-regexp 8) some time back, which rejects bare-`*` wildcards in route patterns. Two files in the new code had this:
+
+- `server/family-routes.ts:194` — `app.get("/assets/*", ...)` → `app.get("/assets/*splat", ...)`
+- `server/availability-routes.ts:58` — same fix
+
+Also added `test/express5-route-patterns.test.ts` as a regression guard: constructs both routers in isolation and asserts that bare `*` still throws. Note: `:token.ics` IS valid in path-to-regexp 8 (separately tested) — only bare `*` is the problem. Test count 403 → 406.
+
+After this fix, redeploy succeeded and live infra is correct:
+- `https://buoy.thinhalo.com` → 200 (apex unchanged)
+- `https://oliver-availability.thinhalo.com` → 404 without `?t=` (correct — token-gated, do not advertise)
+- `https://buoy-family.thinhalo.com` → 404 without auth (correct — `family_calendar_enabled=0` by default)
+
+**2. Caddy + DNS (operator)**
+
+User added DNS A records for `buoy-family.thinhalo.com` and `oliver-availability.thinhalo.com` → `203.29.240.189`. Two new Caddy vhost stanzas added to `/etc/caddy/Caddyfile`, validated with `caddy validate`, reloaded with `systemctl reload caddy`. All three hosts now serve over HTTPS.
+
+**3. Logo refresh (rolled into Stage 17 commit `a4b39c1`)**
+
+User supplied `buoy-app-logo.jpg` (green life-ring on navy). Used the Both approach: redrew the life-ring as an inline SVG for app chrome (transparent background, baked green/cream colours, `monochrome` prop fallback) and generated PNG favicons from the JPEG via ImageMagick.
+
+- Added: `client/public/favicon.png` (32×32), `apple-touch-icon.png` (180), `icon-192.png`, `icon-512.png`, original `buoy-app-logo.jpg`
+- `client/src/components/Logo.tsx` — redrawn life-ring SVG
+- `client/index.html` — added apple-touch-icon link, theme-color `#0d2a4a`, og:image
+- `client/src/pages/Login.tsx` — switched inline SVG to Logo component
+
+**4. Settings nav link (commit `5b224d6`)**
+
+The new `CalendarSettings` page at `/#/settings/calendars` was reachable by direct URL but had no link from the main Settings page, so the three switches were effectively hidden. Added a compact link card immediately after the Calendar feed section in `client/src/pages/Settings.tsx`: calendar icon, bold "Calendar publishing" header, subtext ("Public availability, private subscription, and family calendar — switches, tokens, and bookable windows."), chevron, hover state, links to `/#/settings/calendars`.
+
+**Deploy log:**
+- Final commit deployed: `5b224d6`
+- Bundle md5: `b54d560712360e5d4c9380791d054b98`
+- pm2 restart count: 22 (Buoy)
+- Health check: passed on attempt 1
+- Deployed at: 2026-05-12T16:22:23Z (02:22 AEST 13 May)
+
+**Defaults on the live system (must be flipped on by user):**
+- `public_calendar_enabled = 0`
+- `private_calendar_enabled = 0`
+- `family_calendar_enabled = 0`
+
+Middleware returns 404 (not 401) when a feature is disabled — the "don't advertise the endpoint" pattern. To activate any of the three, user visits `/#/settings/calendars`, toggles Enabled, sets credentials/window as needed, and saves.
+
+**Status:** SHIPPED. All three vhosts live and TLS-terminated. User has not yet enabled any of the three calendar features in app_settings.
+
+**Follow-ups when user enables features:**
+- Public availability: set bookable window + label, copy token URL into wherever it's published
+- Private subscription: set username + password (bcrypt'd server-side); copy basic-auth URL or token URL into any calendar client that doesn't carry the apex session cookie
+- Family: set shared family username + password; share token URL with family members for the HTML page
 
 ---
 
