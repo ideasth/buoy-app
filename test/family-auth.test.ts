@@ -39,6 +39,52 @@ describe("family auth — checkFamilyAuth", () => {
     expect(checkFamilyAuth(req)).toBeNull();
   });
 
+  // Regression — Stage 17 hotfix. Calendar clients can't reliably carry the
+  // token in ?t= (some strip query strings on subscribe URLs) and never carry
+  // cookies. Token-in-path /cal/<TOKEN>.ics must authenticate without query
+  // string or cookie.
+  it("returns token for correct token in /cal/<TOKEN>.ics path", () => {
+    const req = {
+      query: {},
+      cookies: {},
+      path: "/cal/valid-family-token.ics",
+      header: () => "",
+    } as any;
+    expect(checkFamilyAuth(req)).toBe("token");
+  });
+
+  it("returns null for wrong token in /cal/<TOKEN>.ics path", () => {
+    const req = {
+      query: {},
+      cookies: {},
+      path: "/cal/bogus-token.ics",
+      header: () => "",
+    } as any;
+    expect(checkFamilyAuth(req)).toBeNull();
+  });
+
+  it("does NOT extract token from non-/cal/ paths", () => {
+    // The regex is anchored to /cal/ so other paths with similar shape
+    // must not authenticate.
+    const req = {
+      query: {},
+      cookies: {},
+      path: "/other/valid-family-token.ics",
+      header: () => "",
+    } as any;
+    expect(checkFamilyAuth(req)).toBeNull();
+  });
+
+  it("does NOT match /cal/<TOKEN>.ics with extra path segments", () => {
+    const req = {
+      query: {},
+      cookies: {},
+      path: "/cal/sub/valid-family-token.ics",
+      header: () => "",
+    } as any;
+    expect(checkFamilyAuth(req)).toBeNull();
+  });
+
   it("returns password for correct Basic auth", () => {
     const creds = Buffer.from("family:correctpass").toString("base64");
     const req = {

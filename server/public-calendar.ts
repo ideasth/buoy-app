@@ -166,6 +166,12 @@ export function computeAvailability(args: ComputeAvailabilityArgs): AvailableBlo
 
   for (const ev of args.calEvents) {
     if (!ev.start || !ev.end) continue;
+    // All-day events on the upstream feeds are info-only markers (school terms,
+    // "Kids with us", roster week labels). They span 24+ hours and would
+    // otherwise blanket every bookable window in the 12-week horizon. The
+    // public availability feed only treats timed events as busy. force_busy
+    // blocks below remain the way to mark an all-day span busy intentionally.
+    if (ev.allDay) continue;
     const s = new Date(ev.start).getTime();
     const e = new Date(ev.end).getTime();
     if (isNaN(s) || isNaN(e)) continue;

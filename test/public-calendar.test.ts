@@ -288,6 +288,58 @@ describe("computeAvailability", () => {
     expect(result[0].durationMin).toBeGreaterThan(60);
   });
 
+  // Regression — Stage 17 hotfix. The upstream Outlook feed contains many
+  // all-day "marker" events (school terms, "Kids with us", roster week labels)
+  // that span 24+ hours. Before the fix, these blanketed every bookable window
+  // and the public ICS came out empty (zero VEVENTs). All-day events must be
+  // skipped in the busy-interval builder; force_busy blocks remain the
+  // intentional way to mark an all-day span as busy.
+  it("all-day calendar events do NOT contribute to busy", () => {
+    const now = utcMs("2026-05-31T21:00:00Z"); // 07:00 AEST Mon 2026-06-01
+    // A 1-week all-day "School term" marker covering the whole bookable horizon.
+    const allDayEv: CalEvent = {
+      uid: "school-term-1",
+      summary: "School Term 2",
+      start: "2026-06-01T00:00:00Z",
+      end: "2026-06-08T00:00:00Z",
+      allDay: true,
+    };
+    const result = computeAvailability({
+      calEvents: [allDayEv],
+      familyEvents: [],
+      blocks: [],
+      bookableWindow: BOOKABLE,
+      now,
+      horizonMs: 7 * 24 * 60 * 60 * 1000,
+    });
+    // The all-day event must be ignored — we should still see Mon-Sat blocks.
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("all-day event coexists with a timed event — only the timed event blocks time", () => {
+    const now = utcMs("2026-05-31T21:00:00Z"); // 07:00 AEST Mon 2026-06-01
+    const allDayEv: CalEvent = {
+      uid: "kids-with-us",
+      summary: "Kids with us",
+      start: "2026-06-01T00:00:00Z",
+      end: "2026-06-02T00:00:00Z",
+      allDay: true,
+    };
+    // Timed event 09:00-10:00 AEST Mon (2026-05-31 23:00 → 2026-06-01 00:00 UTC)
+    const timedEv = makeCalEvent("ev1", "2026-05-31T23:00:00Z", "2026-06-01T00:00:00Z");
+    const result = computeAvailability({
+      calEvents: [allDayEv, timedEv],
+      familyEvents: [],
+      blocks: [],
+      bookableWindow: BOOKABLE,
+      now,
+      horizonMs: 24 * 60 * 60 * 1000,
+    });
+    // Free blocks should exist on Monday around the timed event — the
+    // all-day must not blanket the day.
+    expect(result.length).toBeGreaterThan(0);
+  });
+
   it("family event with count_as_busy_for_public=1 contributes to busy", () => {
     const now = utcMs("2026-05-31T21:00:00Z");
     // Family event occupies all day

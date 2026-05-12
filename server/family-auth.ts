@@ -42,13 +42,32 @@ function verifyCookieValue(raw: string): boolean {
   return diff === 0;
 }
 
+// Match `/cal/<TOKEN>.ics` and return the captured token, or null.
+// Used so calendar clients (which never send cookies and rarely tolerate query
+// params on ICS subscribe URLs) can authenticate via path alone.
+function tokenFromIcsPath(reqPath: string | undefined | null): string | null {
+  // Anchor to /cal/ so we don't match arbitrary paths. Token is the URL-safe
+  // base64 alphabet that randomBytes(32).toString("base64url") emits.
+  if (!reqPath) return null;
+  const m = reqPath.match(/^\/cal\/([A-Za-z0-9_-]+)\.ics$/);
+  return m ? m[1] : null;
+}
+
 // Returns "password" | "token" | null
 export function checkFamilyAuth(req: Request): "password" | "token" | null {
-  // 1. Check ?t= param or cookie for token-based auth
-  const tokenParam = (req.query?.t as string | undefined) || "";
   const storedToken = getSetting(KEY.FAMILY_CALENDAR_TOKEN) ?? "";
 
+  // 1a. Check ?t= query param for token-based auth
+  const tokenParam = (req.query?.t as string | undefined) || "";
   if (tokenParam && storedToken && tokenParam === storedToken) {
+    return "token";
+  }
+
+  // 1b. Check token-in-path: /cal/<TOKEN>.ics. Calendar apps don't carry
+  // cookies or tolerate query params reliably; this is the cleanest way for
+  // them to authenticate without Basic credentials.
+  const pathToken = tokenFromIcsPath(req.path);
+  if (pathToken && storedToken && pathToken === storedToken) {
     return "token";
   }
 
@@ -103,9 +122,14 @@ export function requireFamilyAuth(req: Request, res: Response, next: NextFunctio
 
   (req as any).familyAuthBy = result;
 
-  // If authenticated via token URL param, set long-lived signed cookie
-  if (result === "token" && req.query?.t) {
-    const tokenHash = createHmac("sha256", "buoy-family-cookie").update(req.query.t as string).digest("base64url");
+  // If authenticated via token URL (?t= query OR /cal/<TOKEN>.ics path),
+  // set long-lived signed cookie so subsequent browser requests work without
+  // having to re-supply the token. Calendar clients ignore Set-Cookie so this
+  // is harmless for them and useful for humans.
+  const tokenForCookie =
+    (req.query?.t as string | undefined) || tokenFromIcsPath(req.path);
+  if (result === "token" && tokenForCookie) {
+    const tokenHash = createHmac("sha256", "buoy-family-cookie").update(tokenForCookie).digest("base64url");
     const signed = signCookieValue(tokenHash);
     res.cookie(FAMILY_COOKIE_NAME, signed, {
       httpOnly: true,
