@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "node:fs/promises";
+import { rm, readFile, cp } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 
 // server deps to bundle to reduce openat(2) syscalls
@@ -73,6 +73,12 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Stage 16: copy server/prompts -> dist/prompts so the bundled server can
+  // resolve prompt template files at runtime (path.resolve(__dirname, "prompts/...")).
+  // Add new prompt files under server/prompts/ and they will be picked up automatically.
+  console.log("copying server prompts...");
+  await cp("server/prompts", "dist/prompts", { recursive: true });
 }
 
 buildAll().catch((err) => {

@@ -9,7 +9,7 @@
 //   - Malformed / non-JSON response
 //   - Response that fails shape validation
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { getPerplexityAdapter } from "./llm/perplexity";
 
@@ -54,8 +54,21 @@ export class SchedulingParseError extends Error {
 // ---- Prompt template --------------------------------------------------------
 
 function loadPromptTemplate(): string {
-  const p = path.resolve(__dirname, "prompts/scheduling-parser.md");
-  return readFileSync(p, "utf8");
+  // Production build copies server/prompts -> dist/prompts; __dirname is dist/.
+  // Dev/test runs from source via tsx; __dirname is server/.
+  // Try the colocated path first, then fall back to the source tree, then to cwd.
+  const candidates = [
+    path.resolve(__dirname, "prompts/scheduling-parser.md"),
+    path.resolve(__dirname, "../server/prompts/scheduling-parser.md"),
+    path.resolve(process.cwd(), "server/prompts/scheduling-parser.md"),
+    path.resolve(process.cwd(), "dist/prompts/scheduling-parser.md"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return readFileSync(p, "utf8");
+  }
+  throw new Error(
+    `scheduling-parser prompt template not found. Tried: ${candidates.join(", ")}`,
+  );
 }
 
 // ---- Validation helpers -----------------------------------------------------
