@@ -8,11 +8,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@shared": path.resolve(__dirname, "shared"),
+      "@": path.resolve(__dirname, "client/src"),
     },
   },
   test: {
     root: __dirname,
-    include: ["test/**/*.test.ts"],
+    // Match both .ts (server/back-end tests) and .tsx (page smoke tests).
+    include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     environment: "node",
   },
 });

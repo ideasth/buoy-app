@@ -17,6 +17,12 @@ import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
 import { computeCalmReviewAggregates } from "./calm-review";
 import {
+  listRelationshipsHandler,
+  createRelationshipHandler,
+  patchRelationshipHandler,
+  deleteRelationshipHandler,
+} from "./relationships-handlers";
+import {
   resolveSyncSecret,
   readSyncSecretHeader as readSyncSecretHeaderShared,
 } from "./sync-secret";
@@ -352,6 +358,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ? calendar_ics_url.replace(/\/\/.*@/, "//[secret]@")
       : "";
     res.json({ ...safe, calendar_ics_url_masked: masked });
+  });
+
+  // ---- Relationships (Stage 14b, 2026-05-12) ----
+  // CRUD over the relationships table that powers Reflect-mode coach
+  // prompts. Soft-delete only; hard delete intentionally not exposed so
+  // historic coach prompts remain reproducible.
+  app.get("/api/relationships", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const result = listRelationshipsHandler(
+      storage,
+      req.query as Record<string, unknown>,
+    );
+    res.status(result.status).json(result.body);
+  });
+  app.post("/api/relationships", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const result = createRelationshipHandler(
+      storage,
+      (req.body ?? {}) as Record<string, unknown>,
+    );
+    res.status(result.status).json(result.body);
+  });
+  app.patch("/api/relationships/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const result = patchRelationshipHandler(
+      storage,
+      req.params.id,
+      (req.body ?? {}) as Record<string, unknown>,
+    );
+    res.status(result.status).json(result.body);
+  });
+  app.delete("/api/relationships/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const result = deleteRelationshipHandler(storage, req.params.id);
+    res.status(result.status).json(result.body);
   });
 
   // ---- Calendar events ----

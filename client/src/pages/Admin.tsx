@@ -25,8 +25,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import Usage from "@/pages/Usage";
 import SettingsPage from "@/pages/Settings";
+import Relationships from "@/pages/Relationships";
 
-type AdminTab = "health" | "usage" | "settings";
+type AdminTab = "health" | "usage" | "relationships" | "settings";
 
 function readTabFromHash(): AdminTab {
   if (typeof window === "undefined") return "health";
@@ -35,7 +36,13 @@ function readTabFromHash(): AdminTab {
   if (qIdx < 0) return "health";
   const params = new URLSearchParams(hash.slice(qIdx + 1));
   const t = params.get("tab");
-  if (t === "usage" || t === "settings" || t === "health") return t;
+  if (
+    t === "usage" ||
+    t === "settings" ||
+    t === "relationships" ||
+    t === "health"
+  )
+    return t;
   return "health";
 }
 
@@ -83,6 +90,9 @@ export default function Admin() {
           <TabsTrigger value="usage" data-testid="tab-usage">
             Usage
           </TabsTrigger>
+          <TabsTrigger value="relationships" data-testid="tab-relationships">
+            Relationships
+          </TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">
             Settings
           </TabsTrigger>
@@ -95,6 +105,11 @@ export default function Admin() {
         <TabsContent value="usage" className="mt-4">
           {/* Re-uses the standalone Usage page component verbatim. */}
           <Usage />
+        </TabsContent>
+
+        <TabsContent value="relationships" className="mt-4">
+          {/* Stage 14b — CRUD for the relationships table. */}
+          <Relationships />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-4">
