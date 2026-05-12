@@ -2,6 +2,10 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-12 (PM AEST) — Stage 14b: relationships settings UI
+
+Adds a Relationships tab inside `/admin` for the relationships table introduced in Stage 14. Routes: GET/POST/PATCH/DELETE `/api/relationships`, gated by `requireUserOrOrchestrator`. Soft-delete only; hard delete is intentionally not exposed so historic coach prompts remain reproducible. Storage layer unchanged. Route handlers live in a new `server/relationships-handlers.ts` so HTTP-layer tests run hermetically without booting the live `data.db`. Net LOC: +1309/-3 across 7 files. Tests: 32 new (24 route + 8 page smoke), full suite was 205, now 237. Commit: `e000f73`. Awaits deploy via the `redeploy-republish-buoy` skill.
+
 ## 2026-05-12 (18:36 AEST) — Routine redeploy via redeploy-republish-buoy skill — DEPLOYED
 
 **Commit deployed:** `de3c064` (fix(stage14b): calendar planner export uses location.origin + server filename buoy-planner). Same commit was the previous Stage 14b hotfix HEAD — no new commits since the last redeploy in this thread; this run was a rebuild-and-restart at the user's request to ship the Calendar Planner export hotfix bundle.
