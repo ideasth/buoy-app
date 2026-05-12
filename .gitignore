@@ -21,3 +21,10 @@ server/baked-llm-keys.ts
 
 # Bootstrapped runtime secrets — never commit
 .secrets/
+
+# Operational VPS-local files (created at deploy time or by pm2 setup)
+.deploy-backups/
+ecosystem.config.cjs
+start.sh
+start.sh.bak
+data.db.pre-stage*
