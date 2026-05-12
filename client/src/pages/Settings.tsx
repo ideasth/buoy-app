@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, MapPin } from "lucide-react";
+import { Plus, Trash2, MapPin, CalendarCog, ChevronRight } from "lucide-react";
 
 interface SettingsView {
   adhd_tax_coefficient: number;
@@ -132,6 +132,23 @@ export default function SettingsPage() {
             Stored server-side. Never sent to the browser.
           </div>
         </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-5" data-testid="section-calendar-publishing">
+        <a
+          href="/#/settings/calendars"
+          className="flex items-center gap-3 -m-1 p-1 rounded hover:bg-muted/40 transition-colors"
+          data-testid="link-calendar-publishing"
+        >
+          <CalendarCog className="h-4 w-4 text-muted-foreground shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold">Calendar publishing</div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              Public availability, private subscription, and family calendar — switches, tokens, and bookable windows.
+            </div>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+        </a>
       </section>
 
       <section className="space-y-3 rounded-lg border bg-card p-5">
