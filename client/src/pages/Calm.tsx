@@ -12,6 +12,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
+// Stage 18 (2026-05-16) — bundled calming audio loop. Tempo-matched to the
+// 16 s box-breathing cycle (4 s inhale / hold / exhale / hold). Polyphonic
+// A3 drone with per-phase top voices. See scripts/render-calm-loop.mjs.
+import calmLoopUrl from "@/assets/calm-loop.mp3";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -53,9 +57,15 @@ type CalmState =
   | "post-capture"
   | "done";
 
-const TOTAL_CYCLES = 6;
-const PHASE_SECONDS = 5;
-const CYCLE_SECONDS = PHASE_SECONDS * 2;
+// Stage 18 (2026-05-16) — box breathing 4 s inhale + 4 s hold-full + 4 s
+// exhale + 4 s hold-empty = 16 s per cycle. Four cycles ≈ 64 s total, in
+// the same ballpark as the previous 6 cycles × 10 s = 60 s.
+const TOTAL_CYCLES = 4;
+const PHASE_SECONDS = 4;
+const PHASES_PER_CYCLE = 4;
+const CYCLE_SECONDS = PHASE_SECONDS * PHASES_PER_CYCLE;
+// Default volume for the calm audio loop. No UI control in Stage 18.
+const CALM_AUDIO_VOLUME = 0.6;
 
 interface IssueCandidates {
   tasks: Array<{ id: number; label: string }>;
@@ -708,10 +718,46 @@ function IssueSection(props: {
   );
 }
 
+// Stage 18 — box-breathing phase index. 0 = inhale, 1 = hold-full,
+// 2 = exhale, 3 = hold-empty. Used to drive the visual scale.
+type BoxPhase = 0 | 1 | 2 | 3;
+
 function BreathingScreen({ onDone }: { onDone: () => void }) {
   const [tick, setTick] = useState(0);
   const [skipped, setSkipped] = useState(false);
   const startRef = useRef<number>(Date.now());
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Mount-effect: start the bundled audio loop. Modern browsers require a
+  // user gesture before audio plays; the breathing screen is always entered
+  // via the "Begin" / "Continue" CTA so the gesture chain is already
+  // satisfied. Failures (autoplay blocked, missing codec) are swallowed —
+  // breathing should still work without sound.
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el) {
+      el.volume = CALM_AUDIO_VOLUME;
+      el.currentTime = 0;
+      const p = el.play();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {
+          // Autoplay blocked or asset unavailable. Stay silent.
+        });
+      }
+    }
+    return () => {
+      const cur = audioRef.current;
+      if (cur) {
+        try {
+          cur.pause();
+          cur.currentTime = 0;
+        } catch {
+          // ignore — jsdom + some browsers throw on currentTime when
+          // the element is in an unloaded state.
+        }
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -727,8 +773,18 @@ function BreathingScreen({ onDone }: { onDone: () => void }) {
 
   const cycle = Math.min(Math.floor(tick / CYCLE_SECONDS) + 1, TOTAL_CYCLES);
   const phaseTick = tick % CYCLE_SECONDS;
-  const inhaling = phaseTick < PHASE_SECONDS;
-  const label = inhaling ? "Breathe in" : "Breathe out";
+  const phase = Math.floor(phaseTick / PHASE_SECONDS) as BoxPhase;
+  // Circle scale by phase:
+  //   inhale     → expanding to full (scale-150)
+  //   hold-full  → sit at full      (scale-150)
+  //   exhale     → contracting to small (scale-100)
+  //   hold-empty → sit at small     (scale-100)
+  const atFullSize = phase === 0 || phase === 1;
+  // CSS transitions only need to run during the moving phases (0 and 2).
+  // During the holds we still want the size to stay where it is, so the
+  // transition duration drops to 0 to avoid any drift on prop swap.
+  const transitionDuration =
+    phase === 0 || phase === 2 ? `${PHASE_SECONDS}s` : "0s";
   const canSkip = !skipped && tick >= 2 * CYCLE_SECONDS;
 
   return (
@@ -738,18 +794,20 @@ function BreathingScreen({ onDone }: { onDone: () => void }) {
       </div>
       <div className="flex items-center justify-center h-64">
         <div
+          data-testid="calm-breath-circle"
+          data-phase={phase}
           className={cn(
             "rounded-full bg-primary/20 border border-primary/40 transition-all ease-in-out",
-            inhaling ? "scale-150" : "scale-100",
+            atFullSize ? "scale-150" : "scale-100",
           )}
           style={{
             width: "10rem",
             height: "10rem",
-            transitionDuration: `${PHASE_SECONDS}s`,
+            transitionDuration,
           }}
         />
       </div>
-      <div className="text-center text-lg font-medium">{label}</div>
+      {/* Stage 18 — no phase label per user. The visual + audio carry it. */}
       {canSkip && (
         <div className="text-center">
           <button
@@ -764,6 +822,16 @@ function BreathingScreen({ onDone }: { onDone: () => void }) {
           </button>
         </div>
       )}
+      {/* Stage 18 — bundled calm loop. `loop` so we don't gap on long
+          sessions; `preload="auto"` to minimise first-play latency. No
+          controls — the user starts/stops by entering/leaving this screen. */}
+      <audio
+        ref={audioRef}
+        src={calmLoopUrl}
+        loop
+        preload="auto"
+        data-testid="calm-audio"
+      />
     </div>
   );
 }

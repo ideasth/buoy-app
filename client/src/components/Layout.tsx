@@ -9,15 +9,19 @@ import { QuickCaptureModal } from "./QuickCaptureModal";
 import { cn } from "@/lib/utils";
 
 // Sidebar nav. `divider: true` rows render a separator instead of a link.
-// Order requested by the user; Admin is now the consolidated
+// Stage 18 (2026-05-16) order: regulation tools (Check-in / Calm / Capture /
+// Coach) sit at the top, followed by daily planning surfaces (Today /
+// Calendar), then the existing groups. Admin is the consolidated
 // Health + Usage + Settings page (see /pages/Admin.tsx).
-type NavItem = { href: string; label: string } | { divider: true };
-const NAV: NavItem[] = [
-  { href: "/coach", label: "Coach" },
+export type NavItem = { href: string; label: string } | { divider: true };
+export const NAV: NavItem[] = [
+  { href: "/checkin", label: "Check-in" },
+  { href: "/calm", label: "Calm" },
   { href: "/capture", label: "Capture" },
+  { href: "/coach", label: "Coach" },
+  { divider: true },
   { href: "/", label: "Today" },
   { href: "/calendar-planner", label: "Calendar" },
-  { href: "/checkin", label: "Check-in" },
   { divider: true },
   { href: "/morning", label: "Morning" },
   { href: "/evening", label: "Evening" },
@@ -31,6 +35,13 @@ const NAV: NavItem[] = [
   { divider: true },
   { href: "/admin", label: "Admin" },
 ];
+
+// Stage 18 — flattened list of selectable landing pages (dividers excluded).
+// Consumed by the Admin settings dropdown and by tests that need to know
+// which routes the user is allowed to pick as their default. Kept in sync
+// with the server-side ALLOWED_LANDING_ROUTES allow-list in app-settings.ts.
+export const NAV_ROUTES: ReadonlyArray<{ href: string; label: string }> =
+  NAV.filter((item): item is { href: string; label: string } => !("divider" in item));
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();

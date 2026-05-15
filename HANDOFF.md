@@ -2,6 +2,40 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-16 (AEST) — Stage 18: Settings default landing page + sidebar reshuffle + Calm music
+
+Three discrete UX changes, shipped in one commit.
+
+**Locked decisions:**
+- New `default_landing_route` key in `app_settings` KV table. Server validates against an allow-list of every active top-level SPA route. Bad values → 400 `invalid_route`, atomic (no half-applied patch).
+- Sidebar NAV reorder: `Check-in / Calm / Capture / Coach` at top, divider, then `Today / Calendar`, divider, then the previous groups unchanged. New `Calm` link points at the existing `/calm` route — no new app route required.
+- `Layout.tsx` now exports `NAV` and `NAV_ROUTES` so the Settings picker and tests can read the canonical list.
+- Calm `BreathingScreen` switched from 6 × (5 s inhale + 5 s exhale) to **4 × box breathing** (4 s inhale / 4 s hold-full / 4 s exhale / 4 s hold-empty = 16 s cycle, ~64 s total). Phase labels removed — circle scale + audio carry the cue. Circle exposes `data-phase` (0–3) for tests.
+- New bundled audio asset `client/src/assets/calm-loop.mp3` (192 kB, 16 s seamless loop). Polyphonic: A3 (220 Hz) drone across all phases; per-phase top voices B4+E4 (inhale), A5 (hold-full), C♯4+E3 (exhale), A5 (hold-empty). 250 ms equal-power crossfades at every phase boundary including the wrap. Re-render with `node scripts/render-calm-loop.mjs`.
+- Audio is autoplay-safe — user gesture is satisfied by the Begin/Continue CTA that enters the breathing state. Volume defaults to 0.6, no UI control yet.
+
+**Files touched:**
+- `server/app-settings.ts` — `DEFAULT_LANDING_ROUTE` key, `ALLOWED_LANDING_ROUTES`, `isAllowedLandingRoute()`, seed default
+- `server/routes.ts` — `/api/settings` GET surfaces `defaultLandingRoute`; PATCH validates + persists
+- `client/src/components/Layout.tsx` — NAV reorder, exports `NAV` + `NAV_ROUTES`
+- `client/src/pages/Settings.tsx` — new "Default landing page" card with `<Select>`, save-on-change
+- `client/src/App.tsx` — `DefaultLandingRedirect` one-shot effect, fires only on `/`
+- `client/src/pages/Calm.tsx` — box-breathing constants, phase index, audio element + mount/unmount lifecycle
+- `client/src/assets/calm-loop.mp3` — new binary asset (192 kB)
+- `scripts/render-calm-loop.mjs` — reproducible offline render (Pure Node + ffmpeg, no external deps)
+- `STAGE_18_SETTINGS_NAV_CALM_MUSIC_SPEC.md` — design doc, signed off
+- `test/stage18-settings-nav-calm-music.test.ts` — 28 new tests covering allow-list, KV persistence, route wiring, sidebar order, Settings picker, App redirect, Calm constants + audio + asset
+
+**Test result:** 466/466 passing (was 438; +28 new). Build clean, asset fingerprinted into `dist/public/assets/calm-loop-*.mp3`.
+
+**Deploy:** one VPS command: `sudo -u jod /opt/buoy/ops/deploy.sh`. Picks up Stage 17b/17c hotfixes (`89c14ba`, `c467358`, `6a19617`, `d17b0ca`) plus Stage 18 in a single ship.
+
+**Follow-ups (deferred):**
+- Volume slider on Calm if requested.
+- Per-user breath ratio (we ship 4-4-4-4 only).
+- Music in other Coach modes (Calm only for now).
+- Sibling-service LLM design (parked at Decision 1: provider choice, Decision 2: secret model — resume when user picks up).
+
 ## 2026-05-13 (AM AEST) — Stage 17: Three-hostname split (public/private calendars + family)
 
 Adds three distinct virtual hosts to a single Buoy process. Apex `buoy.thinhalo.com` is untouched — existing private ICS subscriptions keep working without resubscribe. New `oliver-availability.thinhalo.com` serves a sanitised 12-week availability page + Available-only ICS (token-gated, 404 without token). New `buoy-family.thinhalo.com` serves a single-page family calendar + Add Event + day/week notes + family ICS (Basic auth OR token URL).

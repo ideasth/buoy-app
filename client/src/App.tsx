@@ -140,6 +140,38 @@ function AppRouter() {
   );
 }
 
+// Stage 18 — if the user has chosen a non-root default landing page in
+// Settings, redirect once when they land on `/`. Deep links to other routes
+// (e.g. /calm shared from another window) are not overridden. Uses
+// `replace: true` so the back button doesn't bounce them to `/`.
+function DefaultLandingRedirect() {
+  const [location, navigate] = useLocation();
+  const fired = useRef(false);
+
+  useEffect(() => {
+    if (fired.current) return;
+    if (location !== "/") return;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/settings");
+        const json = (await res.json()) as { defaultLandingRoute?: string };
+        const target = json?.defaultLandingRoute;
+        // Re-check the location at fire time. The user may have navigated
+        // away in the few ms the settings fetch took (lazy routes hydrating,
+        // morning guard, etc.) and we don't want to clobber that.
+        if (fired.current) return;
+        if (!target || target === "/") return;
+        fired.current = true;
+        navigate(target, { replace: true });
+      } catch {
+        // ignore — falling back to Today on /
+      }
+    })();
+  }, [location, navigate]);
+
+  return null;
+}
+
 // Auto-redirect to /morning before 09:00 Australia/Melbourne if morning isn't done.
 function MorningGuard() {
   const [location, navigate] = useLocation();
@@ -222,6 +254,7 @@ function AuthGate() {
 
   return (
     <Router hook={useHashLocationStripQuery}>
+      <DefaultLandingRedirect />
       <MorningGuard />
       <Layout>
         <AppRouter />

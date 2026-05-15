@@ -4,9 +4,17 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, MapPin, CalendarCog, ChevronRight } from "lucide-react";
+import { NAV_ROUTES } from "@/components/Layout";
 
 interface SettingsView {
   adhd_tax_coefficient: number;
@@ -17,6 +25,8 @@ interface SettingsView {
   calendar_ics_url_masked: string;
   home_address?: string;
   maps_provider?: string;
+  // Stage 18 — user's chosen landing route. Falls back to "/" server-side.
+  defaultLandingRoute?: string;
 }
 
 interface TravelLocation {
@@ -39,12 +49,16 @@ export default function SettingsPage() {
   const [briefingTime, setBriefingTime] = useState("");
   const [icsUrl, setIcsUrl] = useState("");
   const [homeAddress, setHomeAddress] = useState("");
+  // Stage 18 — default landing route. Persisted immediately on change
+  // (not bundled into the Save button) so the picker behaves like a toggle.
+  const [defaultLandingRoute, setDefaultLandingRoute] = useState<string>("/");
 
   useEffect(() => {
     if (q.data) {
       setCoef(String(q.data.adhd_tax_coefficient));
       setBriefingTime(q.data.briefing_time);
       setHomeAddress(q.data.home_address ?? "");
+      setDefaultLandingRoute(q.data.defaultLandingRoute ?? "/");
     }
   }, [q.data]);
 
@@ -63,12 +77,72 @@ export default function SettingsPage() {
     toast({ title: "Settings saved" });
   };
 
+  const saveDefaultLandingRoute = async (next: string) => {
+    setDefaultLandingRoute(next);
+    try {
+      const res = await apiRequest("PATCH", "/api/settings", {
+        defaultLandingRoute: next,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`PATCH /api/settings failed: ${res.status} ${text.slice(0, 200)}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Default landing page saved" });
+    } catch (err) {
+      toast({
+        title: "Could not save landing page",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="px-5 md:px-8 py-8 md:py-10 max-w-2xl space-y-8">
       <header>
         <div className="text-xs uppercase tracking-wider text-muted-foreground">Settings</div>
         <h1 className="text-2xl font-semibold mt-1">Tune Buoy.</h1>
       </header>
+
+      <section
+        className="space-y-3 rounded-lg border bg-card p-5"
+        data-testid="section-default-landing"
+      >
+        <h2 className="text-sm font-semibold">Default landing page</h2>
+        <div className="space-y-1.5">
+          <Label htmlFor="default-landing">
+            The page Buoy opens to when you first load the app or open a new tab.
+          </Label>
+          <Select
+            value={defaultLandingRoute}
+            onValueChange={saveDefaultLandingRoute}
+          >
+            <SelectTrigger
+              id="default-landing"
+              data-testid="select-default-landing"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {NAV_ROUTES.map((r) => (
+                <SelectItem
+                  key={r.href}
+                  value={r.href}
+                  data-testid={`option-default-landing-${r.href.replace(/^\//, "") || "today"}`}
+                >
+                  {r.label}
+                  {r.href === "/" ? " (Today)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="text-xs text-muted-foreground">
+            Deep links to other pages still work — this only fires when you
+            land on the root URL.
+          </div>
+        </div>
+      </section>
 
       <section className="space-y-4 rounded-lg border bg-card p-5">
         <h2 className="text-sm font-semibold">Time</h2>

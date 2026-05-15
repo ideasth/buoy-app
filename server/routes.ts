@@ -55,6 +55,7 @@ import {
   setSetting,
   rotateToken,
   KEY,
+  isAllowedLandingRoute,
 } from "./app-settings";
 import {
   listPublicCalendarBlocks,
@@ -384,9 +385,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const masked = calendar_ics_url
       ? calendar_ics_url.replace(/\/\/.*@/, "//[secret]@")
       : "";
-    res.json({ ...safe, calendar_ics_url_masked: masked });
+    // Stage 18 — surface the default landing route from the KV table so the
+    // client can decide whether to redirect on first paint.
+    const defaultLandingRoute = getSetting(KEY.DEFAULT_LANDING_ROUTE) ?? "/";
+    res.json({
+      ...safe,
+      calendar_ics_url_masked: masked,
+      defaultLandingRoute,
+    });
   });
   app.patch("/api/settings", (req, res) => {
+    // Stage 18 — validate defaultLandingRoute against the server-side
+    // allow-list before doing anything else. A bad value short-circuits the
+    // whole patch so we don't half-apply other fields.
+    if ("defaultLandingRoute" in req.body) {
+      if (!isAllowedLandingRoute(req.body.defaultLandingRoute)) {
+        return res.status(400).json({ error: "invalid_route" });
+      }
+    }
+
     const allowed: any = {};
     const fields = [
       "adhd_tax_coefficient",
@@ -401,11 +418,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     ];
     for (const f of fields) if (f in req.body) allowed[f] = req.body[f];
     const merged = storage.updateSettings(allowed);
+
+    // Stage 18 — persist the validated landing route to the KV table.
+    if ("defaultLandingRoute" in req.body) {
+      setSetting(KEY.DEFAULT_LANDING_ROUTE, req.body.defaultLandingRoute);
+    }
+
     const { calendar_ics_url, passphrase_hash, ...safe } = merged;
     const masked = calendar_ics_url
       ? calendar_ics_url.replace(/\/\/.*@/, "//[secret]@")
       : "";
-    res.json({ ...safe, calendar_ics_url_masked: masked });
+    const defaultLandingRoute = getSetting(KEY.DEFAULT_LANDING_ROUTE) ?? "/";
+    res.json({
+      ...safe,
+      calendar_ics_url_masked: masked,
+      defaultLandingRoute,
+    });
   });
 
   // ---- Relationships (Stage 14b, 2026-05-12) ----

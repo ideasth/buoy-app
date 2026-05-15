@@ -62,7 +62,36 @@ export const KEY = {
   FAMILY_CALENDAR_USER: "family_calendar_user",
   FAMILY_CALENDAR_PASSWORD_HASH: "family_calendar_password_hash",
   FAMILY_CALENDAR_TOKEN: "family_calendar_token",
+  // Stage 18 — user-selected default landing route. Must be one of
+  // ALLOWED_LANDING_ROUTES below. Stored as a plain string in the KV table.
+  DEFAULT_LANDING_ROUTE: "default_landing_route",
 } as const;
+
+// Stage 18 — allow-list for the default landing route. Mirrors the sidebar's
+// NAV const in Layout.tsx (dividers excluded). The server validates incoming
+// PATCH values against this list so a stale or malicious client cannot poison
+// the stored value with a route that the SPA does not handle.
+export const ALLOWED_LANDING_ROUTES: readonly string[] = [
+  "/",
+  "/checkin",
+  "/calm",
+  "/capture",
+  "/coach",
+  "/calendar-planner",
+  "/morning",
+  "/evening",
+  "/review",
+  "/tasks",
+  "/email-status",
+  "/projects",
+  "/issues",
+  "/habits",
+  "/admin",
+] as const;
+
+export function isAllowedLandingRoute(value: unknown): value is string {
+  return typeof value === "string" && ALLOWED_LANDING_ROUTES.includes(value);
+}
 
 export type SettingsKey = (typeof KEY)[keyof typeof KEY];
 
@@ -90,6 +119,10 @@ function seedDefaults(db: Database.Database): void {
     { key: KEY.FAMILY_CALENDAR_USER, value: "" },
     { key: KEY.FAMILY_CALENDAR_PASSWORD_HASH, value: "" },
     { key: KEY.FAMILY_CALENDAR_TOKEN, value: randomBytes(32).toString("base64url") },
+    // Stage 18 — default landing route. "/" maps to Today; existing installs
+    // get this seeded on first boot so the server response always carries a
+    // value the client can read without a null-coalesce.
+    { key: KEY.DEFAULT_LANDING_ROUTE, value: "/" },
   ];
   const upsert = db.prepare(
     `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`,
