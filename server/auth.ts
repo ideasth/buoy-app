@@ -203,6 +203,12 @@ const SYNC_ALLOWLIST_PREFIXES = [
   // apex session cookie.  Allowlist the /cal/ prefix so the requireAuth
   // middleware doesn't reject calendar-app subscription requests.
   "/cal/",
+  // Stage 19: sibling LLM proxy. The /api/llm/* routes enforce their own
+  // gates (loopback + X-Sibling-Id + X-Sibling-Auth) inside
+  // server/llm-proxy-routes.ts, so requireAuth must let these through
+  // unconditionally. Public exposure is additionally blocked at Caddy
+  // (`/api/llm/* -> 404`) per Stage 19's defence-in-depth design.
+  "/api/llm/",
 ];
 
 export function isAllowlistedPath(path: string): boolean {

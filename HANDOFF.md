@@ -2,6 +2,22 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-19 (PM AEST) — Stage 19 follow-up: auth.ts allowlist fix
+
+**Why:** During the initial VPS rollout of Stage 19 we discovered that even loopback probes to `/api/llm/health` returned `401 {"error":"auth required"}` instead of reaching the proxy gates. The Stage 19 spec assumed `requireAuth` (the global session-auth middleware in `server/auth.ts`) would simply not match `/api/llm/*`, but in reality `requireAuth` rejects every `/api/*` path that isn't allowlisted. The `[llm-proxy]` log line never appeared because the proxy router was never reached.
+
+**Fix shipped:**
+- `server/auth.ts`: added `"/api/llm/"` to `SYNC_ALLOWLIST_PREFIXES` with a comment cross-referencing Stage 19's defence-in-depth design (proxy enforces its own loopback + sibling-id + sibling-auth gates; Caddy adds a public `/api/llm/* -> 404` deny).
+- `test/stage19-llm-proxy.test.ts`: new describe block "Stage 19 — auth.ts allowlist for /api/llm/*" (5 tests). Asserts `/api/llm/chat`, `/api/llm/health`, and `/api/llm/anything-else` are allowlisted; `/api/llmx/...` and `/api/tasks` are NOT (regression guard).
+
+**Operator follow-up after this commit lands:**
+1. `sudo -u jod /opt/buoy/ops/deploy.sh` on the VPS
+2. Re-export the proxy env vars + `pm2 restart buoy --update-env` (sudo -u jod strips them; see `stage19_vps_rollout.sh` Step 2c)
+3. Smoke test: loopback probe with X-Sibling-Id + X-Sibling-Auth → expect 200
+4. Then proceed to the Caddy patch (Step 3 of stage19_vps_rollout.sh)
+
+**Tests:** 511/511 passing (was 506). 45 Stage 19 tests now (was 40).
+
 ## 2026-05-16 (PM AEST) — Stage 19: Sibling LLM proxy (marieke-buoy + lachie-buoy)
 
 Buoy-side proxy that lets two sibling apps (`marieke-buoy`, `lachie-buoy`) borrow Buoy's Perplexity Sonar key over loopback, without ever seeing the key itself. Option A scope: proxy only, no sibling Caddy vhosts or DNS in this stage.

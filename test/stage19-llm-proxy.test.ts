@@ -408,3 +408,50 @@ describe("Stage 19 — routes module wiring", () => {
     expect(block).not.toMatch(/PROXY_SECRET/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage 19 follow-up (2026-05-19) — auth.ts allowlist regression guard.
+//
+// The Stage 19 spec assumed `requireAuth` would simply not match `/api/llm/*`
+// because it's a separate router. In reality, `requireAuth` is a global
+// middleware that intercepts every `/api/*` path that isn't allowlisted, and
+// returns `401 {"error":"auth required"}` before the proxy gates ever run.
+//
+// Discovered during the initial VPS rollout: anonymous loopback probes to
+// /api/llm/health returned 401 with `{"error":"auth required"}` instead of
+// the expected `{"error":"forbidden"}`. Fixed by adding `/api/llm/` to
+// SYNC_ALLOWLIST_PREFIXES in server/auth.ts. The proxy's own gates
+// (loopback + X-Sibling-Id + X-Sibling-Auth) take over from there.
+//
+// These tests guard against the allowlist entry being removed in a future
+// auth refactor (which would silently break the proxy again).
+// ---------------------------------------------------------------------------
+
+import { isAllowlistedPath } from "../server/auth";
+
+describe("Stage 19 — auth.ts allowlist for /api/llm/*", () => {
+  it("/api/llm/chat is allowlisted (proxy enforces its own gates)", () => {
+    expect(isAllowlistedPath("/api/llm/chat")).toBe(true);
+  });
+
+  it("/api/llm/health is allowlisted", () => {
+    expect(isAllowlistedPath("/api/llm/health")).toBe(true);
+  });
+
+  it("future /api/llm/* routes are also allowlisted by the prefix match", () => {
+    expect(isAllowlistedPath("/api/llm/chat/stream")).toBe(true);
+    expect(isAllowlistedPath("/api/llm/models")).toBe(true);
+  });
+
+  it("does NOT allowlist sibling paths that look similar but aren't /api/llm/", () => {
+    expect(isAllowlistedPath("/api/llmx/chat")).toBe(false);
+    expect(isAllowlistedPath("/api/llm")).toBe(false); // no trailing slash, not the prefix
+    expect(isAllowlistedPath("/api/anything-else")).toBe(false);
+  });
+
+  it("does NOT regress other guarded paths", () => {
+    // Sanity: things that should still require auth.
+    expect(isAllowlistedPath("/api/tasks")).toBe(false);
+    expect(isAllowlistedPath("/api/coach/turn")).toBe(false);
+  });
+});
