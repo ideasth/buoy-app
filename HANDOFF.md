@@ -1287,6 +1287,24 @@ No unexpected output. Diagnostic ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac` c
 
 ---
 
+## 2026-05-22 (10:08 AEST) — Calendar week-banner alignment fix — shipped
+
+**What changed**
+- `build_calendars.py`: banner SUMMARY now reads `SH Wk X · PH Wk Y · Kids Wk K · EH Wk E` (was `Sandy Wk X · Pen Wk Y`).
+- Banner helpers now anchor on `NEW_ANCHOR = 2026-05-04` and derive SH/PH/Kids/EH from a single 4-week index, matching `MasterTemplate-Current-Proposed-EH-PH-SH-Kids-21052026.xlsx` rows 5-14 (Bayside-Current-Proposed). 4 May = 1/4/1/1, 11 May = 2/1/2/2, 18 May = 3/2/1/1, 25 May = 4/3/2/2.
+- `client/src/pages/CalendarPlanner.tsx` line 874: "anchor Mon 25 May 2026" -> "anchor Mon 4 May 2026 = SH wk1 / PH wk4 / Kids wk1 / EH wk1".
+- Pre-transition (pre-4-May-2026) banner numbers were left to extrapolate backwards from NEW_ANCHOR; the user does not regenerate past weeks anyway.
+
+**Verification**
+- Python spot-check matched expected SH/PH/Kids/EH for w/c 4 May, 11 May, 18 May, 25 May, 1 Jun.
+- ICS regenerated; sample DTSTART rows confirmed (20260504 -> SH Wk 1 · PH Wk 4 · Kids Wk 1 · EH Wk 1, etc.).
+- sync_runner.py copied bundles into publish/; push_to_github.sh reported pushed; deploy_website preserved asset_id 4ea3a4f0-794c-4263-b1db-30912857b18b.
+
+**Buoy deploy**
+- npm ci + npm run build OK; bundle index-CEsFXzG6.js 900.57 kB. Pending VPS deploy via `sudo -u jod /opt/buoy/ops/deploy.sh` against this commit.
+
+---
+
 ## 2026-05-08 (17:05 AEST) — Feature 3 (available hours this week) — source merged, deploy STILL gated
 
 **What changed (source only — NOT live yet)**

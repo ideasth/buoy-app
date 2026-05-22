@@ -922,7 +922,7 @@ function TemplateSections() {
       title: "Kids — calendar templates",
       group: "family",
       items: [
-        { name: "Kids-with-us",    summary: "Banner days when the kids are with us. Driven by 4-week NEW_FAMILY rotation (anchor Mon 25 May 2026), school-holiday 50:50 alternation (Term 1 2026 hols = Oliver-first), and recurring special days (Mother's/Father's Day, Daniel & Marieke birthdays)." },
+        { name: "Kids-with-us",    summary: "Banner days when the kids are with us. Driven by 4-week NEW_FAMILY rotation (anchor Mon 4 May 2026 = SH wk1 / PH wk4 / Kids wk1 / EH wk1), school-holiday 50:50 alternation (Term 1 2026 hols = Oliver-first), and recurring special days (Mother's/Father's Day, Daniel & Marieke birthdays)." },
         { name: "Kids-Activities", summary: "Combined Hilde + Axel activities, pre-fixed with 'Hilde:' / 'Axel:'. Sorted by start." },
         { name: "Kids-Term-Dates", summary: "School term + holiday banners for both schools (Hilde @ NMPS, Axel @ UHS)." },
         { name: "Public Holidays", summary: "Victorian public holidays, plus Mother's Day, Father's Day, family birthdays." },
