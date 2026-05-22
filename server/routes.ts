@@ -1041,7 +1041,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     const cur = storage.getMorningByDate(date)!;
     const missing: string[] = [];
-    if (!cur.energy) missing.push("energy");
+    // Reflection chips: align with the client-side reflectDone gate
+    // in Morning.tsx (~line 327: !!energyLabel && !!arousalState).
+    // The energy chip writes to energyLabel (low | moderate | high).
+    // The legacy `energy` integer column is no longer written by the UI.
+    if (!cur.energyLabel) missing.push("energy");
+    // The arousal chip writes to the legacy `state` text column on the
+    // morningRoutines table (Morning.tsx setArousalAndSave queues a
+    // patch on `state`). The `arousalState` column lives on the
+    // reflections table only — do not look for it here.
+    if (!cur.state) missing.push("arousalState");
     if (!cur.braindumpRaw) missing.push("braindumpRaw");
     if (ids.length === 0) missing.push("topThreeIds");
 
