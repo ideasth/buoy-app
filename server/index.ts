@@ -111,17 +111,20 @@ app.use((req, res, next) => {
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Bind to 127.0.0.1 by default so the port is only reachable via the
+  // local Caddy reverse proxy. Set HOST=0.0.0.0 in the environment to
+  // override (e.g. when running inside a container that needs external
+  // reachability).
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST ?? "127.0.0.1";
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host,
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${host}:${port}`);
     },
   );
 })();
