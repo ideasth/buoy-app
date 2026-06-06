@@ -237,7 +237,18 @@ if [[ $HEALTH_OK -ne 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Record success
+# 7. Regenerate share summary (non-fatal)
+# ---------------------------------------------------------------------------
+
+log "Regenerating share summary (non-fatal)"
+if node scripts/generate-share-summary.mjs --mode=post-deploy; then
+  log "Share summary regenerated"
+else
+  log "WARNING: share summary regeneration reported a non-fatal issue"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Record success
 # ---------------------------------------------------------------------------
 
 echo "$CURRENT_COMMIT" > "$BACKUP_DIR/last-good-commit"
