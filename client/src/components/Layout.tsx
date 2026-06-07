@@ -29,6 +29,7 @@ export const NAV: NavItem[] = [
   { divider: true },
   { href: "/tasks", label: "Tasks/Priorities" },
   { href: "/email-status", label: "Email Status" },
+  { href: "/pmt", label: "PMT" },
   { href: "/projects", label: "Projects" },
   { href: "/issues", label: "Issues" },
   { href: "/habits", label: "Habits" },

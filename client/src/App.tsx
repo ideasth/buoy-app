@@ -19,6 +19,7 @@ import CheckIn from "@/pages/CheckIn";
 import EmailStatus from "@/pages/EmailStatus";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
+import PmtDashboard from "@/pages/PmtDashboard";
 import Issues from "@/pages/Issues";
 import Login from "@/pages/Login";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -109,6 +110,7 @@ function AppRouter() {
       <Route path="/email-status" component={EmailStatus} />
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/projects" component={Projects} />
+      <Route path="/pmt" component={PmtDashboard} />
       <Route path="/tasks" component={Priorities} />
       {/* Stage 17c legacy redirect: /priorities → /tasks. */}
       <Route path="/priorities" component={PrioritiesRedirect} />

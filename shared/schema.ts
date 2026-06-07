@@ -494,6 +494,19 @@ export const projects = sqliteTable("projects", {
   isPrimaryFutureIncome: integer("is_primary_future_income").notNull().default(0), // 0/1 flag — at most one project should be flagged
   communityBenefit: integer("community_benefit"), // 1-5; null = unscored
   professionalKudos: integer("professional_kudos"), // 1-5; null = unscored
+  // PMT extension columns (Stage 20). Additive; legacy MS To Do sync columns untouched.
+  // kind: project | sub-project | issue
+  // pmt_status: Open | Active | Complete | Parked
+  // file_status: present | partial | needs files
+  kind: text("kind").notNull().default("project"),
+  parentId: integer("parent_id"),
+  pmtLabel: text("pmt_label"),
+  pmtStatus: text("pmt_status"),
+  nextAction: text("next_action"),
+  fileStatus: text("file_status"),
+  latestThreadUrl: text("latest_thread_url"),
+  pmtNotes: text("pmt_notes"),
+  seedKey: text("seed_key"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

@@ -1460,6 +1460,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+  // Stage 20 — PMT routes. Registered BEFORE /api/projects/:id to avoid
+  // path collisions with the /api/pmt/* prefix.
+  app.get("/api/pmt/dashboard", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    try {
+      res.json(storage.getPmtDashboard());
+    } catch (err) {
+      res.status(500).json({ error: "dashboard_error" });
+    }
+  });
+
+  app.get("/api/pmt/items", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    try {
+      const opts: { fileStatus?: string; label?: string } = {};
+      if (typeof req.query.fileStatus === "string") opts.fileStatus = req.query.fileStatus;
+      if (typeof req.query.label === "string") opts.label = req.query.label;
+      res.json(storage.listPmtItems(opts));
+    } catch (err) {
+      res.status(500).json({ error: "items_error" });
+    }
+  });
+
   app.get("/api/projects/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const id = parseInt(req.params.id, 10);
@@ -1488,9 +1511,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "isPrimaryFutureIncome",
       "communityBenefit",
       "professionalKudos",
+      // Stage 20 — PMT fields
+      "kind",
+      "parentId",
+      "pmtLabel",
+      "pmtStatus",
+      "nextAction",
+      "fileStatus",
+      "latestThreadUrl",
+      "pmtNotes",
     ];
     const updates: any = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+
+    // Stage 20 — PMT field validation.
+    if ("fileStatus" in updates && updates.fileStatus != null) {
+      if (!["present", "partial", "needs files"].includes(updates.fileStatus)) {
+        return res.status(400).json({ error: "invalid_file_status" });
+      }
+    }
+    if ("pmtStatus" in updates && updates.pmtStatus != null) {
+      if (!["Open", "Active", "Complete", "Parked"].includes(updates.pmtStatus)) {
+        return res.status(400).json({ error: "invalid_pmt_status" });
+      }
+    }
+    if ("kind" in updates && updates.kind != null) {
+      if (!["project", "sub-project", "issue"].includes(updates.kind)) {
+        return res.status(400).json({ error: "invalid_kind" });
+      }
+    }
 
     // Validate ranges where applicable.
     if ("currentIncomePerHour" in updates && updates.currentIncomePerHour != null) {

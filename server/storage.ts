@@ -80,8 +80,9 @@ import type {
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, gte, lte, isNull, sql } from "drizzle-orm";
+import { eq, and, desc, gte, lte, isNull, isNotNull, sql } from "drizzle-orm";
 import { evaluateEmailPriority } from "@shared/email-priority";
+import { groupPmtItems, type DashboardShape } from "./pmt-dashboard";
 import {
   MORNING_LABEL_TO_NUM,
   MORNING_NUM_DRIZZLE_KEY,
@@ -565,6 +566,16 @@ for (const stmt of [
   "ALTER TABLE projects ADD COLUMN is_primary_future_income INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE projects ADD COLUMN community_benefit INTEGER",
   "ALTER TABLE projects ADD COLUMN professional_kudos INTEGER",
+  // Stage 20 — PMT extension columns. Additive; legacy MS To Do sync columns untouched.
+  "ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'",
+  "ALTER TABLE projects ADD COLUMN parent_id INTEGER",
+  "ALTER TABLE projects ADD COLUMN pmt_label TEXT",
+  "ALTER TABLE projects ADD COLUMN pmt_status TEXT",
+  "ALTER TABLE projects ADD COLUMN next_action TEXT",
+  "ALTER TABLE projects ADD COLUMN file_status TEXT",
+  "ALTER TABLE projects ADD COLUMN latest_thread_url TEXT",
+  "ALTER TABLE projects ADD COLUMN pmt_notes TEXT",
+  "ALTER TABLE projects ADD COLUMN seed_key TEXT",
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
@@ -672,6 +683,131 @@ for (const stmt of [
   } catch {
     // Column already exists — ignore.
   }
+}
+
+// Stage 20 — PMT indexes (best-effort, safe to run on every boot).
+try {
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_seed_key ON projects(seed_key) WHERE seed_key IS NOT NULL`);
+} catch { /* index already exists */ }
+try {
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_projects_pmt_label ON projects(pmt_label)`);
+} catch { /* index already exists */ }
+try {
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_projects_parent_id ON projects(parent_id)`);
+} catch { /* index already exists */ }
+
+// Stage 20 (2026-07) — Seed PMT governance register rows.
+// Must run AFTER the ALTER TABLE loop above so the PMT columns exist.
+// Uses INSERT OR IGNORE keyed on seed_key. Fully idempotent.
+try {
+  const pmtInsert = sqlite.prepare(`
+    INSERT OR IGNORE INTO projects
+      (name, status, priority, description, kind, parent_id, pmt_label, pmt_status,
+       next_action, file_status, latest_thread_url, pmt_notes, seed_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+  `);
+
+  const pmtSeedTx = sqlite.transaction(() => {
+    const now2 = Date.now();
+    // ---- Bayside Health ----
+    pmtInsert.run(
+      'Peninsula Health Formal complaint', 'active', 'low', '', 'issue', null,
+      'Bayside Health', 'Active',
+      'Confirm current complaint pack, supporting correspondence, and deadline/status in thread notes.',
+      'partial',
+      'bayside-health/peninsula-health-formal-complaint', now2, now2,
+    );
+    pmtInsert.run(
+      'Monash Health Formal complaint and CEO escalation', 'active', 'low', '', 'issue', null,
+      'Bayside Health', 'Active',
+      'Confirm complaint documents and CEO-escalation bundle are linked and current.',
+      'partial',
+      'bayside-health/monash-health-formal-complaint-and-ceo-escalation', now2, now2,
+    );
+    pmtInsert.run(
+      'FTE and duties at Sandringham Hospital', 'active', 'low', '', 'issue', null,
+      'Bayside Health', 'Active',
+      'Confirm current FTE/duties document and identify required follow-up action.',
+      'partial',
+      'bayside-health/fte-and-duties-at-sandringham-hospital', now2, now2,
+    );
+    pmtInsert.run(
+      "Bayside Health CEO Escalation (initial and further) re: Women's Health leadership and governance",
+      'active', 'low', '', 'issue', null,
+      'Bayside Health', 'Active',
+      'Confirm all escalation correspondence and governance notes are linked.',
+      'partial',
+      'bayside-health/bayside-health-ceo-escalation', now2, now2,
+    );
+    pmtInsert.run(
+      'Bayside Health LHSN pelvic floor service proposal', 'active', 'low', '', 'project', null,
+      'Bayside Health', 'Open',
+      'Create or import proposal base document into the Space and link the canonical thread.',
+      'needs files',
+      'bayside-health/lhsn-pelvic-floor-service-proposal', now2, now2,
+    );
+    // ---- Victoria S&Q Infrastructure ----
+    pmtInsert.run(
+      'Letter to Health Minister re: concerns regarding the Department of Health restructure and risks to patient safety, safety governance and statewide quality improvement',
+      'active', 'low', '', 'issue', null,
+      'Victoria S&Q Infrastructure', 'Active',
+      'Confirm current letter draft/final and any response-tracking material.',
+      'partial',
+      'victoria-sq-infrastructure/letter-to-health-minister-department-restructure', now2, now2,
+    );
+    pmtInsert.run(
+      'SAMM projects', 'active', 'low', '', 'project', null,
+      'Victoria S&Q Infrastructure', 'Active',
+      null,
+      'partial',
+      'victoria-sq-infrastructure/samm-projects', now2, now2,
+    );
+    // Look up SAMM parent_id for sub-projects.
+    const sammRow = sqlite.prepare(
+      "SELECT id FROM projects WHERE seed_key = 'victoria-sq-infrastructure/samm-projects'"
+    ).get() as { id: number } | undefined;
+    const sammId = sammRow?.id ?? null;
+    pmtInsert.run(
+      'AIHW SAMM scoping', 'active', 'low', '', 'sub-project', sammId,
+      'Victoria S&Q Infrastructure', 'Open',
+      'Create or import a scoping note and link the canonical discussion thread.',
+      'needs files',
+      'victoria-sq-infrastructure/samm-projects/aihw-samm-scoping', now2, now2,
+    );
+    pmtInsert.run(
+      'Routine use of administrative data for SAMM', 'active', 'low', '', 'sub-project', sammId,
+      'Victoria S&Q Infrastructure', 'Open',
+      'Create or import a concept note and define the first concrete analysis step.',
+      'needs files',
+      'victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm', now2, now2,
+    );
+    pmtInsert.run(
+      'PSPI project', 'active', 'low', '', 'project', null,
+      'Victoria S&Q Infrastructure', 'Open',
+      'Create or import a project outline and link the current thread.',
+      'needs files',
+      'victoria-sq-infrastructure/pspi-project', now2, now2,
+    );
+    // ---- Private Hospital Surgical Governance and Auditing ----
+    pmtInsert.run(
+      'Epworth', 'active', 'low', '', 'project', null,
+      'Private Hospital Surgical Governance and Auditing', 'Active',
+      'Confirm current governance/audit files and define the next concrete step.',
+      'partial',
+      'private-hospital-surgical-governance/epworth', now2, now2,
+    );
+    pmtInsert.run(
+      'Australian Government', 'active', 'low', '', 'project', null,
+      'Private Hospital Surgical Governance and Auditing', 'Open',
+      'Create or import a project stub and identify the first deliverable.',
+      'needs files',
+      'private-hospital-surgical-governance/australian-government', now2, now2,
+    );
+  });
+  pmtSeedTx();
+} catch (err) {
+  // Best-effort; never fail boot on seed.
+  console.warn('[storage] PMT seed warning:', err);
 }
 
 // Stage 5/6/7 numerical tracking — mapping moved to @shared/checkin-mapping
@@ -1753,6 +1889,42 @@ export class Storage {
     db.delete(projectComponents).where(eq(projectComponents.projectId, id)).run();
     db.delete(projectPhases).where(eq(projectPhases.projectId, id)).run();
     db.delete(projects).where(eq(projects.id, id)).run();
+  }
+
+  // ===== PMT helpers (Stage 20) =====
+
+  listPmtItems(opts?: { fileStatus?: string; label?: string }): Project[] {
+    let q = db.select().from(projects).where(isNotNull(projects.pmtLabel));
+    if (opts?.fileStatus) {
+      q = (db.select().from(projects).where(
+        and(isNotNull(projects.pmtLabel), eq(projects.fileStatus, opts.fileStatus)),
+      ) as any);
+    }
+    if (opts?.label && !opts?.fileStatus) {
+      q = (db.select().from(projects).where(
+        and(isNotNull(projects.pmtLabel), eq(projects.pmtLabel, opts.label)),
+      ) as any);
+    }
+    if (opts?.label && opts?.fileStatus) {
+      q = (db.select().from(projects).where(
+        and(
+          isNotNull(projects.pmtLabel),
+          eq(projects.fileStatus, opts.fileStatus),
+          eq(projects.pmtLabel, opts.label),
+        ),
+      ) as any);
+    }
+    return (q as any).orderBy(projects.pmtLabel, projects.name).all();
+  }
+
+  getPmtDashboard(): DashboardShape {
+    const rows = db
+      .select()
+      .from(projects)
+      .where(isNotNull(projects.pmtLabel))
+      .all();
+    // Cast to PmtRow shape (Project has all required fields).
+    return groupPmtItems(rows as any);
   }
 
   listProjectPhases(projectId: number): ProjectPhase[] {
