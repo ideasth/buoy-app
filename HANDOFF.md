@@ -2,6 +2,35 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-06-08 (AM AEST) — Stage 20: PMT projects dashboard + governance register seeded
+
+**Why:** First end-user surface for the PMT (Project Management Tool) model documented in CONTEXT.md. Establishes Label > Project > Sub-project > Issue hierarchy on the existing `projects` table, seeds the 12 documented governance items, and exposes a grouped-by-label dashboard with file-status surfacing.
+
+**Shipped (commit `e2d7160`, bundle `3ef3f244899600c87a5e22a1c77c482b`):**
+- `shared/schema.ts`: 9 PMT columns added to `projects` (`kind`, `parentId`, `pmtLabel`, `pmtStatus`, `nextAction`, `fileStatus`, `latestThreadUrl`, `pmtNotes`, `seedKey`). Additive only — MS To Do sync untouched.
+- `server/storage.ts`: idempotent `ALTER TABLE ADD COLUMN` migration + 3 indexes (`kind`, `pmt_label`, `parent_id`) + `seed_key` UNIQUE partial index. Boot-seed inserts the 12 documented rows via `INSERT OR IGNORE` keyed on `seed_key`. New helpers `listPmtItems()` and `getPmtDashboard()`.
+- `server/pmt-dashboard.ts`: pure helper `groupPmtItems()` — testable seam for the dashboard.
+- `server/routes.ts`: `GET /api/pmt/dashboard`, `GET /api/pmt/items`. PATCH `/api/projects/:id` extended with the 8 mutable PMT fields and three new validation strings (`invalid_file_status`, `invalid_pmt_status`, `invalid_kind`).
+- `client/src/pages/PmtDashboard.tsx`: dashboard UI, grouped by label, status counts, `needs files` badges, click-through to project detail.
+- `client/src/App.tsx`, `client/src/components/Layout.tsx`, `server/app-settings.ts`: route `/pmt`, sidebar entry "PMT" inserted before "Projects" (Stage 18 NAV test untouched — first 4 hrefs + first divider preserved), `/pmt` added to `ALLOWED_LANDING_ROUTES`.
+- Tests: `test/pmt-schema.test.ts` (6), `test/pmt-dashboard.test.ts` (9), `test/pmt-routes.test.ts` (11). Total 544/544 passing across 47 suites (was 528).
+
+**Build prerequisite — note for next deploy:** the tree now also expects `server/baked-llm-keys.ts` (gitignored stub, parallel to `baked-secret.ts`). The current `deploy.sh` is tolerant — logs `No LLM keys file at /opt/buoy/.secrets/baked-llm-keys.ts — leaving server/baked-llm-keys.ts as-is` — but if the file is ever deleted from the VPS working tree, typecheck will fail. Stub contents:
+```ts
+// filepath: server/baked-llm-keys.ts
+export const BAKED_LLM_KEYS: Record<string, string> = {};
+```
+
+**Smoke verification (post-deploy 2026-06-08 06:32 AEST):**
+- `https://buoy.thinhalo.com/api/health` → 200 `{"ok":true}`
+- `https://anchor.thinhalo.com/api/health` (back-compat header) → 200 `{"ok":true}`
+- `GET /api/pmt/items` → 12 rows
+- `GET /api/pmt/dashboard` → grouped by 3 labels (Bayside Health, Victoria S&Q Infrastructure, Private Hospital Surgical Governance and Auditing), 5 items currently `needs files`
+
+**Operator follow-up:**
+1. Visit `https://buoy.thinhalo.com/pmt` and backfill `latestThreadUrl` on the four Active Bayside Health issues via the project-detail patch.
+2. Optional: upload `/home/user/workspace/PMT_STATUS_REGISTER.md` to the Life Management Space as a searchable mirror.
+
 ## 2026-05-19 (PM AEST) — Stage 19 follow-up: auth.ts allowlist fix
 
 **Why:** During the initial VPS rollout of Stage 19 we discovered that even loopback probes to `/api/llm/health` returned `401 {"error":"auth required"}` instead of reaching the proxy gates. The Stage 19 spec assumed `requireAuth` (the global session-auth middleware in `server/auth.ts`) would simply not match `/api/llm/*`, but in reality `requireAuth` rejects every `/api/*` path that isn't allowlisted. The `[llm-proxy]` log line never appeared because the proxy router was never reached.
