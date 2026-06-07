@@ -56,6 +56,13 @@ function applyProjectsMigrations(db: Database.Database): void {
   }
 }
 
+// Apply the Open->Active migration (mirrors server/storage.ts boot-time migration).
+function applyOpenMigration(db: Database.Database): void {
+  try {
+    db.prepare("UPDATE projects SET pmt_status='Active' WHERE pmt_status='Open'").run();
+  } catch { /* column not yet present — harmless */ }
+}
+
 function applySeed(db: Database.Database): void {
   const now = Date.now();
   const pmtInsert = db.prepare(`
@@ -71,18 +78,21 @@ function applySeed(db: Database.Database): void {
     pmtInsert.run('Monash Health Formal complaint and CEO escalation', 'active', 'low', '', 'issue', null, 'Bayside Health', 'Active', 'Confirm complaint documents and CEO-escalation bundle are linked and current.', 'partial', 'bayside-health/monash-health-formal-complaint-and-ceo-escalation', now, now);
     pmtInsert.run('FTE and duties at Sandringham Hospital', 'active', 'low', '', 'issue', null, 'Bayside Health', 'Active', 'Confirm current FTE/duties document and identify required follow-up action.', 'partial', 'bayside-health/fte-and-duties-at-sandringham-hospital', now, now);
     pmtInsert.run("Bayside Health CEO Escalation (initial and further) re: Women's Health leadership and governance", 'active', 'low', '', 'issue', null, 'Bayside Health', 'Active', 'Confirm all escalation correspondence and governance notes are linked.', 'partial', 'bayside-health/bayside-health-ceo-escalation', now, now);
-    pmtInsert.run('Bayside Health LHSN pelvic floor service proposal', 'active', 'low', '', 'project', null, 'Bayside Health', 'Open', 'Create or import proposal base document into the Space and link the canonical thread.', 'needs files', 'bayside-health/lhsn-pelvic-floor-service-proposal', now, now);
+    // Previously Open, now Active after status unification.
+    pmtInsert.run('Bayside Health LHSN pelvic floor service proposal', 'active', 'low', '', 'project', null, 'Bayside Health', 'Active', 'Create or import proposal base document into the Space and link the canonical thread.', 'needs files', 'bayside-health/lhsn-pelvic-floor-service-proposal', now, now);
     // Victoria S&Q Infrastructure
     pmtInsert.run('Letter to Health Minister re: concerns regarding the Department of Health restructure and risks to patient safety, safety governance and statewide quality improvement', 'active', 'low', '', 'issue', null, 'Victoria S&Q Infrastructure', 'Active', 'Confirm current letter draft/final and any response-tracking material.', 'partial', 'victoria-sq-infrastructure/letter-to-health-minister-department-restructure', now, now);
     pmtInsert.run('SAMM projects', 'active', 'low', '', 'project', null, 'Victoria S&Q Infrastructure', 'Active', null, 'partial', 'victoria-sq-infrastructure/samm-projects', now, now);
     const sammRow = db.prepare("SELECT id FROM projects WHERE seed_key = 'victoria-sq-infrastructure/samm-projects'").get() as { id: number } | undefined;
     const sammId = sammRow?.id ?? null;
-    pmtInsert.run('AIHW SAMM scoping', 'active', 'low', '', 'sub-project', sammId, 'Victoria S&Q Infrastructure', 'Open', 'Create or import a scoping note and link the canonical discussion thread.', 'needs files', 'victoria-sq-infrastructure/samm-projects/aihw-samm-scoping', now, now);
-    pmtInsert.run('Routine use of administrative data for SAMM', 'active', 'low', '', 'sub-project', sammId, 'Victoria S&Q Infrastructure', 'Open', 'Create or import a concept note and define the first concrete analysis step.', 'needs files', 'victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm', now, now);
-    pmtInsert.run('PSPI project', 'active', 'low', '', 'project', null, 'Victoria S&Q Infrastructure', 'Open', 'Create or import a project outline and link the current thread.', 'needs files', 'victoria-sq-infrastructure/pspi-project', now, now);
+    // Previously Open, now Active.
+    pmtInsert.run('AIHW SAMM scoping', 'active', 'low', '', 'sub-project', sammId, 'Victoria S&Q Infrastructure', 'Active', 'Create or import a scoping note and link the canonical discussion thread.', 'needs files', 'victoria-sq-infrastructure/samm-projects/aihw-samm-scoping', now, now);
+    pmtInsert.run('Routine use of administrative data for SAMM', 'active', 'low', '', 'sub-project', sammId, 'Victoria S&Q Infrastructure', 'Active', 'Create or import a concept note and define the first concrete analysis step.', 'needs files', 'victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm', now, now);
+    pmtInsert.run('PSPI project', 'active', 'low', '', 'project', null, 'Victoria S&Q Infrastructure', 'Active', 'Create or import a project outline and link the current thread.', 'needs files', 'victoria-sq-infrastructure/pspi-project', now, now);
     // Private Hospital Surgical Governance and Auditing
     pmtInsert.run('Epworth', 'active', 'low', '', 'project', null, 'Private Hospital Surgical Governance and Auditing', 'Active', 'Confirm current governance/audit files and define the next concrete step.', 'partial', 'private-hospital-surgical-governance/epworth', now, now);
-    pmtInsert.run('Australian Government', 'active', 'low', '', 'project', null, 'Private Hospital Surgical Governance and Auditing', 'Open', 'Create or import a project stub and identify the first deliverable.', 'needs files', 'private-hospital-surgical-governance/australian-government', now, now);
+    // Previously Open, now Active.
+    pmtInsert.run('Australian Government', 'active', 'low', '', 'project', null, 'Private Hospital Surgical Governance and Auditing', 'Active', 'Create or import a project stub and identify the first deliverable.', 'needs files', 'private-hospital-surgical-governance/australian-government', now, now);
   });
   tx();
 }
@@ -121,7 +131,7 @@ describe("PMT schema migrations", () => {
     expect(c).toBe(12);
   });
 
-  it("seeds rows with correct pmt_label, kind, pmt_status, file_status", () => {
+  it("seeds rows with correct pmt_label, kind, pmt_status, file_status (no Open rows)", () => {
     const db = setupDb();
     const rows = db.prepare(
       "SELECT name, pmt_label, kind, pmt_status, file_status FROM projects WHERE pmt_label IS NOT NULL ORDER BY seed_key"
@@ -134,9 +144,10 @@ describe("PMT schema migrations", () => {
     expect(peninsula!.pmt_status).toBe("Active");
     expect(peninsula!.file_status).toBe("partial");
 
+    // Previously Open — now Active.
     const lhsn = rows.find((r) => r.name === "Bayside Health LHSN pelvic floor service proposal");
     expect(lhsn).toBeTruthy();
-    expect(lhsn!.pmt_status).toBe("Open");
+    expect(lhsn!.pmt_status).toBe("Active");
     expect(lhsn!.file_status).toBe("needs files");
     expect(lhsn!.kind).toBe("project");
 
@@ -151,6 +162,10 @@ describe("PMT schema migrations", () => {
     expect(epworth!.kind).toBe("project");
     expect(epworth!.pmt_status).toBe("Active");
     expect(epworth!.file_status).toBe("partial");
+
+    // No Open rows anywhere.
+    const openRows = rows.filter((r) => r.pmt_status === "Open");
+    expect(openRows).toHaveLength(0);
   });
 
   it("SAMM sub-projects have parent_id pointing to the SAMM project row", () => {
@@ -173,5 +188,27 @@ describe("PMT schema migrations", () => {
     applySeed(db); // second run
     const { c } = db.prepare("SELECT COUNT(*) AS c FROM projects WHERE pmt_label IS NOT NULL").get() as { c: number };
     expect(c).toBe(12);
+  });
+
+  it("Open->Active migration converts a pre-existing Open row to Active", () => {
+    // Simulate a DB that was seeded before the status unification.
+    const db = new Database(":memory:");
+    applyProjectsMigrations(db);
+    // Pre-seed a row with pmt_status='Open' directly (bypassing the seed function).
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO projects (name, status, priority, description, kind, pmt_label, pmt_status, created_at, updated_at, seed_key) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).run("Old Open Project", "active", "low", "", "project", "Bayside Health", "Open", now, now, "test/old-open-project");
+
+    // Verify it starts as Open.
+    const before = db.prepare("SELECT pmt_status FROM projects WHERE seed_key='test/old-open-project'").get() as any;
+    expect(before.pmt_status).toBe("Open");
+
+    // Apply the migration (mirrors server/storage.ts boot-time behaviour).
+    applyOpenMigration(db);
+
+    // After migration, the row should be Active.
+    const after = db.prepare("SELECT pmt_status FROM projects WHERE seed_key='test/old-open-project'").get() as any;
+    expect(after.pmt_status).toBe("Active");
   });
 });

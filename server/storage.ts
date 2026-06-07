@@ -685,6 +685,11 @@ for (const stmt of [
   }
 }
 
+// PMT status migration — retire 'Open', replace with 'Active'. Idempotent.
+try {
+  sqlite.prepare(`UPDATE projects SET pmt_status='Active' WHERE pmt_status='Open'`).run();
+} catch (e) { /* harmless if column not yet present */ }
+
 // Stage 20 — PMT indexes (best-effort, safe to run on every boot).
 try {
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_seed_key ON projects(seed_key) WHERE seed_key IS NOT NULL`);
@@ -741,7 +746,7 @@ try {
     );
     pmtInsert.run(
       'Bayside Health LHSN pelvic floor service proposal', 'active', 'low', '', 'project', null,
-      'Bayside Health', 'Open',
+      'Bayside Health', 'Active',
       'Create or import proposal base document into the Space and link the canonical thread.',
       'needs files',
       'bayside-health/lhsn-pelvic-floor-service-proposal', now2, now2,
@@ -769,21 +774,21 @@ try {
     const sammId = sammRow?.id ?? null;
     pmtInsert.run(
       'AIHW SAMM scoping', 'active', 'low', '', 'sub-project', sammId,
-      'Victoria S&Q Infrastructure', 'Open',
+      'Victoria S&Q Infrastructure', 'Active',
       'Create or import a scoping note and link the canonical discussion thread.',
       'needs files',
       'victoria-sq-infrastructure/samm-projects/aihw-samm-scoping', now2, now2,
     );
     pmtInsert.run(
       'Routine use of administrative data for SAMM', 'active', 'low', '', 'sub-project', sammId,
-      'Victoria S&Q Infrastructure', 'Open',
+      'Victoria S&Q Infrastructure', 'Active',
       'Create or import a concept note and define the first concrete analysis step.',
       'needs files',
       'victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm', now2, now2,
     );
     pmtInsert.run(
       'PSPI project', 'active', 'low', '', 'project', null,
-      'Victoria S&Q Infrastructure', 'Open',
+      'Victoria S&Q Infrastructure', 'Active',
       'Create or import a project outline and link the current thread.',
       'needs files',
       'victoria-sq-infrastructure/pspi-project', now2, now2,
@@ -798,7 +803,7 @@ try {
     );
     pmtInsert.run(
       'Australian Government', 'active', 'low', '', 'project', null,
-      'Private Hospital Surgical Governance and Auditing', 'Open',
+      'Private Hospital Surgical Governance and Auditing', 'Active',
       'Create or import a project stub and identify the first deliverable.',
       'needs files',
       'private-hospital-surgical-governance/australian-government', now2, now2,
@@ -2973,6 +2978,40 @@ export class Storage {
 }
 
 export const storage = new Storage();
+
+// PMT write-through helpers — pure functions, exported for testing.
+
+/**
+ * Returns the legacy `status` column value that should be written
+ * whenever pmtStatus changes. Complete maps to 'active' so that the
+ * MS To Do list is NOT archived when a project is finished.
+ */
+export function legacyStatusForPmtStatus(pmt: string): 'active' | 'parked' {
+  return pmt === 'Parked' ? 'parked' : 'active';
+}
+
+/**
+ * Returns the new pmtStatus that should be written when the legacy
+ * `status` column is patched directly.
+ *
+ * Rules:
+ * - If the item has no pmtStatus (null), don't invent one.
+ * - If current pmtStatus is 'Complete' and legacy becomes 'active',
+ *   leave pmtStatus as 'Complete' (prevents un-completing via MS To Do).
+ * - Otherwise, map parked -> 'Parked', active -> 'Active'.
+ */
+export function pmtStatusForLegacyStatus(
+  legacy: string,
+  currentPmtStatus: string | null
+): string | null {
+  // If item isn't PMT-tracked, don't invent a pmtStatus.
+  if (currentPmtStatus == null) return null;
+  // Don't un-complete a Complete item just because legacy status is 'active'.
+  if (currentPmtStatus === 'Complete' && legacy === 'active') return 'Complete';
+  if (legacy === 'parked') return 'Parked';
+  if (legacy === 'active') return 'Active';
+  return currentPmtStatus;
+}
 
 // Coach session retention: on boot, auto-archive any ended sessions older
 // than 90 days (drops transcript, keeps row + summary).

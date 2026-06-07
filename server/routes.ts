@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
-import { storage } from "./storage";
+import { storage, legacyStatusForPmtStatus, pmtStatusForLegacyStatus } from "./storage";
 import {
   insertTaskSchema,
   insertHabitSchema,
@@ -1531,7 +1531,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
     if ("pmtStatus" in updates && updates.pmtStatus != null) {
-      if (!["Open", "Active", "Complete", "Parked"].includes(updates.pmtStatus)) {
+      if (!["Active", "Parked", "Complete"].includes(updates.pmtStatus)) {
         return res.status(400).json({ error: "invalid_pmt_status" });
       }
     }
@@ -1574,6 +1574,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (p.id !== id && p.isPrimaryFutureIncome === 1) {
             storage.updateProject(p.id, { isPrimaryFutureIncome: 0 });
           }
+        }
+      }
+    }
+
+    // PMT write-through: keep legacy `status` and `pmtStatus` in sync.
+    // When pmtStatus is explicitly set, derive the legacy status from it.
+    if ("pmtStatus" in updates && updates.pmtStatus != null) {
+      updates.status = legacyStatusForPmtStatus(updates.pmtStatus);
+    }
+    // When legacy status is patched (without an explicit pmtStatus), reverse-derive pmtStatus.
+    if ("status" in updates && !("pmtStatus" in updates)) {
+      const current = storage.getProject(id);
+      if (current) {
+        const currentPmtStatus = current.pmtStatus ?? null;
+        const derived = pmtStatusForLegacyStatus(updates.status as string, currentPmtStatus);
+        if (derived !== null && derived !== currentPmtStatus) {
+          updates.pmtStatus = derived;
         }
       }
     }

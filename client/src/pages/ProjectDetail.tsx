@@ -219,15 +219,17 @@ export default function ProjectDetail() {
                 <SelectItem value="low">Low priority</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={project.status} onValueChange={setStatus}>
-              <SelectTrigger className="h-8 w-[130px]" data-testid="select-status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="parked">Parked</SelectItem>
-              </SelectContent>
-            </Select>
+            {project.pmtLabel == null && (
+              <Select value={project.status} onValueChange={setStatus}>
+                <SelectTrigger className="h-8 w-[130px]" data-testid="select-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="parked">Parked</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
             {project.pmtLabel != null && (
               <>
                 <div className="text-xs text-muted-foreground text-right">PMT status</div>
@@ -239,10 +241,9 @@ export default function ProjectDetail() {
                     <SelectValue placeholder="Set status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Open">Open</SelectItem>
                     <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Complete">Complete</SelectItem>
                     <SelectItem value="Parked">Parked</SelectItem>
+                    <SelectItem value="Complete">Complete</SelectItem>
                   </SelectContent>
                 </Select>
               </>

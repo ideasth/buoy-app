@@ -34,10 +34,9 @@ export interface LabelGroup {
 }
 
 export interface DashboardTotals {
-  open: number;
   active: number;
-  complete: number;
   parked: number;
+  complete: number;
   needsFiles: number;
   partial: number;
   present: number;
@@ -66,15 +65,15 @@ function labelSortKey(label: string): string {
 
 export function groupPmtItems(rows: PmtRow[]): DashboardShape {
   const totals: DashboardTotals = {
-    open: 0, active: 0, complete: 0, parked: 0,
+    active: 0, parked: 0, complete: 0,
     needsFiles: 0, partial: 0, present: 0, total: rows.length,
   };
 
   // Accumulate totals.
   for (const r of rows) {
     const ps = (r.pmtStatus ?? "").toLowerCase();
-    if (ps === "open") totals.open++;
-    else if (ps === "active") totals.active++;
+    // Treat any residual 'open' rows as 'active' (defence-in-depth; migration should prevent this).
+    if (ps === "open" || ps === "active") totals.active++;
     else if (ps === "complete") totals.complete++;
     else if (ps === "parked") totals.parked++;
 

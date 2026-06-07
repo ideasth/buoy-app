@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { groupPmtItems, type PmtRow } from "../server/pmt-dashboard";
 
 // Build a fixture that mirrors the 12 seed rows from storage.ts.
+// All formerly-Open rows are now Active (reflecting the status unification).
 function buildFixtureRows(): PmtRow[] {
   // Assign fake IDs sequentially.
   let id = 1;
@@ -30,19 +31,22 @@ function buildFixtureRows(): PmtRow[] {
   const bh2 = make({ name: "Monash Health Formal complaint and CEO escalation", pmtLabel: "Bayside Health", kind: "issue", pmtStatus: "Active", fileStatus: "partial", seedKey: "bayside-health/monash-health-formal-complaint-and-ceo-escalation" });
   const bh3 = make({ name: "FTE and duties at Sandringham Hospital", pmtLabel: "Bayside Health", kind: "issue", pmtStatus: "Active", fileStatus: "partial", seedKey: "bayside-health/fte-and-duties-at-sandringham-hospital" });
   const bh4 = make({ name: "Bayside Health CEO Escalation", pmtLabel: "Bayside Health", kind: "issue", pmtStatus: "Active", fileStatus: "partial", seedKey: "bayside-health/bayside-health-ceo-escalation" });
-  const bh5 = make({ name: "Bayside Health LHSN pelvic floor service proposal", pmtLabel: "Bayside Health", kind: "project", pmtStatus: "Open", fileStatus: "needs files", seedKey: "bayside-health/lhsn-pelvic-floor-service-proposal" });
+  // Previously 'Open', now 'Active' after status unification.
+  const bh5 = make({ name: "Bayside Health LHSN pelvic floor service proposal", pmtLabel: "Bayside Health", kind: "project", pmtStatus: "Active", fileStatus: "needs files", seedKey: "bayside-health/lhsn-pelvic-floor-service-proposal" });
 
   // Victoria S&Q Infrastructure (5 rows)
   const vsq1 = make({ name: "Letter to Health Minister", pmtLabel: "Victoria S&Q Infrastructure", kind: "issue", pmtStatus: "Active", fileStatus: "partial", seedKey: "victoria-sq-infrastructure/letter-to-health-minister-department-restructure" });
   const sammProjectId = id;
   const vsq2 = make({ name: "SAMM projects", pmtLabel: "Victoria S&Q Infrastructure", kind: "project", pmtStatus: "Active", fileStatus: "partial", seedKey: "victoria-sq-infrastructure/samm-projects" });
-  const vsq3 = make({ name: "AIHW SAMM scoping", pmtLabel: "Victoria S&Q Infrastructure", kind: "sub-project", pmtStatus: "Open", fileStatus: "needs files", parentId: sammProjectId, seedKey: "victoria-sq-infrastructure/samm-projects/aihw-samm-scoping" });
-  const vsq4 = make({ name: "Routine use of administrative data for SAMM", pmtLabel: "Victoria S&Q Infrastructure", kind: "sub-project", pmtStatus: "Open", fileStatus: "needs files", parentId: sammProjectId, seedKey: "victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm" });
-  const vsq5 = make({ name: "PSPI project", pmtLabel: "Victoria S&Q Infrastructure", kind: "project", pmtStatus: "Open", fileStatus: "needs files", seedKey: "victoria-sq-infrastructure/pspi-project" });
+  // Previously 'Open', now 'Active'.
+  const vsq3 = make({ name: "AIHW SAMM scoping", pmtLabel: "Victoria S&Q Infrastructure", kind: "sub-project", pmtStatus: "Active", fileStatus: "needs files", parentId: sammProjectId, seedKey: "victoria-sq-infrastructure/samm-projects/aihw-samm-scoping" });
+  const vsq4 = make({ name: "Routine use of administrative data for SAMM", pmtLabel: "Victoria S&Q Infrastructure", kind: "sub-project", pmtStatus: "Active", fileStatus: "needs files", parentId: sammProjectId, seedKey: "victoria-sq-infrastructure/samm-projects/routine-use-of-administrative-data-for-samm" });
+  const vsq5 = make({ name: "PSPI project", pmtLabel: "Victoria S&Q Infrastructure", kind: "project", pmtStatus: "Active", fileStatus: "needs files", seedKey: "victoria-sq-infrastructure/pspi-project" });
 
   // Private Hospital Surgical Governance and Auditing (2 rows)
   const ph1 = make({ name: "Epworth", pmtLabel: "Private Hospital Surgical Governance and Auditing", kind: "project", pmtStatus: "Active", fileStatus: "partial", seedKey: "private-hospital-surgical-governance/epworth" });
-  const ph2 = make({ name: "Australian Government", pmtLabel: "Private Hospital Surgical Governance and Auditing", kind: "project", pmtStatus: "Open", fileStatus: "needs files", seedKey: "private-hospital-surgical-governance/australian-government" });
+  // Previously 'Open', now 'Active'.
+  const ph2 = make({ name: "Australian Government", pmtLabel: "Private Hospital Surgical Governance and Auditing", kind: "project", pmtStatus: "Active", fileStatus: "needs files", seedKey: "private-hospital-surgical-governance/australian-government" });
 
   return [bh1, bh2, bh3, bh4, bh5, vsq1, vsq2, vsq3, vsq4, vsq5, ph1, ph2];
 }
@@ -81,13 +85,13 @@ describe("groupPmtItems", () => {
     expect(result.totals.total).toBe(12);
   });
 
-  it("status counts match seed data", () => {
+  it("status counts match updated seed data (all rows Active)", () => {
     const rows = buildFixtureRows();
     const result = groupPmtItems(rows);
-    // Active: bh1,bh2,bh3,bh4 + vsq1 + vsq2 + ph1 = 7
-    expect(result.totals.active).toBe(7);
-    // Open: bh5 + vsq3 + vsq4 + vsq5 + ph2 = 5
-    expect(result.totals.open).toBe(5);
+    // All 12 rows are Active after status unification.
+    expect(result.totals.active).toBe(12);
+    // totals.open must be absent (not a property of the new DashboardTotals shape).
+    expect((result.totals as any).open).toBeUndefined();
     expect(result.totals.complete).toBe(0);
     expect(result.totals.parked).toBe(0);
   });
@@ -145,6 +149,27 @@ describe("groupPmtItems", () => {
     expect(result.labels[0].statusCounts["Complete"]).toBe(1);
   });
 
+  it("groupPmtItems treats a residual Open row as Active in totals (defence-in-depth)", () => {
+    const rows: PmtRow[] = [
+      {
+        id: 200,
+        name: "Residual Open",
+        kind: "project",
+        parentId: null,
+        pmtLabel: "Bayside Health",
+        pmtStatus: "Open",
+        nextAction: null,
+        fileStatus: null,
+        latestThreadUrl: null,
+        pmtNotes: null,
+        seedKey: null,
+      },
+    ];
+    const result = groupPmtItems(rows);
+    expect(result.totals.active).toBe(1);
+    expect((result.totals as any).open).toBeUndefined();
+  });
+
   it("groupPmtItems leaves items in seed order regardless of status", () => {
     const rows: PmtRow[] = [
       {
@@ -179,7 +204,7 @@ describe("groupPmtItems", () => {
         kind: "project",
         parentId: null,
         pmtLabel: "Bayside Health",
-        pmtStatus: "Open",
+        pmtStatus: "Active",
         nextAction: null,
         fileStatus: null,
         latestThreadUrl: null,
@@ -189,7 +214,7 @@ describe("groupPmtItems", () => {
     ];
     const result = groupPmtItems(rows);
     const bh = result.labels.find((l) => l.label === "Bayside Health")!;
-    // projects: Alpha (Complete) at index 0, Gamma (Open) at index 1 — seed order preserved
+    // projects: Alpha (Complete) at index 0, Gamma (Active) at index 1 — seed order preserved
     expect(bh.items[0].project.name).toBe("Alpha");
     expect(bh.items[1].project.name).toBe("Gamma");
     // orphan issues: Beta

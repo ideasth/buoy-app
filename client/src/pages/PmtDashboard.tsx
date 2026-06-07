@@ -43,14 +43,15 @@ interface LabelGroup {
 }
 
 interface DashboardTotals {
-  open: number;
   active: number;
-  complete: number;
   parked: number;
+  complete: number;
   needsFiles: number;
   partial: number;
   present: number;
   total: number;
+  // open may be returned by older API responses; ignored in UI
+  open?: number;
 }
 
 interface DashboardData {
@@ -61,7 +62,7 @@ interface DashboardData {
 // ---- Helpers ----
 
 type FileStatusFilter = "all" | "needs files" | "partial" | "present";
-type PmtStatusFilter = "all" | "open" | "active" | "parked" | "complete" | "incomplete";
+type PmtStatusFilter = "all" | "active" | "parked" | "complete";
 
 function fileStatusBadge(fs: string | null) {
   if (!fs) return null;
@@ -90,15 +91,16 @@ function fileStatusBadge(fs: string | null) {
 
 function pmtStatusBadge(ps: string | null) {
   if (!ps) return null;
+  // Treat any residual 'Open' rows as 'Active' for display (defence-in-depth).
+  const displayPs = ps === "Open" ? "Active" : ps;
   const variantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
     Active: "default",
-    Open: "secondary",
     Complete: "outline",
     Parked: "outline",
   };
   return (
-    <Badge variant={variantMap[ps] ?? "outline"} className="text-xs">
-      {ps}
+    <Badge variant={variantMap[displayPs] ?? "outline"} className="text-xs">
+      {displayPs}
     </Badge>
   );
 }
@@ -116,8 +118,8 @@ function matchesFileFilter(item: PmtItem, filter: FileStatusFilter): boolean {
 
 function matchesPmtFilter(item: PmtItem, filter: PmtStatusFilter): boolean {
   if (filter === "all") return true;
-  const ps = (item.pmtStatus ?? "").toLowerCase();
-  if (filter === "incomplete") return ps !== "complete";
+  // Treat residual 'open' rows as 'active' for filter matching.
+  const ps = (item.pmtStatus ?? "").toLowerCase() === "open" ? "active" : (item.pmtStatus ?? "").toLowerCase();
   return ps === filter;
 }
 
@@ -127,10 +129,9 @@ function matchesFilters(item: PmtItem, fileFilter: FileStatusFilter, pmtFilter: 
 
 // sort-complete-last — Complete items sort last within each group
 const STATUS_SORT_ORDER: Record<string, number> = {
-  Open: 0,
-  Active: 1,
-  Parked: 2,
-  Complete: 3,
+  Active: 0,
+  Parked: 1,
+  Complete: 2,
 };
 
 function pmtStatusSortKey(ps: string | null): number {
@@ -143,8 +144,8 @@ function sortItemsCompleteList<T extends { pmtStatus: string | null }>(items: T[
   return [...items].sort((a, b) => pmtStatusSortKey(a.pmtStatus) - pmtStatusSortKey(b.pmtStatus));
 }
 
-// Fixed status display order for the header summary: Open, Active, Parked, Complete
-const STATUS_DISPLAY_ORDER = ["Open", "Active", "Parked", "Complete"];
+// Fixed status display order for the header summary: Active → Parked → Complete
+const STATUS_DISPLAY_ORDER = ["Active", "Parked", "Complete"];
 
 // ---- Task creation affordance ----
 
@@ -329,7 +330,7 @@ function LabelSection({
 
 export default function PmtDashboard() {
   const [fileFilter, setFileFilter] = useState<FileStatusFilter>("all");
-  const [pmtFilter, setPmtFilter] = useState<PmtStatusFilter>("incomplete");
+  const [pmtFilter, setPmtFilter] = useState<PmtStatusFilter>("active");
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery<DashboardData>({
@@ -367,10 +368,9 @@ export default function PmtDashboard() {
               <div>
                 <div className="text-xs uppercase tracking-wider text-muted-foreground">Status</div>
                 <div className="mt-1 space-y-0.5">
-                  <div>Open: <span className="font-medium">{data.totals.open}</span></div>
                   <div>Active: <span className="font-medium">{data.totals.active}</span></div>
-                  <div>Complete: <span className="font-medium">{data.totals.complete}</span></div>
                   <div>Parked: <span className="font-medium">{data.totals.parked}</span></div>
+                  <div>Complete: <span className="font-medium">{data.totals.complete}</span></div>
                 </div>
               </div>
               <div>
@@ -418,8 +418,6 @@ export default function PmtDashboard() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All PMT statuses</SelectItem>
-            <SelectItem value="incomplete">Incomplete</SelectItem>
-            <SelectItem value="open">Open</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="parked">Parked</SelectItem>
             <SelectItem value="complete">Complete</SelectItem>

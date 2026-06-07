@@ -35,6 +35,18 @@ describe("PMT route registration (server/routes.ts)", () => {
     expect(routesSrc).toContain("invalid_pmt_status");
     expect(routesSrc).toContain("invalid_kind");
   });
+
+  it("Open is NOT in the valid pmtStatus list", () => {
+    // The valid list must be exactly ["Active", "Parked", "Complete"]. "Open" must not appear
+    // in the validation array.
+    expect(routesSrc).toContain('"Active", "Parked", "Complete"');
+    // Confirm "Open" does not appear in the validation includes() call.
+    const validationBlock = routesSrc.slice(
+      routesSrc.indexOf("invalid_pmt_status") - 200,
+      routesSrc.indexOf("invalid_pmt_status") + 50,
+    );
+    expect(validationBlock).not.toContain('"Open"');
+  });
 });
 
 describe("PMT dashboard page (client/src/pages/PmtDashboard.tsx)", () => {
@@ -87,7 +99,7 @@ describe("ALLOWED_LANDING_ROUTES in server/app-settings.ts", () => {
   });
 });
 
-describe("PATCH /api/projects/:id accepts pmtStatus = Complete", () => {
+describe("PATCH /api/projects/:id pmtStatus validation", () => {
   // Hermetic in-memory SQLite round-trip.
   // Mirrors the DDL pattern from test/pmt-schema.test.ts.
   it("round-trips pmtStatus Complete via raw SQLite (simulates PATCH + GET)", () => {
@@ -127,9 +139,10 @@ describe("PATCH /api/projects/:id accepts pmtStatus = Complete", () => {
     ).run("Test project", "active", "low", "", "Bayside Health", "Active", now, now);
     const id = result.lastInsertRowid as number;
 
-    // Simulate PATCH: validate Complete is in the allowed list (from routes.ts source),
-    // then update the row directly.
+    // Simulate PATCH: validate Active, Parked, Complete are in the allowed list.
     const routesSrc = readSrc("server/routes.ts");
+    expect(routesSrc).toContain('"Active"');
+    expect(routesSrc).toContain('"Parked"');
     expect(routesSrc).toContain('"Complete"');
 
     db.prepare("UPDATE projects SET pmt_status = ?, updated_at = ? WHERE id = ?").run("Complete", now + 1, id);
@@ -137,5 +150,66 @@ describe("PATCH /api/projects/:id accepts pmtStatus = Complete", () => {
     // Simulate GET: read back and confirm.
     const row = db.prepare("SELECT pmt_status FROM projects WHERE id = ?").get(id) as { pmt_status: string };
     expect(row.pmt_status).toBe("Complete");
+  });
+
+  it("Open is rejected as an invalid pmtStatus (source-level guard)", () => {
+    // Confirm the validation array does NOT include "Open".
+    const routesSrc = readSrc("server/routes.ts");
+    // The valid list must now only contain Active, Parked, Complete.
+    expect(routesSrc).toContain('"Active", "Parked", "Complete"');
+    // "Open" must not appear anywhere near the invalid_pmt_status validation block.
+    const idx = routesSrc.indexOf("invalid_pmt_status");
+    const ctx = routesSrc.slice(idx - 300, idx + 50);
+    expect(ctx).not.toContain('"Open"');
+  });
+});
+
+describe("PMT write-through: PATCH pmtStatus derives legacy status (source-text + logic guards)", () => {
+  // These tests validate the write-through logic is wired in routes.ts source
+  // and exercise the mapping rules using the same inline logic as the
+  // pure helper tests in test/pmt-status-writethrough.test.ts.
+
+  it("routes.ts imports legacyStatusForPmtStatus and pmtStatusForLegacyStatus", () => {
+    const routesSrc = readSrc("server/routes.ts");
+    expect(routesSrc).toContain("legacyStatusForPmtStatus");
+    expect(routesSrc).toContain("pmtStatusForLegacyStatus");
+  });
+
+  it("routes.ts sets updates.status = legacyStatusForPmtStatus(updates.pmtStatus) when pmtStatus patched", () => {
+    const routesSrc = readSrc("server/routes.ts");
+    expect(routesSrc).toContain("legacyStatusForPmtStatus(updates.pmtStatus)");
+  });
+
+  it("routes.ts calls pmtStatusForLegacyStatus when status is patched without pmtStatus", () => {
+    const routesSrc = readSrc("server/routes.ts");
+    expect(routesSrc).toContain("pmtStatusForLegacyStatus(updates.status");
+  });
+
+  it("PATCH pmtStatus=Parked mapping: legacyStatusForPmtStatus returns parked (inline)", () => {
+    // Inline implementation mirrors the exported helper — no DB import needed.
+    function legacyStatusForPmtStatus(pmt: string): string {
+      return pmt === "Parked" ? "parked" : "active";
+    }
+    expect(legacyStatusForPmtStatus("Parked")).toBe("parked");
+    expect(legacyStatusForPmtStatus("Active")).toBe("active");
+    expect(legacyStatusForPmtStatus("Complete")).toBe("active");
+  });
+
+  it("PATCH status=active on Complete project: pmtStatusForLegacyStatus returns Complete (inline)", () => {
+    // Inline implementation mirrors the exported helper.
+    function pmtStatusForLegacyStatus(legacy: string, currentPmtStatus: string | null): string | null {
+      if (currentPmtStatus == null) return null;
+      if (currentPmtStatus === "Complete" && legacy === "active") return "Complete";
+      if (legacy === "parked") return "Parked";
+      if (legacy === "active") return "Active";
+      return currentPmtStatus;
+    }
+    // Key invariant: Complete is preserved when legacy patches to active.
+    expect(pmtStatusForLegacyStatus("active", "Complete")).toBe("Complete");
+    // Normal mapping.
+    expect(pmtStatusForLegacyStatus("parked", "Active")).toBe("Parked");
+    expect(pmtStatusForLegacyStatus("active", "Parked")).toBe("Active");
+    // Non-PMT item is left alone.
+    expect(pmtStatusForLegacyStatus("active", null)).toBeNull();
   });
 });
