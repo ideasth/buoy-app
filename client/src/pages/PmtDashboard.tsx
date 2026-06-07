@@ -8,6 +8,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,7 @@ interface DashboardData {
 // ---- Helpers ----
 
 type FileStatusFilter = "all" | "needs files" | "partial" | "present";
+type PmtStatusFilter = "all" | "open" | "active" | "parked" | "complete" | "incomplete";
 
 function fileStatusBadge(fs: string | null) {
   if (!fs) return null;
@@ -107,10 +109,42 @@ function kindLabel(kind: string | null) {
   return "Project";
 }
 
-function matchesFilter(item: PmtItem, filter: FileStatusFilter): boolean {
+function matchesFileFilter(item: PmtItem, filter: FileStatusFilter): boolean {
   if (filter === "all") return true;
   return (item.fileStatus ?? "") === filter;
 }
+
+function matchesPmtFilter(item: PmtItem, filter: PmtStatusFilter): boolean {
+  if (filter === "all") return true;
+  const ps = (item.pmtStatus ?? "").toLowerCase();
+  if (filter === "incomplete") return ps !== "complete";
+  return ps === filter;
+}
+
+function matchesFilters(item: PmtItem, fileFilter: FileStatusFilter, pmtFilter: PmtStatusFilter): boolean {
+  return matchesFileFilter(item, fileFilter) && matchesPmtFilter(item, pmtFilter);
+}
+
+// sort-complete-last — Complete items sort last within each group
+const STATUS_SORT_ORDER: Record<string, number> = {
+  Open: 0,
+  Active: 1,
+  Parked: 2,
+  Complete: 3,
+};
+
+function pmtStatusSortKey(ps: string | null): number {
+  if (ps == null) return 4;
+  return STATUS_SORT_ORDER[ps] ?? 4;
+}
+
+function sortItemsCompleteList<T extends { pmtStatus: string | null }>(items: T[]): T[] {
+  // Stable sort: preserve relative order within same status bucket. sort-complete-last
+  return [...items].sort((a, b) => pmtStatusSortKey(a.pmtStatus) - pmtStatusSortKey(b.pmtStatus));
+}
+
+// Fixed status display order for the header summary: Open, Active, Parked, Complete
+const STATUS_DISPLAY_ORDER = ["Open", "Active", "Parked", "Complete"];
 
 // ---- Task creation affordance ----
 
@@ -157,6 +191,7 @@ function ItemRow({
   indent?: number;
   onTaskCreated: () => void;
 }) {
+  const isComplete = item.pmtStatus === "Complete";
   return (
     <div
       className={cn(
@@ -169,7 +204,7 @@ function ItemRow({
         <div className="flex flex-wrap items-center gap-1.5">
           <Link
             href={`/projects/${item.id}`}
-            className="text-sm font-medium hover:underline"
+            className={cn("text-sm font-medium hover:underline", isComplete && "opacity-60 line-through")}
           >
             {item.name}
           </Link>
@@ -206,21 +241,39 @@ function ItemRow({
 
 function LabelSection({
   group,
-  filter,
+  fileFilter,
+  pmtFilter,
   onTaskCreated,
 }: {
   group: LabelGroup;
-  filter: FileStatusFilter;
+  fileFilter: FileStatusFilter;
+  pmtFilter: PmtStatusFilter;
   onTaskCreated: () => void;
 }) {
-  // Flatten all items to get a count of those that pass the filter.
+  // Flatten all items to get a count of those that pass the filters.
   const allItems: PmtItem[] = [
     ...group.orphanIssues,
     ...group.items.flatMap((e) => [e.project, ...e.subProjects, ...e.issues]),
   ];
-  const filteredCount = allItems.filter((i) => matchesFilter(i, filter)).length;
+  const filteredCount = allItems.filter((i) => matchesFilters(i, fileFilter, pmtFilter)).length;
 
-  if (filter !== "all" && filteredCount === 0) return null;
+  if ((fileFilter !== "all" || pmtFilter !== "all") && filteredCount === 0) return null;
+
+  // Build status counts in fixed order (Open, Active, Parked, Complete), skip zero counts.
+  const orderedStatusEntries = STATUS_DISPLAY_ORDER
+    .filter((s) => (group.statusCounts[s] ?? 0) > 0)
+    .map((s) => [s, group.statusCounts[s]] as [string, number]);
+
+  // Sort orphan issues so Complete appears last. sort-complete-last
+  const sortedOrphanIssues = sortItemsCompleteList(group.orphanIssues);
+
+  // Sort project entries so Complete-status projects appear last. sort-complete-last
+  const sortedEntries = sortItemsCompleteList(
+    group.items.map((e) => ({ ...e, pmtStatus: e.project.pmtStatus }))
+  ).map((e) => {
+    const { pmtStatus: _ps, ...entry } = e;
+    return entry as LabeledProjectEntry;
+  });
 
   return (
     <section className="rounded-lg border border-card-border bg-card">
@@ -228,7 +281,7 @@ function LabelSection({
         <h2 className="text-sm font-semibold">{group.label}</h2>
         <span className="text-xs text-muted-foreground">{allItems.length} items</span>
         <div className="flex flex-wrap gap-1 ml-auto">
-          {Object.entries(group.statusCounts).map(([s, n]) => (
+          {orderedStatusEntries.map(([s, n]) => (
             <span key={s} className="text-xs text-muted-foreground">
               {s}: {n}
             </span>
@@ -237,32 +290,31 @@ function LabelSection({
       </div>
       <div className="divide-y divide-border px-4">
         {/* Orphan issues rendered first */}
-        {group.orphanIssues
-          .filter((i) => matchesFilter(i, filter))
+        {sortedOrphanIssues
+          .filter((i) => matchesFilters(i, fileFilter, pmtFilter))
           .map((issue) => (
             <ItemRow key={issue.id} item={issue} indent={0} onTaskCreated={onTaskCreated} />
           ))}
         {/* Projects + nested sub-projects + nested issues */}
-        {group.items
+        {sortedEntries
           .filter(
             (entry) =>
-              filter === "all" ||
-              matchesFilter(entry.project, filter) ||
-              entry.subProjects.some((sp) => matchesFilter(sp, filter)) ||
-              entry.issues.some((iss) => matchesFilter(iss, filter)),
+              matchesFilters(entry.project, fileFilter, pmtFilter) ||
+              entry.subProjects.some((sp) => matchesFilters(sp, fileFilter, pmtFilter)) ||
+              entry.issues.some((iss) => matchesFilters(iss, fileFilter, pmtFilter)),
           )
           .map((entry) => (
             <div key={entry.project.id}>
-              {(filter === "all" || matchesFilter(entry.project, filter)) && (
+              {matchesFilters(entry.project, fileFilter, pmtFilter) && (
                 <ItemRow item={entry.project} indent={0} onTaskCreated={onTaskCreated} />
               )}
-              {entry.subProjects
-                .filter((sp) => matchesFilter(sp, filter))
+              {sortItemsCompleteList(entry.subProjects)
+                .filter((sp) => matchesFilters(sp, fileFilter, pmtFilter))
                 .map((sp) => (
                   <ItemRow key={sp.id} item={sp} indent={1} onTaskCreated={onTaskCreated} />
                 ))}
-              {entry.issues
-                .filter((iss) => matchesFilter(iss, filter))
+              {sortItemsCompleteList(entry.issues)
+                .filter((iss) => matchesFilters(iss, fileFilter, pmtFilter))
                 .map((iss) => (
                   <ItemRow key={iss.id} item={iss} indent={1} onTaskCreated={onTaskCreated} />
                 ))}
@@ -276,7 +328,8 @@ function LabelSection({
 // ---- Main page ----
 
 export default function PmtDashboard() {
-  const [filter, setFilter] = useState<FileStatusFilter>("all");
+  const [fileFilter, setFileFilter] = useState<FileStatusFilter>("all");
+  const [pmtFilter, setPmtFilter] = useState<PmtStatusFilter>("incomplete");
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery<DashboardData>({
@@ -288,7 +341,7 @@ export default function PmtDashboard() {
     queryClient.invalidateQueries({ queryKey: ["/api/pmt/dashboard"] });
   }
 
-  const FILTERS: { key: FileStatusFilter; label: string }[] = [
+  const FILE_FILTERS: { key: FileStatusFilter; label: string }[] = [
     { key: "all", label: "All file statuses" },
     { key: "needs files", label: "Needs files" },
     { key: "partial", label: "Partial" },
@@ -338,22 +391,40 @@ export default function PmtDashboard() {
         </Card>
       )}
 
-      {/* Filter chip row */}
-      <div className="flex flex-wrap gap-2">
-        {FILTERS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setFilter(key)}
-            className={cn(
-              "px-3 py-1 rounded-full text-xs border transition-colors",
-              filter === key
-                ? "bg-foreground text-background border-foreground"
-                : "bg-transparent text-muted-foreground border-border hover:border-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Filter row — file status chips + PMT status select */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-2">
+          {FILE_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setFileFilter(key)}
+              className={cn(
+                "px-3 py-1 rounded-full text-xs border transition-colors",
+                fileFilter === key
+                  ? "bg-foreground text-background border-foreground"
+                  : "bg-transparent text-muted-foreground border-border hover:border-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Select
+          value={pmtFilter}
+          onValueChange={(v) => setPmtFilter(v as PmtStatusFilter)}
+        >
+          <SelectTrigger className="h-8 w-[160px]" data-testid="select-pmt-status-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All PMT statuses</SelectItem>
+            <SelectItem value="incomplete">Incomplete</SelectItem>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="parked">Parked</SelectItem>
+            <SelectItem value="complete">Complete</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Content */}
@@ -369,7 +440,8 @@ export default function PmtDashboard() {
             <LabelSection
               key={group.label}
               group={group}
-              filter={filter}
+              fileFilter={fileFilter}
+              pmtFilter={pmtFilter}
               onTaskCreated={handleTaskCreated}
             />
           ))}

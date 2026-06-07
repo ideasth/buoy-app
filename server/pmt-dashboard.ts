@@ -132,5 +132,7 @@ export function groupPmtItems(rows: PmtRow[]): DashboardShape {
     return { label, items, orphanIssues, statusCounts, fileStatusCounts };
   });
 
+  // Note: Complete items are sorted last in the UI (PmtDashboard.tsx);
+  // the helper preserves insertion order here.
   return { labels, totals };
 }

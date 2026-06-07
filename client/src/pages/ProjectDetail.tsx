@@ -228,6 +228,25 @@ export default function ProjectDetail() {
                 <SelectItem value="parked">Parked</SelectItem>
               </SelectContent>
             </Select>
+            {project.pmtLabel != null && (
+              <>
+                <div className="text-xs text-muted-foreground text-right">PMT status</div>
+                <Select
+                  value={project.pmtStatus ?? ""}
+                  onValueChange={(v) => patchProject({ pmtStatus: v } as any)}
+                >
+                  <SelectTrigger className="h-8 w-[130px]" data-testid="select-pmt-status">
+                    <SelectValue placeholder="Set status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Open">Open</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Complete">Complete</SelectItem>
+                    <SelectItem value="Parked">Parked</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            )}
           </div>
         </div>
       </div>

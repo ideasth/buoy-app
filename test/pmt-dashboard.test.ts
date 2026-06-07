@@ -122,4 +122,77 @@ describe("groupPmtItems", () => {
     expect(result.labels).toHaveLength(0);
     expect(result.totals.total).toBe(0);
   });
+
+  it("groupPmtItems counts Complete in totals and per-label statusCounts", () => {
+    const rows: PmtRow[] = [
+      {
+        id: 100,
+        name: "Completed item",
+        kind: "project",
+        parentId: null,
+        pmtLabel: "Bayside Health",
+        pmtStatus: "Complete",
+        nextAction: null,
+        fileStatus: null,
+        latestThreadUrl: null,
+        pmtNotes: null,
+        seedKey: null,
+      },
+    ];
+    const result = groupPmtItems(rows);
+    expect(result.totals.complete).toBe(1);
+    expect(result.labels).toHaveLength(1);
+    expect(result.labels[0].statusCounts["Complete"]).toBe(1);
+  });
+
+  it("groupPmtItems leaves items in seed order regardless of status", () => {
+    const rows: PmtRow[] = [
+      {
+        id: 1,
+        name: "Alpha",
+        kind: "project",
+        parentId: null,
+        pmtLabel: "Bayside Health",
+        pmtStatus: "Complete",
+        nextAction: null,
+        fileStatus: null,
+        latestThreadUrl: null,
+        pmtNotes: null,
+        seedKey: null,
+      },
+      {
+        id: 2,
+        name: "Beta",
+        kind: "issue",
+        parentId: null,
+        pmtLabel: "Bayside Health",
+        pmtStatus: "Active",
+        nextAction: null,
+        fileStatus: null,
+        latestThreadUrl: null,
+        pmtNotes: null,
+        seedKey: null,
+      },
+      {
+        id: 3,
+        name: "Gamma",
+        kind: "project",
+        parentId: null,
+        pmtLabel: "Bayside Health",
+        pmtStatus: "Open",
+        nextAction: null,
+        fileStatus: null,
+        latestThreadUrl: null,
+        pmtNotes: null,
+        seedKey: null,
+      },
+    ];
+    const result = groupPmtItems(rows);
+    const bh = result.labels.find((l) => l.label === "Bayside Health")!;
+    // projects: Alpha (Complete) at index 0, Gamma (Open) at index 1 — seed order preserved
+    expect(bh.items[0].project.name).toBe("Alpha");
+    expect(bh.items[1].project.name).toBe("Gamma");
+    // orphan issues: Beta
+    expect(bh.orphanIssues[0].name).toBe("Beta");
+  });
 });
