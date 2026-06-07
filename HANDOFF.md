@@ -2,6 +2,46 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-06-08 (AM AEST, third deploy) — PMT status unification: Active / Parked / Complete with legacy write-through
+
+**Why:** Two status fields on `projects` was confusing the UI: legacy `status` (`active|parked`) and `pmt_status` (`Open|Active|Complete|Parked`) appeared as two separate dropdowns on project detail with overlapping meanings. Collapsed to a single user-facing concept with three values — `Active`, `Parked`, `Complete` — while keeping the legacy `status` column writing-through for MS To Do sync compatibility. `Open` retired (was redundant with `Active`).
+
+**Shipped (commit `b21bad2`, bundle `6e502ead51d83d4d9647f11d770878df`):**
+- `server/storage.ts`:
+  - One-shot boot migration `UPDATE projects SET pmt_status='Active' WHERE pmt_status='Open'`. Idempotent.
+  - Seed rewrite: 5 previously-Open rows now seed as Active.
+  - New exported pure helpers `legacyStatusForPmtStatus()` and `pmtStatusForLegacyStatus()` — see canonical mapping below.
+- `server/routes.ts`: validation tightened to `['Active', 'Parked', 'Complete']` (error code unchanged: `invalid_pmt_status`). PATCH `/api/projects/:id` now performs **bidirectional write-through**:
+  - When `pmtStatus` is patched, sets legacy `status` via `legacyStatusForPmtStatus`.
+  - When legacy `status` is patched on a PMT-tracked item (item has a non-null `pmtStatus`), derives the new `pmtStatus` via `pmtStatusForLegacyStatus` and writes both. "Don't un-complete" rule: if current `pmtStatus = Complete` and incoming legacy `status = active`, leave `pmtStatus` as Complete.
+- `server/pmt-dashboard.ts`: `DashboardTotals.open` removed; defensive guard counts any stray Open as Active.
+- `client/src/pages/PmtDashboard.tsx`: Open dropped from badge variants and filter. Filter options: `all`, `active`, `parked`, `complete`. Default filter: `active` (so Parked and Complete collapse out of view until selected). Header summary order: Active → Parked → Complete. One defensive `"Open" → "Active"` display guard remains (will never fire in practice post-migration).
+- `client/src/pages/ProjectDetail.tsx`: PMT-status select reduced to three options (Active / Parked / Complete). **Legacy `status` select hidden entirely on PMT-labelled items** (gated on `project.pmtLabel != null`). Non-PMT items keep the legacy select unchanged.
+- Tests: 582/582 across 49 suites (+26). New suite `test/pmt-status-writethrough.test.ts` (6 pure-helper tests for both directions of the mapping including the don't-un-complete rule). Updated `pmt-routes.test.ts`, `pmt-dashboard.test.ts`, `pmt-dashboard-ui.test.ts`, `pmt-schema.test.ts`.
+
+**Canonical status mapping (implemented in `legacyStatusForPmtStatus` / `pmtStatusForLegacyStatus`):**
+```
+pmtStatus  -> legacy status
+Active     -> active
+Parked     -> parked
+Complete   -> active     (work finished but MS To Do list not archived)
+
+legacy status  -> pmtStatus (only on PMT-tracked items)
+active         -> Active   (UNLESS current pmtStatus = Complete — then leave Complete)
+parked         -> Parked
+```
+
+**Smoke verification (post-deploy 2026-06-08 07:27 AEST):**
+- `/api/health` 200. Both hostnames OK.
+- `/api/pmt/dashboard` totals: `active: 12, parked: 0, complete: 0, total: 12`. `open` key absent. All 12 seeded items now `pmtStatus='Active'` (was 5 Open + 7 Active pre-migration).
+- `PATCH {pmtStatus:"Open"}` → `400 invalid_pmt_status`.
+- `PATCH {pmtStatus:"Parked"}` on project 15 → returned `pmtStatus='Parked', status='parked'`.
+- `PATCH {pmtStatus:"Complete"}` → returned `pmtStatus='Complete', status='active'`.
+- Don't-un-complete: `PATCH {status:"active"}` on the now-Complete item → returned `pmtStatus='Complete', status='active'` (intact).
+- Project 15 restored to Active.
+
+**Operator follow-up:** none required. The project detail page now shows a single PMT status dropdown for PMT items. The dashboard defaults to showing only Active items — use the filter to view Parked or Complete.
+
 ## 2026-06-08 (AM AEST, second deploy) — PMT Complete status: first-class UI surfacing
 
 **Why:** `pmt_status = 'Complete'` was already in the enum and server-side validation, but users had no UI to set it (project detail only exposed the legacy MS To Do `status`) and the dashboard didn't visually differentiate completed items. Closes that loop.
