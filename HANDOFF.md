@@ -2,6 +2,29 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-06-08 (AM AEST, second deploy) — PMT Complete status: first-class UI surfacing
+
+**Why:** `pmt_status = 'Complete'` was already in the enum and server-side validation, but users had no UI to set it (project detail only exposed the legacy MS To Do `status`) and the dashboard didn't visually differentiate completed items. Closes that loop.
+
+**Shipped (commit `5528d50`, bundle `3ef3f244899600c87a5e22a1c77c482b` — server bundle unchanged, client assets rebuilt):**
+- `client/src/pages/ProjectDetail.tsx`: new PMT-status `Select` (testid `select-pmt-status`) gated on `project.pmtLabel` being non-null. Four options: `Open`, `Active`, `Complete`, `Parked`. Coexists with the legacy `status` select.
+- `client/src/pages/PmtDashboard.tsx`:
+  - Per-item `pmtStatus` badge using the existing variant map (Active→default, Open→secondary, Complete/Parked→outline).
+  - Complete items: project/sub-project/issue name rendered with `opacity-60 line-through` (name only — badge + links stay readable).
+  - Sort: Complete items appear last within each group (`// sort-complete-last` sentinel).
+  - `statusCounts` header summary now renders in fixed order Open→Active→Parked→Complete, skipping zero counts.
+  - New PMT-status filter dropdown (testid `select-pmt-status-filter`) with options `all`, `open`, `active`, `parked`, `complete`, `incomplete` (= Open+Active+Parked). Default `incomplete` so done work collapses out of view.
+- Tests: 556/556 across 48 suites (+12). New suite `test/pmt-dashboard-ui.test.ts` (source-text guards parallel to Stage 18 NAV test). 2 new helper tests in `pmt-dashboard.test.ts`, 1 new round-trip in `pmt-routes.test.ts`.
+- No schema change, no route signature change.
+
+**Smoke verification (post-deploy 2026-06-08 06:44 AEST):**
+- `https://buoy.thinhalo.com/api/health` → 200; `https://anchor.thinhalo.com/api/health` → 200.
+- Round-trip on project 15: `PATCH /api/projects/15 {pmtStatus:"Complete"}` → 200 with `pmtStatus:"Complete"`; restored to Open.
+- Invalid value: `PATCH {pmtStatus:"Done"}` → `400 {"error":"invalid_pmt_status"}`.
+- Dashboard totals currently `complete: 0` (no items marked complete yet — expected).
+
+**Operator follow-up:** none required. Users can now mark items Complete from `/projects/:id` and the dashboard will surface them at the bottom of each label group, muted, with the count visible in the per-label and totals summaries.
+
 ## 2026-06-08 (AM AEST) — Stage 20: PMT projects dashboard + governance register seeded
 
 **Why:** First end-user surface for the PMT (Project Management Tool) model documented in CONTEXT.md. Establishes Label > Project > Sub-project > Issue hierarchy on the existing `projects` table, seeds the 12 documented governance items, and exposes a grouped-by-label dashboard with file-status surfacing.
