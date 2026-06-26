@@ -2,6 +2,31 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-06-26 (AM AEST) — Templates page + Year-Planner Wk column driven by MasterTemplateCalendar.xlsx
+
+**Why:** Codify the 4-week rotation (Elgin House, Sandringham, Peninsula Health, Kids-with-us) as the single source of truth. The xlsx (`MasterTemplateCalendar.xlsx`, stored in OneDrive and committed to `client/public/`) is parsed at build time into a generated JSON. Surfaces (a) a new in-app Templates page rendering the rotation grid + Work Links + Notes, and (b) a Wk column in CalendarPlanner and the Year Planner xlsx export so each row carries its rotation week numbers (EH/SH/PH/Kids).
+
+**Shipped (commit `168e283`, bundle `b0be248d32fb4e0e06c32a7d926137f5`):**
+- `scripts/build-master-template.cjs`: exceljs parser with `detectWeekRows()` auto-detect for header-row position (current xlsx puts header at row 6, data at rows 7/9/11/13 — was 5/6/8/10/12 in earlier version). Emits `client/src/generated/master-template.json` (gitignored).
+- `script/build.ts`: prebuild hook running the parser; respects `SKIP_MASTER_TEMPLATE=1` for hot dev iteration.
+- `client/public/MasterTemplateCalendar.xlsx`: committed at 13771 bytes, sha256 `610a8ed1…23ca0d`. **Canonical source remains OneDrive** — re-export to client/public when the source changes; do NOT hand-edit the generated JSON.
+- `client/src/types/master-template.ts`: types + `cyclePositionFor()` + `mondayOf()` helpers (used by CalendarPlanner Wk column).
+- `client/src/pages/Templates.tsx`: new page rendering file-metadata header, 4-week rotation table (Mon–Sun grid with EH/SH/PH per cell), Work Links grouped by section, and Notes block.
+- `client/src/App.tsx` + `client/src/components/Layout.tsx` + `server/app-settings.ts`: `/templates` route wired, sidebar entry, added to `ALLOWED_LANDING_ROUTES`.
+- `client/src/pages/CalendarPlanner.tsx`: new Wk column showing `EH1 SH2 PH4 K1` style per row.
+- `server/planner.ts`: Year Planner xlsx export gains Wk column at col 3 (between Day and the leaf columns). `fmtWk()` helper, `FIRST_LEAF_COL = 4`, `notesSuperCol` recalculated, frozen pane shifted to `xSplit=3`.
+- `.gitignore`: `client/src/generated/` added.
+
+**Smoke verification (post-deploy 2026-06-26 10:47 AEST):**
+- pm2 `buoy` online. Health `{"ok":true}` on both `buoy.thinhalo.com/api/health` and `anchor.thinhalo.com/api/health` (back-compat).
+- `/templates` returns 200 HTML.
+- `assets/Templates-CizViRyI.js` reachable (6605 bytes).
+- `MasterTemplateCalendar.xlsx` served by Express static at 13771 bytes (sha256 verified upstream).
+
+**Deferred (new thread):** Refactor `/home/user/workspace/build_calendars.py` to drive the ICS feeds (Family / ElginHouse / Sandringham / Peninsula) from `MasterTemplateCalendar.xlsx` instead of the hardcoded per-site templates anchored at `NEW_ANCHOR=2026-05-04`. New xlsx uses a single roster column per day with `EH:`, `SH:`, `PH:` prefixes — parser needs to split those and reconstruct per-site templates, with side-by-side ICS validation before cutover. Tracked outside this commit.
+
+**Operator follow-up:** none required. Visit `/templates` in Buoy to confirm the rendered grid matches OneDrive source. When the OneDrive source changes, re-export to `client/public/MasterTemplateCalendar.xlsx`, commit, and redeploy — the prebuild step regenerates the JSON.
+
 ## 2026-06-08 (AM AEST, third deploy) — PMT status unification: Active / Parked / Complete with legacy write-through
 
 **Why:** Two status fields on `projects` was confusing the UI: legacy `status` (`active|parked`) and `pmt_status` (`Open|Active|Complete|Parked`) appeared as two separate dropdowns on project detail with overlapping meanings. Collapsed to a single user-facing concept with three values — `Active`, `Parked`, `Complete` — while keeping the legacy `status` column writing-through for MS To Do sync compatibility. `Open` retired (was redundant with `Active`).
