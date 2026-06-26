@@ -78,6 +78,7 @@ export const ALLOWED_LANDING_ROUTES: readonly string[] = [
   "/capture",
   "/coach",
   "/calendar-planner",
+  "/templates",
   "/morning",
   "/evening",
   "/review",

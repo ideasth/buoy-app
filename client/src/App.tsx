@@ -31,6 +31,7 @@ import { apiRequest } from "@/lib/queryClient";
 const Coach = lazy(() => import("@/pages/Coach"));
 const Calm = lazy(() => import("@/pages/Calm"));
 const CalendarPlanner = lazy(() => import("@/pages/CalendarPlanner"));
+const Templates = lazy(() => import("@/pages/Templates"));
 const Admin = lazy(() => import("@/pages/Admin"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const Usage = lazy(() => import("@/pages/Usage"));
@@ -127,6 +128,7 @@ function AppRouter() {
       {/* Legacy redirects — keep deep links + bookmarks working */}
       <Route path="/calendar" component={CalendarPlanner} />
       <Route path="/planner" component={CalendarPlanner} />
+      <Route path="/templates" component={Templates} />
       {/* Stage 16: natural-language scheduling search. */}
       <Route path="/find-time">{() => <FindTime />}</Route>
       {/* Stage 17: Calendar settings. */}

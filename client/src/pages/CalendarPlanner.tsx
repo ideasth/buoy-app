@@ -27,6 +27,14 @@ import { fmtTime as fmtTimeShared, todayDateStr } from "@/lib/anchor";
 import { TravelBadge } from "@/components/TravelBadge";
 import type { TravelTodayItem } from "@/lib/travel";
 import { leaveByLabel } from "@/lib/travel";
+import type { MasterTemplate, RotationWeek } from "@/types/master-template";
+import { cyclePositionFor } from "@/types/master-template";
+import masterTemplateRaw from "@/generated/master-template.json";
+
+// MasterTemplateCalendar.xlsx — parsed at build time. Drives the "Wk" column
+// (EH / SH / PH / Kids week numbers) in the yearly planner. See
+// scripts/build-master-template.cjs and CONTEXT.md "Master Rotation Template".
+const MASTER_TEMPLATE = masterTemplateRaw as MasterTemplate;
 
 // Shared travel-today hook used by TodaySection and DayDrawer.
 function useTravelTodayMap(enabled: boolean = true) {
@@ -256,6 +264,10 @@ const GROUP_CHIP_BG: Record<GroupKey, string> = {
 };
 
 // --- Date helpers ------------------------------------------------------
+
+function fmtWk(n: number | null): string {
+  return n == null ? "—" : String(n);
+}
 
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -670,6 +682,18 @@ function TodaySection({
 
 // --- Year-grouped table --------------------------------------------------
 
+// Lookup helper: given a date, return the matching rotation week (or null if
+// the anchor / cycle data are missing). Used by the "Wk" column.
+function rotationWeekFor(d: Date): RotationWeek | null {
+  const pos = cyclePositionFor(
+    d,
+    MASTER_TEMPLATE.anchorDateIso,
+    MASTER_TEMPLATE.weeks.length,
+  );
+  if (pos == null) return null;
+  return MASTER_TEMPLATE.weeks[pos] ?? null;
+}
+
 function YearGroupedTable({
   startDate,
   endDate,
@@ -779,7 +803,7 @@ function YearGroupedTable({
       <table className="w-full border-collapse text-xs">
         <thead className="sticky top-0 z-10">
           <tr>
-            <th className="sticky left-0 z-20 bg-card border-b border-r p-2 text-left font-semibold" colSpan={2}>
+            <th className="sticky left-0 z-20 bg-card border-b border-r p-2 text-left font-semibold" colSpan={3}>
               {`${startDate.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })} \u2013 ${endDate.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`}
             </th>
             {groupSpans.map((g, i) => (
@@ -798,6 +822,12 @@ function YearGroupedTable({
           <tr>
             <th className="sticky left-0 z-20 bg-card border-b border-r p-1.5 text-left font-medium w-16 min-w-[3.5rem]">Day</th>
             <th className="border-b border-r p-1.5 text-left font-medium w-20 min-w-[5rem]">Date</th>
+            <th
+              className="border-b border-r p-1.5 text-left font-medium w-20 min-w-[5rem]"
+              title="4-week rotation cycle from MasterTemplateCalendar.xlsx (anchor Mon 29 Jun 2026)"
+            >
+              Wk
+            </th>
             {COL_DEFS.map((c) => (
               <th
                 key={c.key}
@@ -848,6 +878,24 @@ function YearGroupedTable({
                   onClick={() => onPickDay(k)}
                 >
                   {dateLabel}
+                </td>
+                <td
+                  className="border-r p-1 align-top whitespace-nowrap text-[10px] leading-tight text-muted-foreground cursor-pointer hover-elevate"
+                  onClick={() => onPickDay(k)}
+                  data-testid={`year-week-${k}`}
+                >
+                  {(() => {
+                    const w = rotationWeekFor(d);
+                    if (!w) return null;
+                    return (
+                      <>
+                        <div>EH {fmtWk(w.ehWeek)}</div>
+                        <div>SH {fmtWk(w.shWeek)}</div>
+                        <div>PH {fmtWk(w.phWeek)}</div>
+                        <div>Kids {fmtWk(w.kidsWeek)}</div>
+                      </>
+                    );
+                  })()}
                 </td>
                 {COL_DEFS.map((c) => {
                   const entries = cellMap?.[c.key] ?? [];

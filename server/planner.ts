@@ -19,6 +19,29 @@
 import ExcelJS from "exceljs";
 import type { CalEvent } from "./ics";
 import type { PlannerNote } from "@shared/schema";
+import masterTemplate from "../client/src/generated/master-template.json";
+import type { MasterTemplate, RotationWeek } from "../client/src/types/master-template";
+import { cyclePositionFor } from "../client/src/types/master-template";
+
+const MASTER_TEMPLATE = masterTemplate as MasterTemplate;
+
+/** Format the rotation Wk column for a given day in Australia/Melbourne. */
+function fmtWk(d: Date): string {
+  const pos = cyclePositionFor(
+    d,
+    MASTER_TEMPLATE.anchorDateIso,
+    MASTER_TEMPLATE.weeks.length,
+  );
+  if (pos == null) return "";
+  const w = MASTER_TEMPLATE.weeks[pos] as RotationWeek | undefined;
+  if (!w) return "";
+  const parts: string[] = [];
+  if (w.ehWeek != null) parts.push(`EH ${w.ehWeek}`);
+  if (w.shWeek != null) parts.push(`SH ${w.shWeek}`);
+  if (w.phWeek != null) parts.push(`PH ${w.phWeek}`);
+  if (w.kidsWeek != null) parts.push(`Kids ${w.kidsWeek}`);
+  return parts.join("\n");
+}
 
 const OOO_STRONG = [
   "travel —",
@@ -409,24 +432,27 @@ export async function buildPlannerXlsx(
   // Mirrors the YearGroupedTable in CalendarPlanner.tsx: 4 super-groups, 7 leaf
   // columns, plus Date + Day + Notes columns at the start.
   const planner = wb.addWorksheet("Year Planner");
-  planner.views = [{ state: "frozen", xSplit: 2, ySplit: 2 }];
+  // Freeze date + day + wk (xSplit=3) and the 2 header rows (ySplit=2).
+  planner.views = [{ state: "frozen", xSplit: 3, ySplit: 2 }];
   planner.columns = [
     { width: 16 }, // Date
     { width: 10 }, // Day
+    { width: 12 }, // Wk (EH/SH/PH/Kids stacked)
     ...COL_DEFS.map(() => ({ width: 28 })),
     { width: 36 }, // Notes
   ];
 
-  // Super-header (groups). We span across leaf columns 3..(3+COL_DEFS.length-1).
+  // Super-header (groups). Date+Day+Wk = cols 1-3, leaf columns start at 4.
+  const FIRST_LEAF_COL = 4;
   const superRow = planner.getRow(1);
   superRow.getCell(1).value = `${from} \u2192 ${to}`;
   superRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
   superRow.getCell(1).font = { bold: true, color: { argb: COLOR.headerText } };
   superRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.header } };
-  planner.mergeCells(1, 1, 1, 2);
+  planner.mergeCells(1, 1, 1, 3);
 
   // Group spans
-  let cursorCol = 3; // first leaf column index (1-based), after Date+Day
+  let cursorCol = FIRST_LEAF_COL;
   const groupRanges: Array<{ group: GroupKey; from: number; to: number }> = [];
   let lastGroup: GroupKey | null = null;
   for (const def of COL_DEFS) {
@@ -447,7 +473,7 @@ export async function buildPlannerXlsx(
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROUP_COLOR[gr.group] } };
   }
   // Notes super-header cell
-  const notesSuperCol = 2 + COL_DEFS.length + 1;
+  const notesSuperCol = (FIRST_LEAF_COL - 1) + COL_DEFS.length + 1;
   const notesSuperCell = planner.getCell(1, notesSuperCol);
   notesSuperCell.value = "Notes";
   notesSuperCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -459,16 +485,17 @@ export async function buildPlannerXlsx(
   subRow.values = [
     "Date",
     "Day",
+    "Wk",
     ...COL_DEFS.map((c) => c.label),
     "Note",
   ];
   subRow.eachCell((cell, colNumber) => {
     cell.font = { bold: true };
-    if (colNumber <= 2 || colNumber === notesSuperCol) {
+    if (colNumber <= 3 || colNumber === notesSuperCol) {
       cell.font = { bold: true, color: { argb: COLOR.headerText } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.header } };
     } else {
-      const def = COL_DEFS[colNumber - 3];
+      const def = COL_DEFS[colNumber - FIRST_LEAF_COL];
       if (def) {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROUP_COLOR[def.group] } };
       }
@@ -493,9 +520,11 @@ export async function buildPlannerXlsx(
         lines.push(`+${dayEvents.filter((x) => columnFor(x.summary) === col).length - 5} more`);
       }
     }
+    const wkLabel = fmtWk(dt);
     const row = planner.addRow([
       dt.toLocaleDateString("en-AU", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }),
       dt.toLocaleDateString("en-AU", { weekday: "long" }),
+      wkLabel,
       ...COL_DEFS.map((c) => cellLines[c.key].join("\n")),
       noteByDate.get(day) ?? "",
     ]);
@@ -503,16 +532,21 @@ export async function buildPlannerXlsx(
     row.eachCell((cell, colNumber) => {
       cell.alignment = { vertical: "top", wrapText: true };
       cell.font = { size: 9 };
-      if (colNumber <= 2) {
+      if (colNumber <= 3) {
         if (isWeekend) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.weekend } };
+        }
+        if (colNumber === 3) {
+          // Centre + smaller font so the 4 stacked week labels fit comfortably.
+          cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+          cell.font = { size: 8 };
         }
       } else if (colNumber === notesSuperCol) {
         if ((noteByDate.get(day) ?? "").trim()) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.notes } };
         }
       } else {
-        const def = COL_DEFS[colNumber - 3];
+        const def = COL_DEFS[colNumber - FIRST_LEAF_COL];
         if (def) {
           const lines = cellLines[def.key];
           if (lines.length > 0) {
@@ -527,9 +561,11 @@ export async function buildPlannerXlsx(
         right: { style: "thin", color: { argb: "DDDDDD" } },
       };
     });
-    // Auto-size row height by line count
+    // Auto-size row height by line count. Wk column always has up to 4 lines
+    // (EH/SH/PH/Kids), so we floor at 4 to keep it readable.
     const maxLines = Math.max(
       1,
+      wkLabel ? wkLabel.split("\n").length : 0,
       ...COL_DEFS.map((c) => cellLines[c.key].length),
       Math.ceil(((noteByDate.get(day) ?? "").length || 0) / 40),
     );

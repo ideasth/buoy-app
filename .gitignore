@@ -2,6 +2,10 @@ node_modules/
 dist/
 .vite/
 
+# Generated at build time from client/public/MasterTemplateCalendar.xlsx by
+# scripts/build-master-template.cjs (run as part of `npm run build`).
+client/src/generated/
+
 # SQLite database files — never commit; exposes demo data at rest
 data.db
 data.db-shm

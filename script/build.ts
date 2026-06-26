@@ -34,6 +34,23 @@ const allowlist = [
 ];
 
 async function buildAll() {
+  // Regenerate client/src/generated/master-template.json from
+  // client/public/MasterTemplateCalendar.xlsx. Runs first because the
+  // typecheck and the client build both depend on the generated file.
+  // Skip with SKIP_MASTER_TEMPLATE=1 only for emergency rebuilds when the
+  // xlsx is temporarily missing.
+  if (process.env.SKIP_MASTER_TEMPLATE !== "1") {
+    console.log("generating master-template.json from xlsx...");
+    const mt = spawnSync("node", ["scripts/build-master-template.cjs"], {
+      stdio: "inherit",
+      shell: false,
+    });
+    if (mt.status !== 0) {
+      console.error("master-template build failed; aborting");
+      process.exit(mt.status ?? 1);
+    }
+  }
+
   // CI gate: typecheck before building. Skip with SKIP_TYPECHECK=1 if needed.
   if (process.env.SKIP_TYPECHECK !== "1") {
     console.log("typechecking (tsc --noEmit)...");
