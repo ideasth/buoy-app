@@ -1671,3 +1671,11 @@ curl -sS -H "X-Anchor-Sync-Secret: $SECRET" \
 
 **Next thread**
 - Stages 7–11 master prompt is saved in the Life Management Space as `Stages 7-11 update.md` (21,635 bytes). Covers unified `daily_check_ins` table, `/checkin` page, Reflect→Evening rename, Coach pre-session check-in, reads switch + dual-write stop, and Stage 11 reflection score time-series tracker on Review.
+
+## 2026-07-11 08:40 AEST — Stage 21: focus-of-week tier + daily focus + Projects UI
+- Commit deployed: b32f55a (merge of stage-21-focus-of-week)
+- New: projects.focusOfWeekAt column; daily_focus table; GET /api/projects/focus-of-week; GET/POST/DELETE /api/daily-focus; PATCH /api/projects/:id priority validation (400 on invalid) + focusOfWeek routing.
+- UI: Projects page renders "Focus of the week" group first (amber badge). ProjectDetail: Status selector above Priority, both shown for all projects, third priority option "Focus of the week".
+- Today page: one-tap "Today's action" card.
+- Smoke (live): /api/health {"ok":true} on buoy + anchor back-compat; /api/projects/focus-of-week -> {"projects":[]}; /api/daily-focus -> null; invalid priority PATCH -> 400. All pass.
+- Companion: user skill focus-anchor-adhd updated (focus-of-week tier ranks above high; needs-files nudge; set-today's-action flow). Daily 05:30 AEST morning anchor cron created (id 14825290; UTC 30 19; retune to 30 18 after AEDT cutover Sun 5 Oct 2026).
