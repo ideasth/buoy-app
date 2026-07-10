@@ -1692,6 +1692,263 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true });
   });
 
+  // ===== PMT component fields (narrative status, notes, actions, action notes, phase description) =====
+  // Follows existing PMT conventions: session-gated, field-level validation,
+  // unknown-field rejection, concise JSON errors. Optional URL fields must be
+  // a valid http(s) URL or blank.
+  const ACTION_STATUSES = ["Open", "Active", "Complete", "Parked"];
+  const isBlankOrValidUrl = (v: unknown): boolean => {
+    if (v == null || v === "") return true;
+    if (typeof v !== "string") return false;
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  // Narrative status on a component (projects row).
+  app.patch("/api/projects/:id/narrative-status", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!storage.getProject(id)) return res.status(404).json({ error: "not found" });
+    const allowed = [
+      "latestNarrativeStatus",
+      "latestNarrativeStatusSourceUrl",
+      "latestNarrativeStatusSourceLabel",
+    ];
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+    }
+    const { latestNarrativeStatus, latestNarrativeStatusSourceUrl, latestNarrativeStatusSourceLabel } = req.body || {};
+    if (typeof latestNarrativeStatus !== "string" || latestNarrativeStatus.trim() === "") {
+      return res.status(400).json({ error: "latestNarrativeStatus required" });
+    }
+    if (latestNarrativeStatus.length > 2000) {
+      return res.status(400).json({ error: "latestNarrativeStatus too long (max 2000)" });
+    }
+    if (!isBlankOrValidUrl(latestNarrativeStatusSourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    const updated = storage.updateProjectNarrativeStatus(id, {
+      latestNarrativeStatus,
+      sourceUrl: latestNarrativeStatusSourceUrl || null,
+      sourceLabel: latestNarrativeStatusSourceLabel || null,
+    });
+    res.json(updated);
+  });
+
+  // Phase description & objectives.
+  app.patch("/api/phases/:phaseId/description", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const phaseId = parseInt(req.params.phaseId, 10);
+    const allowed = ["description", "descriptionSourceUrl", "descriptionSourceLabel"];
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+    }
+    const { description, descriptionSourceUrl, descriptionSourceLabel } = req.body || {};
+    if (typeof description !== "string" || description.trim() === "") {
+      return res.status(400).json({ error: "description required" });
+    }
+    if (description.length > 5000) {
+      return res.status(400).json({ error: "description too long (max 5000)" });
+    }
+    if (!isBlankOrValidUrl(descriptionSourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    const updated = storage.updatePhaseDescription(phaseId, {
+      description,
+      sourceUrl: descriptionSourceUrl || null,
+      sourceLabel: descriptionSourceLabel || null,
+    });
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json(updated);
+  });
+
+  // Component notes timeline.
+  app.get("/api/projects/:id/notes", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    res.json(storage.listComponentNotes("project", id));
+  });
+  app.post("/api/projects/:id/notes", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!storage.getProject(id)) return res.status(404).json({ error: "not found" });
+    const allowed = ["noteDate", "title", "body", "sourceUrl", "sourceLabel"];
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+    }
+    const { noteDate, title, body, sourceUrl, sourceLabel } = req.body || {};
+    if (typeof body !== "string" || body.trim() === "") {
+      return res.status(400).json({ error: "body required" });
+    }
+    if (typeof noteDate !== "string" || noteDate.trim() === "") {
+      return res.status(400).json({ error: "noteDate required" });
+    }
+    if (title != null && typeof title === "string" && title.length > 200) {
+      return res.status(400).json({ error: "title too long (max 200)" });
+    }
+    if (!isBlankOrValidUrl(sourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    res.json(storage.createComponentNote({
+      componentType: "project",
+      componentId: id,
+      noteDate,
+      title: title || null,
+      body,
+      sourceUrl: sourceUrl || null,
+      sourceLabel: sourceLabel || null,
+    }));
+  });
+  app.patch("/api/component-notes/:noteId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const noteId = parseInt(req.params.noteId, 10);
+    const allowed = ["noteDate", "title", "body", "sourceUrl", "sourceLabel"];
+    const updates: any = {};
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+      updates[k] = req.body[k];
+    }
+    if ("body" in updates && (typeof updates.body !== "string" || updates.body.trim() === "")) {
+      return res.status(400).json({ error: "body required" });
+    }
+    if ("title" in updates && updates.title != null && typeof updates.title === "string" && updates.title.length > 200) {
+      return res.status(400).json({ error: "title too long (max 200)" });
+    }
+    if ("sourceUrl" in updates && !isBlankOrValidUrl(updates.sourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    const updated = storage.updateComponentNote(noteId, updates);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json(updated);
+  });
+  app.delete("/api/component-notes/:noteId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    storage.deleteComponentNote(parseInt(req.params.noteId, 10));
+    res.json({ ok: true });
+  });
+
+  // Actions.
+  app.get("/api/projects/:id/actions", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    res.json(storage.listActions("project", id));
+  });
+  app.post("/api/projects/:id/actions", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!storage.getProject(id)) return res.status(404).json({ error: "not found" });
+    const allowed = ["title", "status", "dueDate", "linkUrl", "linkLabel"];
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+    }
+    const { title, status, dueDate, linkUrl, linkLabel } = req.body || {};
+    if (typeof title !== "string" || title.trim() === "") {
+      return res.status(400).json({ error: "title required" });
+    }
+    if (status != null && !ACTION_STATUSES.includes(status)) {
+      return res.status(400).json({ error: "invalid_action_status" });
+    }
+    if (!isBlankOrValidUrl(linkUrl)) {
+      return res.status(400).json({ error: "invalid_link_url" });
+    }
+    res.json(storage.createAction({
+      componentType: "project",
+      componentId: id,
+      title,
+      status: status || "Open",
+      dueDate: dueDate || null,
+      linkUrl: linkUrl || null,
+      linkLabel: linkLabel || null,
+    }));
+  });
+  app.patch("/api/actions/:actionId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const actionId = parseInt(req.params.actionId, 10);
+    const allowed = ["title", "status", "dueDate", "linkUrl", "linkLabel"];
+    const updates: any = {};
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+      updates[k] = req.body[k];
+    }
+    if ("status" in updates && updates.status != null && !ACTION_STATUSES.includes(updates.status)) {
+      return res.status(400).json({ error: "invalid_action_status" });
+    }
+    if ("title" in updates && (typeof updates.title !== "string" || updates.title.trim() === "")) {
+      return res.status(400).json({ error: "title required" });
+    }
+    if ("linkUrl" in updates && !isBlankOrValidUrl(updates.linkUrl)) {
+      return res.status(400).json({ error: "invalid_link_url" });
+    }
+    const updated = storage.updateAction(actionId, updates);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json(updated);
+  });
+  app.delete("/api/actions/:actionId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    storage.deleteAction(parseInt(req.params.actionId, 10));
+    res.json({ ok: true });
+  });
+
+  // Action notes timeline.
+  app.get("/api/actions/:actionId/notes", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const actionId = parseInt(req.params.actionId, 10);
+    res.json(storage.listActionNotes(actionId));
+  });
+  app.post("/api/actions/:actionId/notes", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const actionId = parseInt(req.params.actionId, 10);
+    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel"];
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+    }
+    const { noteDate, body, sourceUrl, sourceLabel } = req.body || {};
+    if (typeof body !== "string" || body.trim() === "") {
+      return res.status(400).json({ error: "body required" });
+    }
+    if (typeof noteDate !== "string" || noteDate.trim() === "") {
+      return res.status(400).json({ error: "noteDate required" });
+    }
+    if (!isBlankOrValidUrl(sourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    res.json(storage.createActionNote({
+      actionId,
+      noteDate,
+      body,
+      sourceUrl: sourceUrl || null,
+      sourceLabel: sourceLabel || null,
+    }));
+  });
+  app.patch("/api/action-notes/:noteId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const noteId = parseInt(req.params.noteId, 10);
+    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel"];
+    const updates: any = {};
+    for (const k of Object.keys(req.body || {})) {
+      if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
+      updates[k] = req.body[k];
+    }
+    if ("body" in updates && (typeof updates.body !== "string" || updates.body.trim() === "")) {
+      return res.status(400).json({ error: "body required" });
+    }
+    if ("sourceUrl" in updates && !isBlankOrValidUrl(updates.sourceUrl)) {
+      return res.status(400).json({ error: "invalid_source_url" });
+    }
+    const updated = storage.updateActionNote(noteId, updates);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json(updated);
+  });
+  app.delete("/api/action-notes/:noteId", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    storage.deleteActionNote(parseInt(req.params.noteId, 10));
+    res.json({ ok: true });
+  });
+
   // Bulk ingest from MS To Do (called by cron)
   app.post("/api/projects/ingest", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;

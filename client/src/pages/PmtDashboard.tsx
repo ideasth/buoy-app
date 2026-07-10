@@ -26,6 +26,11 @@ interface PmtItem {
   latestThreadUrl: string | null;
   pmtNotes: string | null;
   seedKey: string | null;
+  // Dashboard rollups (computed server-side; snippet only, never full text).
+  hasNarrativeStatus?: boolean;
+  narrativeSnippet?: string | null;
+  openActiveActionCount?: number;
+  phaseDescriptionCount?: number;
 }
 
 interface LabeledProjectEntry {
@@ -214,7 +219,27 @@ function ItemRow({
           </span>
           {pmtStatusBadge(item.pmtStatus)}
           {fileStatusBadge(item.fileStatus)}
+          {!item.hasNarrativeStatus && (
+            <Badge variant="outline" className="text-[10px] py-0 h-4 border-amber-500 text-amber-700 dark:text-amber-400" data-testid={`badge-no-narrative-${item.id}`}>
+              no status
+            </Badge>
+          )}
+          {(item.openActiveActionCount ?? 0) > 0 && (
+            <Badge variant="outline" className="text-[10px] py-0 h-4" data-testid={`badge-open-actions-${item.id}`}>
+              {item.openActiveActionCount} open action{item.openActiveActionCount === 1 ? "" : "s"}
+            </Badge>
+          )}
+          {(item.phaseDescriptionCount ?? 0) > 0 && (
+            <Badge variant="outline" className="text-[10px] py-0 h-4 border-green-600 text-green-700 dark:text-green-400" data-testid={`badge-phase-desc-${item.id}`}>
+              objectives
+            </Badge>
+          )}
         </div>
+        {item.narrativeSnippet && (
+          <p className="text-xs text-muted-foreground mt-0.5 leading-snug italic" data-testid={`narrative-snippet-${item.id}`}>
+            {item.narrativeSnippet}
+          </p>
+        )}
         {item.nextAction && (
           <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
             {item.nextAction}

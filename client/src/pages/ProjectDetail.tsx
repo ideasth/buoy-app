@@ -46,6 +46,81 @@ function fmtDeadline(s: string | null): string {
   return s;
 }
 
+// Full date-time in Australia/Melbourne for last-updated stamps.
+function fmtDateTimeMelbourne(ms: number | null): string {
+  if (ms == null) return "";
+  try {
+    return new Intl.DateTimeFormat("en-AU", {
+      timeZone: "Australia/Melbourne",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ms));
+  } catch {
+    return "";
+  }
+}
+
+// Date-only in Australia/Melbourne for note-date rows.
+function fmtNoteDate(s: string | null): string {
+  if (!s) return "";
+  try {
+    const d = new Date(s.length <= 10 ? s + "T00:00:00" : s);
+    if (!isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat("en-AU", {
+        timeZone: "Australia/Melbourne",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(d);
+    }
+  } catch {}
+  return s;
+}
+
+// Today's date as YYYY-MM-DD in Australia/Melbourne, for note-date defaults.
+function todayMelbourne(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+interface ComponentNote {
+  id: number;
+  componentType: string;
+  componentId: number;
+  noteDate: string;
+  title: string | null;
+  body: string;
+  sourceUrl: string | null;
+  sourceLabel: string | null;
+}
+
+interface ActionItem {
+  id: number;
+  componentType: string;
+  componentId: number;
+  title: string;
+  status: string;
+  dueDate: string | null;
+  linkUrl: string | null;
+  linkLabel: string | null;
+}
+
+interface ActionNote {
+  id: number;
+  actionId: number;
+  noteDate: string;
+  body: string;
+  sourceUrl: string | null;
+  sourceLabel: string | null;
+}
+
 export default function ProjectDetail() {
   const [, params] = useRoute<{ id: string }>("/projects/:id");
   const id = params ? parseInt(params.id, 10) : NaN;
@@ -57,6 +132,32 @@ export default function ProjectDetail() {
     enabled: Number.isFinite(id),
     queryFn: async () => (await apiRequest("GET", `/api/projects/${id}`)).json(),
   });
+
+  const notesKey = ["/api/projects", id, "notes"];
+  const notesQ = useQuery<ComponentNote[]>({
+    queryKey: notesKey,
+    enabled: Number.isFinite(id),
+    queryFn: async () => (await apiRequest("GET", `/api/projects/${id}/notes`)).json(),
+  });
+  const actionsKey = ["/api/projects", id, "actions"];
+  const actionsQ = useQuery<ActionItem[]>({
+    queryKey: actionsKey,
+    enabled: Number.isFinite(id),
+    queryFn: async () => (await apiRequest("GET", `/api/projects/${id}/actions`)).json(),
+  });
+
+  // Narrative status editor draft.
+  const [narrativeEditing, setNarrativeEditing] = useState(false);
+  const [narrativeDraft, setNarrativeDraft] = useState("");
+  const [narrativeUrlDraft, setNarrativeUrlDraft] = useState("");
+  const [narrativeLabelDraft, setNarrativeLabelDraft] = useState("");
+  // New component note draft.
+  const [newNote, setNewNote] = useState({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "", sourceLabel: "" });
+  // New action draft.
+  const [newAction, setNewAction] = useState({ title: "", dueDate: "", linkUrl: "", linkLabel: "" });
+  // Phase description drafts, keyed by phase id.
+  const [phaseDescEditing, setPhaseDescEditing] = useState<number | null>(null);
+  const [phaseDescDraft, setPhaseDescDraft] = useState("");
 
   const [newPhaseName, setNewPhaseName] = useState("");
   const [newComponent, setNewComponent] = useState<{ name: string; phaseId: number | null }>({
@@ -89,6 +190,79 @@ export default function ProjectDetail() {
     await apiRequest("PATCH", `/api/projects/${id}`, body);
     refresh();
     queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+  };
+
+  const refreshNotes = () => queryClient.invalidateQueries({ queryKey: notesKey });
+  const refreshActions = () => queryClient.invalidateQueries({ queryKey: actionsKey });
+
+  const saveNarrativeStatus = async () => {
+    const text = narrativeDraft.trim();
+    if (!text) {
+      toast({ title: "Status required", description: "Enter a narrative status." });
+      return;
+    }
+    await apiRequest("PATCH", `/api/projects/${id}/narrative-status`, {
+      latestNarrativeStatus: text,
+      latestNarrativeStatusSourceUrl: narrativeUrlDraft.trim() || undefined,
+      latestNarrativeStatusSourceLabel: narrativeLabelDraft.trim() || undefined,
+    });
+    setNarrativeEditing(false);
+    refresh();
+  };
+
+  const addNote = async () => {
+    const body = newNote.body.trim();
+    if (!body) return;
+    await apiRequest("POST", `/api/projects/${id}/notes`, {
+      noteDate: newNote.noteDate || todayMelbourne(),
+      title: newNote.title.trim() || undefined,
+      body,
+      sourceUrl: newNote.sourceUrl.trim() || undefined,
+      sourceLabel: newNote.sourceLabel.trim() || undefined,
+    });
+    setNewNote({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "", sourceLabel: "" });
+    refreshNotes();
+  };
+
+  const deleteNote = async (noteId: number) => {
+    if (!confirm("Delete this note?")) return;
+    await apiRequest("DELETE", `/api/component-notes/${noteId}`);
+    refreshNotes();
+  };
+
+  const addAction = async () => {
+    const title = newAction.title.trim();
+    if (!title) return;
+    await apiRequest("POST", `/api/projects/${id}/actions`, {
+      title,
+      dueDate: newAction.dueDate || undefined,
+      linkUrl: newAction.linkUrl.trim() || undefined,
+      linkLabel: newAction.linkLabel.trim() || undefined,
+    });
+    setNewAction({ title: "", dueDate: "", linkUrl: "", linkLabel: "" });
+    refreshActions();
+  };
+
+  const setActionStatus = async (actionId: number, status: string) => {
+    await apiRequest("PATCH", `/api/actions/${actionId}`, { status });
+    refreshActions();
+  };
+
+  const deleteAction = async (actionId: number) => {
+    if (!confirm("Delete this action?")) return;
+    await apiRequest("DELETE", `/api/actions/${actionId}`);
+    refreshActions();
+  };
+
+  const savePhaseDescription = async (phaseId: number) => {
+    const text = phaseDescDraft.trim();
+    if (!text) {
+      toast({ title: "Description required", description: "Enter a phase description." });
+      return;
+    }
+    await apiRequest("PATCH", `/api/phases/${phaseId}/description`, { description: text });
+    setPhaseDescEditing(null);
+    refresh();
   };
 
   const setPriority = (priority: string) => patchProject({ priority } as any);
@@ -251,6 +425,91 @@ export default function ProjectDetail() {
           </div>
         </div>
       </div>
+
+      {/* Narrative status box */}
+      <section
+        className="rounded-lg border border-primary/40 bg-primary/5 p-4 space-y-3"
+        data-testid="narrative-status-box"
+      >
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Narrative status</div>
+          {!narrativeEditing && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setNarrativeDraft(project.latestNarrativeStatus ?? "");
+                setNarrativeUrlDraft(project.latestNarrativeStatusSourceUrl ?? "");
+                setNarrativeLabelDraft(project.latestNarrativeStatusSourceLabel ?? "");
+                setNarrativeEditing(true);
+              }}
+              data-testid="button-edit-narrative-status"
+            >
+              <Pencil className="h-3 w-3 mr-1" />
+              Edit
+            </Button>
+          )}
+        </div>
+        {narrativeEditing ? (
+          <div className="space-y-2">
+            <Textarea
+              value={narrativeDraft}
+              onChange={(e) => setNarrativeDraft(e.target.value)}
+              maxLength={2000}
+              placeholder="Where does this component stand right now?"
+              className="min-h-[100px] text-sm"
+              data-testid="textarea-narrative-status"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <Input
+                value={narrativeUrlDraft}
+                onChange={(e) => setNarrativeUrlDraft(e.target.value)}
+                placeholder="Source URL (optional)"
+                className="h-8 text-xs"
+                data-testid="input-narrative-source-url"
+              />
+              <Input
+                value={narrativeLabelDraft}
+                onChange={(e) => setNarrativeLabelDraft(e.target.value)}
+                placeholder="Source label (optional)"
+                className="h-8 text-xs"
+                data-testid="input-narrative-source-label"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={saveNarrativeStatus} data-testid="button-save-narrative-status">
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setNarrativeEditing(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="text-sm whitespace-pre-wrap" data-testid="text-narrative-status">
+              {project.latestNarrativeStatus?.trim() || (
+                <span className="italic text-muted-foreground">No narrative status yet.</span>
+              )}
+            </div>
+            {project.latestNarrativeStatusUpdatedAt != null && (
+              <div className="text-[11px] text-muted-foreground">
+                Updated {fmtDateTimeMelbourne(project.latestNarrativeStatusUpdatedAt)}
+              </div>
+            )}
+            {project.latestNarrativeStatusSourceUrl && (
+              <a
+                href={project.latestNarrativeStatusSourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline inline-block"
+              >
+                {project.latestNarrativeStatusSourceLabel?.trim() || "Source"}
+              </a>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Summary card */}
       <section className="rounded-lg border border-border bg-card p-4 space-y-4">
@@ -652,6 +911,60 @@ export default function ProjectDetail() {
                 )}
               </div>
 
+              {/* Phase description & objectives */}
+              {phase && (
+                <div className="pl-2" data-testid={`phase-description-${phase.id}`}>
+                  {phaseDescEditing === phase.id ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={phaseDescDraft}
+                        onChange={(e) => setPhaseDescDraft(e.target.value)}
+                        maxLength={5000}
+                        placeholder="Phase description & objectives"
+                        className="min-h-[70px] text-sm"
+                        data-testid={`textarea-phase-description-${phase.id}`}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => savePhaseDescription(phase.id)}
+                          data-testid={`button-save-phase-description-${phase.id}`}
+                        >
+                          Save
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setPhaseDescEditing(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 text-xs text-muted-foreground whitespace-pre-wrap">
+                        {phase.description?.trim() || <span className="italic">No description & objectives.</span>}
+                        {phase.descriptionUpdatedAt != null && (
+                          <span className="block text-[10px] mt-0.5">
+                            Updated {fmtDateTimeMelbourne(phase.descriptionUpdatedAt)}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs"
+                        onClick={() => {
+                          setPhaseDescDraft(phase.description ?? "");
+                          setPhaseDescEditing(phase.id);
+                        }}
+                        data-testid={`button-edit-phase-description-${phase.id}`}
+                      >
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Edit
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {phaseComps.length === 0 ? (
                 <div className="text-xs text-muted-foreground italic pl-2">No components.</div>
               ) : (
@@ -806,6 +1119,273 @@ export default function ProjectDetail() {
           </div>
         </div>
       </section>
+
+      {/* Actions */}
+      <section className="space-y-3" data-testid="section-actions">
+        <h2 className="text-base font-semibold">Actions</h2>
+        <div className="rounded-lg border border-border bg-card divide-y divide-border">
+          {(actionsQ.data ?? []).length === 0 ? (
+            <div className="p-3 text-sm text-muted-foreground italic">No actions.</div>
+          ) : (
+            (actionsQ.data ?? []).map((a) => (
+              <ActionRow
+                key={a.id}
+                action={a}
+                onSetStatus={setActionStatus}
+                onDelete={deleteAction}
+              />
+            ))
+          )}
+        </div>
+        {/* Add action */}
+        <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Add action</div>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              value={newAction.title}
+              onChange={(e) => setNewAction({ ...newAction, title: e.target.value })}
+              placeholder="Action title"
+              className="h-8 max-w-xs"
+              data-testid="input-new-action"
+            />
+            <Input
+              type="date"
+              value={newAction.dueDate}
+              onChange={(e) => setNewAction({ ...newAction, dueDate: e.target.value })}
+              className="h-8 max-w-[160px]"
+              data-testid="input-new-action-due"
+            />
+            <Button
+              size="sm"
+              onClick={addAction}
+              disabled={!newAction.title.trim()}
+              data-testid="button-add-action"
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Add
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* Notes timeline */}
+      <section className="space-y-3" data-testid="section-component-notes">
+        <h2 className="text-base font-semibold">Notes timeline</h2>
+        <div className="rounded-lg border border-border bg-card divide-y divide-border">
+          {(notesQ.data ?? []).length === 0 ? (
+            <div className="p-3 text-sm text-muted-foreground italic">No notes yet.</div>
+          ) : (
+            (notesQ.data ?? []).map((n) => (
+              <div key={n.id} className="p-3 space-y-1" data-testid={`note-row-${n.id}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">{fmtNoteDate(n.noteDate)}</span>
+                  {n.title && <span className="text-sm font-medium">{n.title}</span>}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => deleteNote(n.id)}
+                    className="h-6 w-6 ml-auto text-muted-foreground"
+                    aria-label="Delete note"
+                    data-testid={`button-delete-note-${n.id}`}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="text-sm whitespace-pre-wrap">{n.body}</div>
+                {n.sourceUrl && (
+                  <a
+                    href={n.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline inline-block"
+                  >
+                    {n.sourceLabel?.trim() || "Source"}
+                  </a>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+        {/* Add note */}
+        <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Add note</div>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              type="date"
+              value={newNote.noteDate}
+              onChange={(e) => setNewNote({ ...newNote, noteDate: e.target.value })}
+              className="h-8 max-w-[160px]"
+              data-testid="input-new-note-date"
+            />
+            <Input
+              value={newNote.title}
+              onChange={(e) => setNewNote({ ...newNote, title: e.target.value })}
+              placeholder="Title (optional)"
+              maxLength={200}
+              className="h-8 max-w-xs"
+              data-testid="input-new-note-title"
+            />
+          </div>
+          <Textarea
+            value={newNote.body}
+            onChange={(e) => setNewNote({ ...newNote, body: e.target.value })}
+            placeholder="Note"
+            className="min-h-[70px] text-sm"
+            data-testid="textarea-new-note-body"
+          />
+          <Button
+            size="sm"
+            onClick={addNote}
+            disabled={!newNote.body.trim()}
+            data-testid="button-add-note"
+          >
+            <Plus className="h-3 w-3 mr-1" />
+            Add note
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ActionStatusBadge({ status }: { status: string }) {
+  const cls: Record<string, string> = {
+    Open: "border-border text-muted-foreground",
+    Active: "border-blue-500 text-blue-700 dark:text-blue-400",
+    Complete: "border-green-600 text-green-700 dark:text-green-400",
+    Parked: "border-amber-500 text-amber-700 dark:text-amber-400",
+  };
+  return (
+    <Badge variant="outline" className={cn("text-[10px] py-0 h-4", cls[status] ?? "")}>
+      {status}
+    </Badge>
+  );
+}
+
+const ACTION_STATUS_OPTIONS = ["Open", "Active", "Complete", "Parked"];
+
+function ActionRow({
+  action,
+  onSetStatus,
+  onDelete,
+}: {
+  action: ActionItem;
+  onSetStatus: (id: number, status: string) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [newNoteBody, setNewNoteBody] = useState("");
+  const [newNoteDate, setNewNoteDate] = useState(todayMelbourne());
+  const notesKey = ["/api/actions", action.id, "notes"];
+  const notesQ = useQuery<ActionNote[]>({
+    queryKey: notesKey,
+    enabled: expanded,
+    queryFn: async () => (await apiRequest("GET", `/api/actions/${action.id}/notes`)).json(),
+  });
+
+  const addNote = async () => {
+    const body = newNoteBody.trim();
+    if (!body) return;
+    await apiRequest("POST", `/api/actions/${action.id}/notes`, {
+      noteDate: newNoteDate || todayMelbourne(),
+      body,
+    });
+    setNewNoteBody("");
+    setNewNoteDate(todayMelbourne());
+    queryClient.invalidateQueries({ queryKey: notesKey });
+  };
+
+  return (
+    <div className="p-3 space-y-2" data-testid={`action-row-${action.id}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <ActionStatusBadge status={action.status} />
+        <span className="text-sm font-medium">{action.title}</span>
+        {action.dueDate && (
+          <span className="text-[11px] text-muted-foreground">due {fmtNoteDate(action.dueDate)}</span>
+        )}
+        {action.linkUrl && (
+          <a
+            href={action.linkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {action.linkLabel?.trim() || "Link"}
+          </a>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <Select value={action.status} onValueChange={(v) => onSetStatus(action.id, v)}>
+            <SelectTrigger className="h-7 w-[120px] text-xs" data-testid={`select-action-status-${action.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ACTION_STATUS_OPTIONS.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setExpanded((v) => !v)}
+            className="h-7 text-xs"
+            data-testid={`button-toggle-action-notes-${action.id}`}
+          >
+            {expanded ? "Hide notes" : "Notes"}
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => onDelete(action.id)}
+            className="h-7 w-7 text-muted-foreground"
+            aria-label="Delete action"
+            data-testid={`button-delete-action-${action.id}`}
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="pl-2 space-y-2">
+          <div className="space-y-1.5" data-testid={`action-notes-${action.id}`}>
+            {(notesQ.data ?? []).length === 0 ? (
+              <div className="text-xs text-muted-foreground italic">No notes.</div>
+            ) : (
+              (notesQ.data ?? []).map((n) => (
+                <div key={n.id} className="text-xs" data-testid={`action-note-${n.id}`}>
+                  <span className="text-muted-foreground mr-1">{fmtNoteDate(n.noteDate)}</span>
+                  <span className="whitespace-pre-wrap">{n.body}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              type="date"
+              value={newNoteDate}
+              onChange={(e) => setNewNoteDate(e.target.value)}
+              className="h-7 max-w-[150px] text-xs"
+              data-testid={`input-action-note-date-${action.id}`}
+            />
+            <Input
+              value={newNoteBody}
+              onChange={(e) => setNewNoteBody(e.target.value)}
+              placeholder="Add note"
+              className="h-7 text-xs max-w-xs"
+              data-testid={`input-action-note-body-${action.id}`}
+            />
+            <Button
+              size="sm"
+              onClick={addNote}
+              disabled={!newNoteBody.trim()}
+              className="h-7 text-xs"
+              data-testid={`button-add-action-note-${action.id}`}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

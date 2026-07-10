@@ -17,6 +17,9 @@ import {
   projectPhases,
   projectComponents,
   projectTasks,
+  projectComponentNotes,
+  projectActions,
+  projectActionNotes,
   dailyCheckIns,
   dailyFactors,
   issues,
@@ -61,6 +64,12 @@ import type {
   InsertProjectComponent,
   ProjectTask,
   InsertProjectTask,
+  ProjectComponentNote,
+  InsertProjectComponentNote,
+  ProjectAction,
+  InsertProjectAction,
+  ProjectActionNote,
+  InsertProjectActionNote,
   DailyCheckIn,
   InsertDailyCheckIn,
   DailyFactors,
@@ -359,6 +368,47 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 CREATE INDEX IF NOT EXISTS idx_ptasks_project ON project_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_ptasks_component ON project_tasks(component_id);
 
+-- PMT component notes (dated timeline), actions, and action notes.
+CREATE TABLE IF NOT EXISTS project_component_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  component_type TEXT NOT NULL DEFAULT 'project',
+  component_id INTEGER NOT NULL,
+  note_date TEXT NOT NULL,
+  title TEXT,
+  body TEXT NOT NULL,
+  source_url TEXT,
+  source_label TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_component_notes_component ON project_component_notes(component_type, component_id, note_date);
+
+CREATE TABLE IF NOT EXISTS project_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  component_type TEXT NOT NULL DEFAULT 'project',
+  component_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Open',
+  due_date TEXT,
+  link_url TEXT,
+  link_label TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_actions_component ON project_actions(component_type, component_id);
+
+CREATE TABLE IF NOT EXISTS project_action_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_id INTEGER NOT NULL,
+  note_date TEXT NOT NULL,
+  body TEXT NOT NULL,
+  source_url TEXT,
+  source_label TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_action_notes_action ON project_action_notes(action_id, note_date);
+
 -- Daily factors: mood + lightweight measures (one row per YYYY-MM-DD)
 CREATE TABLE IF NOT EXISTS daily_factors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -576,6 +626,16 @@ for (const stmt of [
   "ALTER TABLE projects ADD COLUMN latest_thread_url TEXT",
   "ALTER TABLE projects ADD COLUMN pmt_notes TEXT",
   "ALTER TABLE projects ADD COLUMN seed_key TEXT",
+  // PMT component narrative status (additive; all nullable).
+  "ALTER TABLE projects ADD COLUMN latest_narrative_status TEXT",
+  "ALTER TABLE projects ADD COLUMN latest_narrative_status_updated_at INTEGER",
+  "ALTER TABLE projects ADD COLUMN latest_narrative_status_source_url TEXT",
+  "ALTER TABLE projects ADD COLUMN latest_narrative_status_source_label TEXT",
+  // PMT phase description & objectives (additive; all nullable).
+  "ALTER TABLE project_phases ADD COLUMN description TEXT",
+  "ALTER TABLE project_phases ADD COLUMN description_updated_at INTEGER",
+  "ALTER TABLE project_phases ADD COLUMN description_source_url TEXT",
+  "ALTER TABLE project_phases ADD COLUMN description_source_label TEXT",
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
@@ -1928,8 +1988,33 @@ export class Storage {
       .from(projects)
       .where(isNotNull(projects.pmtLabel))
       .all();
+    // Enrich each row with dashboard rollups: a short narrative snippet, a
+    // no-narrative flag, and a count of open/active actions. Long-form text is
+    // never surfaced on the dashboard — only a truncated snippet.
+    const actionCounts = new Map<number, number>();
+    for (const a of db.select().from(projectActions).where(eq(projectActions.componentType, "project")).all()) {
+      if (a.status === "Open" || a.status === "Active") {
+        actionCounts.set(a.componentId, (actionCounts.get(a.componentId) ?? 0) + 1);
+      }
+    }
+    const phaseDescCounts = new Map<number, number>();
+    for (const ph of db.select().from(projectPhases).all()) {
+      if (ph.description != null && ph.description.trim() !== "") {
+        phaseDescCounts.set(ph.projectId, (phaseDescCounts.get(ph.projectId) ?? 0) + 1);
+      }
+    }
+    const enriched = rows.map((r) => {
+      const ns = (r.latestNarrativeStatus ?? "").trim();
+      return {
+        ...r,
+        hasNarrativeStatus: ns !== "",
+        narrativeSnippet: ns === "" ? null : (ns.length > 140 ? ns.slice(0, 140) + "…" : ns),
+        openActiveActionCount: actionCounts.get(r.id) ?? 0,
+        phaseDescriptionCount: phaseDescCounts.get(r.id) ?? 0,
+      };
+    });
     // Cast to PmtRow shape (Project has all required fields).
-    return groupPmtItems(rows as any);
+    return groupPmtItems(enriched as any);
   }
 
   listProjectPhases(projectId: number): ProjectPhase[] {
@@ -2000,6 +2085,172 @@ export class Storage {
   }
   deleteProjectTask(id: number): void {
     db.delete(projectTasks).where(eq(projectTasks.id, id)).run();
+  }
+
+  // ===== PMT component fields (narrative status, notes, actions) =====
+
+  updateProjectNarrativeStatus(
+    projectId: number,
+    input: { latestNarrativeStatus: string; sourceUrl?: string | null; sourceLabel?: string | null },
+  ): Project | undefined {
+    const now = Date.now();
+    db.update(projects)
+      .set({
+        latestNarrativeStatus: input.latestNarrativeStatus,
+        latestNarrativeStatusUpdatedAt: now,
+        latestNarrativeStatusSourceUrl: input.sourceUrl ?? null,
+        latestNarrativeStatusSourceLabel: input.sourceLabel ?? null,
+        updatedAt: now,
+      })
+      .where(eq(projects.id, projectId))
+      .run();
+    return this.getProject(projectId);
+  }
+
+  updatePhaseDescription(
+    phaseId: number,
+    input: { description: string; sourceUrl?: string | null; sourceLabel?: string | null },
+  ): ProjectPhase | undefined {
+    const now = Date.now();
+    db.update(projectPhases)
+      .set({
+        description: input.description,
+        descriptionUpdatedAt: now,
+        descriptionSourceUrl: input.sourceUrl ?? null,
+        descriptionSourceLabel: input.sourceLabel ?? null,
+      })
+      .where(eq(projectPhases.id, phaseId))
+      .run();
+    return db.select().from(projectPhases).where(eq(projectPhases.id, phaseId)).get();
+  }
+
+  // ----- Component notes -----
+  listComponentNotes(componentType: string, componentId: number): ProjectComponentNote[] {
+    return db
+      .select()
+      .from(projectComponentNotes)
+      .where(and(
+        eq(projectComponentNotes.componentType, componentType),
+        eq(projectComponentNotes.componentId, componentId),
+      ))
+      .orderBy(projectComponentNotes.noteDate, projectComponentNotes.id)
+      .all();
+  }
+  createComponentNote(input: {
+    componentType: string;
+    componentId: number;
+    noteDate: string;
+    title?: string | null;
+    body: string;
+    sourceUrl?: string | null;
+    sourceLabel?: string | null;
+  }): ProjectComponentNote {
+    const now = Date.now();
+    return db.insert(projectComponentNotes).values({
+      componentType: input.componentType,
+      componentId: input.componentId,
+      noteDate: input.noteDate,
+      title: input.title ?? null,
+      body: input.body,
+      sourceUrl: input.sourceUrl ?? null,
+      sourceLabel: input.sourceLabel ?? null,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+  updateComponentNote(id: number, updates: Partial<InsertProjectComponentNote>): ProjectComponentNote | undefined {
+    db.update(projectComponentNotes)
+      .set({ ...updates, updatedAt: Date.now() })
+      .where(eq(projectComponentNotes.id, id))
+      .run();
+    return db.select().from(projectComponentNotes).where(eq(projectComponentNotes.id, id)).get();
+  }
+  deleteComponentNote(id: number): void {
+    db.delete(projectComponentNotes).where(eq(projectComponentNotes.id, id)).run();
+  }
+
+  // ----- Actions -----
+  listActions(componentType: string, componentId: number): ProjectAction[] {
+    return db
+      .select()
+      .from(projectActions)
+      .where(and(
+        eq(projectActions.componentType, componentType),
+        eq(projectActions.componentId, componentId),
+      ))
+      .orderBy(projectActions.id)
+      .all();
+  }
+  createAction(input: {
+    componentType: string;
+    componentId: number;
+    title: string;
+    status?: string;
+    dueDate?: string | null;
+    linkUrl?: string | null;
+    linkLabel?: string | null;
+  }): ProjectAction {
+    const now = Date.now();
+    return db.insert(projectActions).values({
+      componentType: input.componentType,
+      componentId: input.componentId,
+      title: input.title,
+      status: input.status ?? "Open",
+      dueDate: input.dueDate ?? null,
+      linkUrl: input.linkUrl ?? null,
+      linkLabel: input.linkLabel ?? null,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+  updateAction(id: number, updates: Partial<InsertProjectAction>): ProjectAction | undefined {
+    db.update(projectActions)
+      .set({ ...updates, updatedAt: Date.now() })
+      .where(eq(projectActions.id, id))
+      .run();
+    return db.select().from(projectActions).where(eq(projectActions.id, id)).get();
+  }
+  deleteAction(id: number): void {
+    db.delete(projectActionNotes).where(eq(projectActionNotes.actionId, id)).run();
+    db.delete(projectActions).where(eq(projectActions.id, id)).run();
+  }
+
+  // ----- Action notes -----
+  listActionNotes(actionId: number): ProjectActionNote[] {
+    return db
+      .select()
+      .from(projectActionNotes)
+      .where(eq(projectActionNotes.actionId, actionId))
+      .orderBy(projectActionNotes.noteDate, projectActionNotes.id)
+      .all();
+  }
+  createActionNote(input: {
+    actionId: number;
+    noteDate: string;
+    body: string;
+    sourceUrl?: string | null;
+    sourceLabel?: string | null;
+  }): ProjectActionNote {
+    const now = Date.now();
+    return db.insert(projectActionNotes).values({
+      actionId: input.actionId,
+      noteDate: input.noteDate,
+      body: input.body,
+      sourceUrl: input.sourceUrl ?? null,
+      sourceLabel: input.sourceLabel ?? null,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+  }
+  updateActionNote(id: number, updates: Partial<InsertProjectActionNote>): ProjectActionNote | undefined {
+    db.update(projectActionNotes)
+      .set({ ...updates, updatedAt: Date.now() })
+      .where(eq(projectActionNotes.id, id))
+      .run();
+    return db.select().from(projectActionNotes).where(eq(projectActionNotes.id, id)).get();
+  }
+  deleteActionNote(id: number): void {
+    db.delete(projectActionNotes).where(eq(projectActionNotes.id, id)).run();
   }
 
   seedDefaultHabitsIfNeeded() {

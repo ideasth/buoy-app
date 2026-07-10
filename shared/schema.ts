@@ -507,6 +507,12 @@ export const projects = sqliteTable("projects", {
   latestThreadUrl: text("latest_thread_url"),
   pmtNotes: text("pmt_notes"),
   seedKey: text("seed_key"),
+  // PMT component narrative status. Additive; free-text status box surfaced
+  // near the top of the component detail view. updatedAt is epoch-ms.
+  latestNarrativeStatus: text("latest_narrative_status"),
+  latestNarrativeStatusUpdatedAt: integer("latest_narrative_status_updated_at"),
+  latestNarrativeStatusSourceUrl: text("latest_narrative_status_source_url"),
+  latestNarrativeStatusSourceLabel: text("latest_narrative_status_source_label"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -519,6 +525,12 @@ export const projectPhases = sqliteTable("project_phases", {
   name: text("name").notNull(),
   orderIndex: integer("order_index").notNull().default(0),
   completed: integer("completed").notNull().default(0),
+  // PMT phase description & objectives. Additive; free-text separate from the
+  // narrative status box. descriptionUpdatedAt is epoch-ms.
+  description: text("description"),
+  descriptionUpdatedAt: integer("description_updated_at"),
+  descriptionSourceUrl: text("description_source_url"),
+  descriptionSourceLabel: text("description_source_label"),
   createdAt: integer("created_at").notNull(),
 });
 export type ProjectPhase = typeof projectPhases.$inferSelect;
@@ -550,6 +562,55 @@ export const projectTasks = sqliteTable("project_tasks", {
 });
 export type ProjectTask = typeof projectTasks.$inferSelect;
 export type InsertProjectTask = typeof projectTasks.$inferInsert;
+
+// PMT component notes — dated timeline attached to a projects row (a PMT
+// component). componentType is kept generic text so it can extend beyond
+// 'project' later. noteDate is a YYYY-MM-DD or ISO string; *_at are epoch-ms.
+export const projectComponentNotes = sqliteTable("project_component_notes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  componentType: text("component_type").notNull().default("project"),
+  componentId: integer("component_id").notNull(),
+  noteDate: text("note_date").notNull(),
+  title: text("title"),
+  body: text("body").notNull(),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type ProjectComponentNote = typeof projectComponentNotes.$inferSelect;
+export type InsertProjectComponentNote = typeof projectComponentNotes.$inferInsert;
+
+// PMT actions — tracked actions attached to a PMT component. status is one of
+// Open | Active | Complete | Parked.
+export const projectActions = sqliteTable("project_actions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  componentType: text("component_type").notNull().default("project"),
+  componentId: integer("component_id").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("Open"),
+  dueDate: text("due_date"),
+  linkUrl: text("link_url"),
+  linkLabel: text("link_label"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type ProjectAction = typeof projectActions.$inferSelect;
+export type InsertProjectAction = typeof projectActions.$inferInsert;
+
+// PMT action notes — dated timeline attached to a project_actions row.
+export const projectActionNotes = sqliteTable("project_action_notes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actionId: integer("action_id").notNull(),
+  noteDate: text("note_date").notNull(),
+  body: text("body").notNull(),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type ProjectActionNote = typeof projectActionNotes.$inferSelect;
+export type InsertProjectActionNote = typeof projectActionNotes.$inferInsert;
 
 // Feature 5 — Life Coach: persistent + auto-summarised conversational sessions.
 // Two modes (plan / reflect) toggleable mid-session. Full transcripts stored;
