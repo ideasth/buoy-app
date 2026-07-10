@@ -654,6 +654,12 @@ for (const stmt of [
   "ALTER TABLE project_phases ADD COLUMN description_source_label TEXT",
   // Stage 21 — Focus-of-week tier (additive; nullable epoch-ms).
   "ALTER TABLE projects ADD COLUMN focus_of_week_at INTEGER",
+  // Stage 22 — First-class space fields (additive; both nullable TEXT).
+  "ALTER TABLE projects ADD COLUMN space_name TEXT",
+  "ALTER TABLE projects ADD COLUMN space_url TEXT",
+  // Stage 22 — Action-note thread pointer (additive; both nullable TEXT).
+  "ALTER TABLE project_action_notes ADD COLUMN thread_name TEXT",
+  "ALTER TABLE project_action_notes ADD COLUMN thread_url TEXT",
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
@@ -2310,6 +2316,8 @@ export class Storage {
     body: string;
     sourceUrl?: string | null;
     sourceLabel?: string | null;
+    threadName?: string | null;
+    threadUrl?: string | null;
   }): ProjectActionNote {
     const now = Date.now();
     return db.insert(projectActionNotes).values({
@@ -2318,6 +2326,8 @@ export class Storage {
       body: input.body,
       sourceUrl: input.sourceUrl ?? null,
       sourceLabel: input.sourceLabel ?? null,
+      threadName: input.threadName ?? null,
+      threadUrl: input.threadUrl ?? null,
       createdAt: now,
       updatedAt: now,
     }).returning().get();

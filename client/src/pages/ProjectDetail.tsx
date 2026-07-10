@@ -119,6 +119,8 @@ interface ActionNote {
   body: string;
   sourceUrl: string | null;
   sourceLabel: string | null;
+  threadName: string | null;
+  threadUrl: string | null;
 }
 
 export default function ProjectDetail() {
@@ -146,6 +148,10 @@ export default function ProjectDetail() {
     queryFn: async () => (await apiRequest("GET", `/api/projects/${id}/actions`)).json(),
   });
 
+  // Space editor draft.
+  const [spaceEditing, setSpaceEditing] = useState(false);
+  const [spaceNameDraft, setSpaceNameDraft] = useState("");
+  const [spaceUrlDraft, setSpaceUrlDraft] = useState("");
   // Narrative status editor draft.
   const [narrativeEditing, setNarrativeEditing] = useState(false);
   const [narrativeDraft, setNarrativeDraft] = useState("");
@@ -210,6 +216,23 @@ export default function ProjectDetail() {
     refresh();
   };
 
+  const saveSpace = async () => {
+    const name = spaceNameDraft.trim();
+    const url = spaceUrlDraft.trim();
+    try {
+      await apiRequest("PATCH", `/api/projects/${id}`, {
+        spaceName: name || null,
+        spaceUrl: url || null,
+      });
+    } catch {
+      toast({ title: "Could not save space", description: "Enter a valid http(s) URL or leave it blank." });
+      return;
+    }
+    setSpaceEditing(false);
+    refresh();
+    queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+  };
+
   const addNote = async () => {
     const body = newNote.body.trim();
     if (!body) return;
@@ -271,7 +294,6 @@ export default function ProjectDetail() {
     if (value === "high") return patchProject({ priority: "high", focusOfWeek: false } as any);
     return patchProject({ priority: "low", focusOfWeek: false } as any);
   };
-  const setStatus = (status: string) => patchProject({ status } as any);
   const setNextAction = (taskId: number | null) => patchProject({ nextActionTaskId: taskId } as any);
   const setCurrentPhase = (phaseId: number | null) => patchProject({ currentPhaseId: phaseId } as any);
 
@@ -389,13 +411,18 @@ export default function ProjectDetail() {
             <h1 className="text-2xl font-semibold mt-1 break-words">{project.name}</h1>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <Select value={project.status} onValueChange={setStatus}>
-              <SelectTrigger className="h-8 w-[130px]" data-testid="select-status">
-                <SelectValue />
+            <div className="text-xs text-muted-foreground text-right">PMT status</div>
+            <Select
+              value={project.pmtStatus === "Open" ? "Active" : (project.pmtStatus ?? "")}
+              onValueChange={(v) => patchProject({ pmtStatus: v } as any)}
+            >
+              <SelectTrigger className="h-8 w-[130px]" data-testid="select-pmt-status">
+                <SelectValue placeholder="Set status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="parked">Parked</SelectItem>
+                <SelectItem value="Active">Active</SelectItem>
+                <SelectItem value="Parked">Parked</SelectItem>
+                <SelectItem value="Complete">Complete</SelectItem>
               </SelectContent>
             </Select>
             <Select
@@ -411,27 +438,80 @@ export default function ProjectDetail() {
                 <SelectItem value="low">Low priority</SelectItem>
               </SelectContent>
             </Select>
-            {project.pmtLabel != null && (
-              <>
-                <div className="text-xs text-muted-foreground text-right">PMT status</div>
-                <Select
-                  value={project.pmtStatus ?? ""}
-                  onValueChange={(v) => patchProject({ pmtStatus: v } as any)}
-                >
-                  <SelectTrigger className="h-8 w-[130px]" data-testid="select-pmt-status">
-                    <SelectValue placeholder="Set status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Parked">Parked</SelectItem>
-                    <SelectItem value="Complete">Complete</SelectItem>
-                  </SelectContent>
-                </Select>
-              </>
-            )}
           </div>
         </div>
       </div>
+
+      {/* Space */}
+      <section
+        className="rounded-lg border border-border bg-card p-4 space-y-2"
+        data-testid="space-box"
+      >
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Space</div>
+          {!spaceEditing && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSpaceNameDraft(project.spaceName ?? "");
+                setSpaceUrlDraft(project.spaceUrl ?? "");
+                setSpaceEditing(true);
+              }}
+              data-testid="button-edit-space"
+            >
+              <Pencil className="h-3 w-3 mr-1" />
+              Edit
+            </Button>
+          )}
+        </div>
+        {spaceEditing ? (
+          <div className="space-y-2">
+            <Input
+              value={spaceNameDraft}
+              onChange={(e) => setSpaceNameDraft(e.target.value)}
+              placeholder="Space name"
+              className="h-8 text-sm"
+              data-testid="input-space-name"
+            />
+            <Input
+              value={spaceUrlDraft}
+              onChange={(e) => setSpaceUrlDraft(e.target.value)}
+              placeholder="Space URL (optional)"
+              className="h-8 text-sm"
+              data-testid="input-space-url"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" onClick={saveSpace} data-testid="button-save-space">
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSpaceEditing(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm" data-testid="text-space">
+            {project.spaceName?.trim() || project.spaceUrl ? (
+              project.spaceUrl ? (
+                <a
+                  href={project.spaceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                  data-testid="link-space"
+                >
+                  {project.spaceName?.trim() || project.spaceUrl}
+                </a>
+              ) : (
+                <span>{project.spaceName?.trim()}</span>
+              )
+            ) : (
+              <span className="italic text-muted-foreground">No space linked yet.</span>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Narrative status box */}
       <section
@@ -1283,6 +1363,9 @@ function ActionRow({
   const [expanded, setExpanded] = useState(false);
   const [newNoteBody, setNewNoteBody] = useState("");
   const [newNoteDate, setNewNoteDate] = useState(todayMelbourne());
+  const [newNoteThreadName, setNewNoteThreadName] = useState("");
+  const [newNoteThreadUrl, setNewNoteThreadUrl] = useState("");
+  const { toast } = useToast();
   const notesKey = ["/api/actions", action.id, "notes"];
   const notesQ = useQuery<ActionNote[]>({
     queryKey: notesKey,
@@ -1293,12 +1376,21 @@ function ActionRow({
   const addNote = async () => {
     const body = newNoteBody.trim();
     if (!body) return;
-    await apiRequest("POST", `/api/actions/${action.id}/notes`, {
-      noteDate: newNoteDate || todayMelbourne(),
-      body,
-    });
+    try {
+      await apiRequest("POST", `/api/actions/${action.id}/notes`, {
+        noteDate: newNoteDate || todayMelbourne(),
+        body,
+        threadName: newNoteThreadName.trim() || undefined,
+        threadUrl: newNoteThreadUrl.trim() || undefined,
+      });
+    } catch {
+      toast({ title: "Could not add note", description: "Enter a valid http(s) thread URL or leave it blank." });
+      return;
+    }
     setNewNoteBody("");
     setNewNoteDate(todayMelbourne());
+    setNewNoteThreadName("");
+    setNewNoteThreadUrl("");
     queryClient.invalidateQueries({ queryKey: notesKey });
   };
 
@@ -1362,6 +1454,17 @@ function ActionRow({
                 <div key={n.id} className="text-xs" data-testid={`action-note-${n.id}`}>
                   <span className="text-muted-foreground mr-1">{fmtNoteDate(n.noteDate)}</span>
                   <span className="whitespace-pre-wrap">{n.body}</span>
+                  {n.threadUrl && (
+                    <a
+                      href={n.threadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-1 text-blue-600 dark:text-blue-400 hover:underline"
+                      data-testid={`action-note-thread-${n.id}`}
+                    >
+                      {n.threadName?.trim() || "Thread"}
+                    </a>
+                  )}
                 </div>
               ))
             )}
@@ -1380,6 +1483,20 @@ function ActionRow({
               placeholder="Add note"
               className="h-7 text-xs max-w-xs"
               data-testid={`input-action-note-body-${action.id}`}
+            />
+            <Input
+              value={newNoteThreadName}
+              onChange={(e) => setNewNoteThreadName(e.target.value)}
+              placeholder="Thread name"
+              className="h-7 text-xs max-w-[150px]"
+              data-testid={`input-action-note-thread-name-${action.id}`}
+            />
+            <Input
+              value={newNoteThreadUrl}
+              onChange={(e) => setNewNoteThreadUrl(e.target.value)}
+              placeholder="Thread URL"
+              className="h-7 text-xs max-w-[200px]"
+              data-testid={`input-action-note-thread-url-${action.id}`}
             />
             <Button
               size="sm"

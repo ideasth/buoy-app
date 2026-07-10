@@ -1568,9 +1568,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "fileStatus",
       "latestThreadUrl",
       "pmtNotes",
+      // Stage 22 — first-class space fields
+      "spaceName",
+      "spaceUrl",
     ];
     const updates: any = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+
+    // Stage 22 — space field validation/normalisation.
+    if ("spaceUrl" in updates) {
+      const raw = updates.spaceUrl;
+      if (raw == null || raw === "") {
+        updates.spaceUrl = null;
+      } else if (typeof raw !== "string") {
+        return res.status(400).json({ error: "invalid_space_url" });
+      } else {
+        try {
+          const u = new URL(raw);
+          if (u.protocol !== "http:" && u.protocol !== "https:") {
+            return res.status(400).json({ error: "invalid_space_url" });
+          }
+        } catch {
+          return res.status(400).json({ error: "invalid_space_url" });
+        }
+      }
+    }
+    if ("spaceName" in updates) {
+      const raw = updates.spaceName;
+      updates.spaceName = typeof raw === "string" ? (raw.trim() || null) : (raw ?? null);
+    }
 
     // Stage 20 — PMT field validation.
     if ("fileStatus" in updates && updates.fileStatus != null) {
@@ -1962,11 +1988,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/actions/:actionId/notes", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const actionId = parseInt(req.params.actionId, 10);
-    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel"];
+    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel", "threadName", "threadUrl"];
     for (const k of Object.keys(req.body || {})) {
       if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
     }
-    const { noteDate, body, sourceUrl, sourceLabel } = req.body || {};
+    const { noteDate, body, sourceUrl, sourceLabel, threadName, threadUrl } = req.body || {};
     if (typeof body !== "string" || body.trim() === "") {
       return res.status(400).json({ error: "body required" });
     }
@@ -1976,18 +2002,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!isBlankOrValidUrl(sourceUrl)) {
       return res.status(400).json({ error: "invalid_source_url" });
     }
+    if (!isBlankOrValidUrl(threadUrl)) {
+      return res.status(400).json({ error: "invalid_thread_url" });
+    }
     res.json(storage.createActionNote({
       actionId,
       noteDate,
       body,
       sourceUrl: sourceUrl || null,
       sourceLabel: sourceLabel || null,
+      threadName: (typeof threadName === "string" ? threadName.trim() : "") || null,
+      threadUrl: threadUrl || null,
     }));
   });
   app.patch("/api/action-notes/:noteId", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const noteId = parseInt(req.params.noteId, 10);
-    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel"];
+    const allowed = ["noteDate", "body", "sourceUrl", "sourceLabel", "threadName", "threadUrl"];
     const updates: any = {};
     for (const k of Object.keys(req.body || {})) {
       if (!allowed.includes(k)) return res.status(400).json({ error: `unknown_field: ${k}` });
@@ -1998,6 +2029,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     if ("sourceUrl" in updates && !isBlankOrValidUrl(updates.sourceUrl)) {
       return res.status(400).json({ error: "invalid_source_url" });
+    }
+    if ("threadUrl" in updates && !isBlankOrValidUrl(updates.threadUrl)) {
+      return res.status(400).json({ error: "invalid_thread_url" });
+    }
+    if ("threadUrl" in updates) updates.threadUrl = updates.threadUrl || null;
+    if ("threadName" in updates) {
+      updates.threadName = (typeof updates.threadName === "string" ? updates.threadName.trim() : "") || null;
     }
     const updated = storage.updateActionNote(noteId, updates);
     if (!updated) return res.status(404).json({ error: "not found" });

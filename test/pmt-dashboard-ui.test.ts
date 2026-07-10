@@ -68,8 +68,10 @@ describe("ProjectDetail.tsx — PMT status dropdown", () => {
     expect(detailSrc).toContain("select-pmt-status");
   });
 
-  it("contains the select-status testid (conditionally rendered for non-PMT items)", () => {
-    expect(detailSrc).toContain("select-status");
+  it("no longer contains the generic select-status control (Stage 22 removed it)", () => {
+    // Stage 22: the generic active/parked status Select was removed; PMT Status
+    // is the single status control surfaced for every project.
+    expect(detailSrc).not.toContain('data-testid="select-status"');
   });
 
   it("does NOT contain Open as a SelectItem value", () => {
@@ -83,15 +85,10 @@ describe("ProjectDetail.tsx — PMT status dropdown", () => {
     expect(detailSrc).toContain('"Complete"');
   });
 
-  it("gates PMT dropdown on pmtLabel being non-null", () => {
-    expect(detailSrc).toContain("pmtLabel");
-  });
-
-  it("shows the standard status select for ALL projects (Stage 21 removed the pmtLabel == null gate)", () => {
-    // Stage 21: every project must expose both a status and a priority control.
-    // The plain status selector is no longer gated behind pmtLabel == null.
-    expect(detailSrc).not.toContain("pmtLabel == null");
-    expect(detailSrc).toContain('data-testid="select-status"');
+  it("surfaces PMT status for ALL projects (Stage 22 removed the pmtLabel gate)", () => {
+    // Stage 22: the PMT status select is no longer gated behind pmtLabel != null.
+    expect(detailSrc).not.toContain("pmtLabel != null");
+    expect(detailSrc).toContain('data-testid="select-pmt-status"');
     expect(detailSrc).toContain('data-testid="select-priority"');
   });
 });
