@@ -44,6 +44,7 @@ function fmtDeadline(s: string | null): string {
 
 function priorityBucket(p: ProjectWithNext): number {
   if (p.status === "parked") return 3;
+  if (p.focusOfWeekAt != null) return -1;
   if (p.priority === "high") return 0;
   return 1;
 }
@@ -69,9 +70,18 @@ export default function Projects() {
   }, [q.data]);
 
   const groups: { key: string; label: string; items: ProjectWithNext[] }[] = [
-    { key: "high", label: "Active · High", items: sorted.filter((p) => p.status === "active" && p.priority === "high") },
-    { key: "low", label: "Active · Low", items: sorted.filter((p) => p.status === "active" && p.priority !== "high") },
-    { key: "parked", label: "Parked", items: sorted.filter((p) => p.status === "parked") },
+    { key: "focus", label: "Focus of the week", items: sorted.filter((p) => p.focusOfWeekAt != null) },
+    {
+      key: "high",
+      label: "Active · High",
+      items: sorted.filter((p) => p.status === "active" && p.priority === "high" && p.focusOfWeekAt == null),
+    },
+    {
+      key: "low",
+      label: "Active · Low",
+      items: sorted.filter((p) => p.status === "active" && p.priority !== "high" && p.focusOfWeekAt == null),
+    },
+    { key: "parked", label: "Parked", items: sorted.filter((p) => p.status === "parked" && p.focusOfWeekAt == null) },
   ];
 
   return (
@@ -158,6 +168,16 @@ export default function Projects() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <div className="font-medium truncate">{p.name}</div>
+                        {p.focusOfWeekAt != null && (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] py-0 h-4 gap-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40"
+                            data-testid={`badge-focus-${p.id}`}
+                          >
+                            <Star className="h-2.5 w-2.5" />
+                            focus
+                          </Badge>
+                        )}
                         <Badge
                           variant={p.priority === "high" ? "default" : "outline"}
                           className={cn(

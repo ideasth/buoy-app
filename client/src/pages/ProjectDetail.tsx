@@ -265,7 +265,12 @@ export default function ProjectDetail() {
     refresh();
   };
 
-  const setPriority = (priority: string) => patchProject({ priority } as any);
+  const setPriority = (value: string) => {
+    // "focus" ⇒ focus-of-week (high + flag); "high"/"low" ⇒ clear the flag.
+    if (value === "focus") return patchProject({ priority: "high", focusOfWeek: true } as any);
+    if (value === "high") return patchProject({ priority: "high", focusOfWeek: false } as any);
+    return patchProject({ priority: "low", focusOfWeek: false } as any);
+  };
   const setStatus = (status: string) => patchProject({ status } as any);
   const setNextAction = (taskId: number | null) => patchProject({ nextActionTaskId: taskId } as any);
   const setCurrentPhase = (phaseId: number | null) => patchProject({ currentPhaseId: phaseId } as any);
@@ -384,26 +389,28 @@ export default function ProjectDetail() {
             <h1 className="text-2xl font-semibold mt-1 break-words">{project.name}</h1>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <Select value={project.priority} onValueChange={setPriority}>
+            <Select value={project.status} onValueChange={setStatus}>
+              <SelectTrigger className="h-8 w-[130px]" data-testid="select-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="parked">Parked</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={project.focusOfWeekAt != null ? "focus" : project.priority}
+              onValueChange={setPriority}
+            >
               <SelectTrigger className="h-8 w-[130px]" data-testid="select-priority">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="focus">Focus of the week</SelectItem>
                 <SelectItem value="high">High priority</SelectItem>
                 <SelectItem value="low">Low priority</SelectItem>
               </SelectContent>
             </Select>
-            {project.pmtLabel == null && (
-              <Select value={project.status} onValueChange={setStatus}>
-                <SelectTrigger className="h-8 w-[130px]" data-testid="select-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="parked">Parked</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
             {project.pmtLabel != null && (
               <>
                 <div className="text-xs text-muted-foreground text-right">PMT status</div>

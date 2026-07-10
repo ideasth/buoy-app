@@ -87,8 +87,11 @@ describe("ProjectDetail.tsx — PMT status dropdown", () => {
     expect(detailSrc).toContain("pmtLabel");
   });
 
-  it("hides legacy status select for PMT-labelled items (pmtLabel == null guard)", () => {
-    // The legacy select is now conditionally rendered only when pmtLabel is null.
-    expect(detailSrc).toContain("pmtLabel == null");
+  it("shows the standard status select for ALL projects (Stage 21 removed the pmtLabel == null gate)", () => {
+    // Stage 21: every project must expose both a status and a priority control.
+    // The plain status selector is no longer gated behind pmtLabel == null.
+    expect(detailSrc).not.toContain("pmtLabel == null");
+    expect(detailSrc).toContain('data-testid="select-status"');
+    expect(detailSrc).toContain('data-testid="select-priority"');
   });
 });
