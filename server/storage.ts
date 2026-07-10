@@ -28,6 +28,7 @@ import {
   coachSessions,
   coachMessages,
   relationships,
+  dailyFocus,
 } from "@shared/schema";
 import type {
   Task,
@@ -86,10 +87,12 @@ import type {
   InsertCoachMessage,
   Relationship,
   InsertRelationship,
+  DailyFocus,
+  InsertDailyFocus,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, gte, lte, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, isNull, isNotNull, sql } from "drizzle-orm";
 import { evaluateEmailPriority } from "@shared/email-priority";
 import { groupPmtItems, type DashboardShape } from "./pmt-dashboard";
 import {
@@ -409,6 +412,19 @@ CREATE TABLE IF NOT EXISTS project_action_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_action_notes_action ON project_action_notes(action_id, note_date);
 
+-- Stage 21 — Daily focus: one nominated action per date (Melbourne local)
+CREATE TABLE IF NOT EXISTS daily_focus (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  focus_date TEXT NOT NULL UNIQUE,
+  task_id INTEGER,
+  project_id INTEGER,
+  title TEXT NOT NULL,
+  link_url TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_focus_date ON daily_focus(focus_date);
+
 -- Daily factors: mood + lightweight measures (one row per YYYY-MM-DD)
 CREATE TABLE IF NOT EXISTS daily_factors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -636,6 +652,8 @@ for (const stmt of [
   "ALTER TABLE project_phases ADD COLUMN description_updated_at INTEGER",
   "ALTER TABLE project_phases ADD COLUMN description_source_url TEXT",
   "ALTER TABLE project_phases ADD COLUMN description_source_label TEXT",
+  // Stage 21 — Focus-of-week tier (additive; nullable epoch-ms).
+  "ALTER TABLE projects ADD COLUMN focus_of_week_at INTEGER",
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
@@ -1954,6 +1972,68 @@ export class Storage {
     db.delete(projectComponents).where(eq(projectComponents.projectId, id)).run();
     db.delete(projectPhases).where(eq(projectPhases.projectId, id)).run();
     db.delete(projects).where(eq(projects.id, id)).run();
+  }
+
+  // ===== Stage 21 — Focus of the week =====
+  setFocusOfWeek(projectId: number, on: boolean): Project | undefined {
+    const now = Date.now();
+    db.update(projects)
+      .set({ focusOfWeekAt: on ? now : null, updatedAt: now })
+      .where(eq(projects.id, projectId))
+      .run();
+    return this.getProject(projectId);
+  }
+  listFocusOfWeek(): Project[] {
+    return db
+      .select()
+      .from(projects)
+      .where(isNotNull(projects.focusOfWeekAt))
+      .orderBy(asc(projects.focusOfWeekAt), projects.name)
+      .all();
+  }
+
+  // ===== Stage 21 — Daily focus (one action per date) =====
+  getDailyFocus(date: string): DailyFocus | null {
+    return db.select().from(dailyFocus).where(eq(dailyFocus.focusDate, date)).get() ?? null;
+  }
+  setDailyFocus(input: {
+    focusDate: string;
+    taskId?: number | null;
+    projectId?: number | null;
+    title: string;
+    linkUrl?: string | null;
+  }): DailyFocus {
+    const now = Date.now();
+    const existing = this.getDailyFocus(input.focusDate);
+    if (existing) {
+      db.update(dailyFocus)
+        .set({
+          taskId: input.taskId ?? null,
+          projectId: input.projectId ?? null,
+          title: input.title,
+          linkUrl: input.linkUrl ?? null,
+          updatedAt: now,
+        })
+        .where(eq(dailyFocus.id, existing.id))
+        .run();
+      return this.getDailyFocus(input.focusDate)!;
+    }
+    return db
+      .insert(dailyFocus)
+      .values({
+        focusDate: input.focusDate,
+        taskId: input.taskId ?? null,
+        projectId: input.projectId ?? null,
+        title: input.title,
+        linkUrl: input.linkUrl ?? null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+  }
+  clearDailyFocus(date: string): void {
+    db.delete(dailyFocus).where(eq(dailyFocus.focusDate, date)).run();
   }
 
   // ===== PMT helpers (Stage 20) =====

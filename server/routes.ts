@@ -1483,6 +1483,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Stage 21 — Focus-of-week projects with candidate next actions.
+  // Must be registered BEFORE /api/projects/:id.
+  app.get("/api/projects/focus-of-week", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const MAX_TASKS = 8;
+    const list = storage.listFocusOfWeek().map((p) => {
+      const link = `/projects/${p.id}`;
+      const tasks = storage
+        .listProjectTasks(p.id)
+        .filter((t) => !t.completed)
+        .slice(0, MAX_TASKS)
+        .map((t) => ({ id: t.id, title: t.title, deadline: t.deadline, link }));
+      return { id: p.id, name: p.name, kind: p.kind, pmtLabel: p.pmtLabel, link, tasks };
+    });
+    res.json({ projects: list });
+  });
+
+  // Stage 21 — Daily focus (one nominated action per date, Melbourne local).
+  app.get("/api/daily-focus", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const date = String(req.query.date ?? "").trim() || melbourneDateStr();
+    res.json(storage.getDailyFocus(date));
+  });
+
+  app.post("/api/daily-focus", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const body = req.body || {};
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) return res.status(400).json({ error: "title required" });
+    const focusDate = (typeof body.focusDate === "string" && body.focusDate.trim()) || melbourneDateStr();
+    res.json(
+      storage.setDailyFocus({
+        focusDate,
+        taskId: body.taskId ?? null,
+        projectId: body.projectId ?? null,
+        title,
+        linkUrl: body.linkUrl ?? null,
+      }),
+    );
+  });
+
+  app.delete("/api/daily-focus", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const date = String(req.query.date ?? "").trim() || melbourneDateStr();
+    storage.clearDailyFocus(date);
+    res.json({ ok: true });
+  });
+
   app.get("/api/projects/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const id = parseInt(req.params.id, 10);
@@ -1540,6 +1588,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "invalid_kind" });
       }
     }
+    // Stage 21 — priority is restricted to the existing two-value enum.
+    if ("priority" in updates && updates.priority != null) {
+      if (!["high", "low"].includes(updates.priority)) {
+        return res.status(400).json({ error: "invalid_priority" });
+      }
+    }
 
     // Validate ranges where applicable.
     if ("currentIncomePerHour" in updates && updates.currentIncomePerHour != null) {
@@ -1593,6 +1647,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           updates.pmtStatus = derived;
         }
       }
+    }
+
+    // Stage 21 — focus-of-week routes through a dedicated helper (maps to
+    // focus_of_week_at), so keep it out of the generic column updates.
+    if ("focusOfWeek" in req.body) {
+      storage.setFocusOfWeek(id, !!req.body.focusOfWeek);
     }
 
     const updated = storage.updateProject(id, updates);

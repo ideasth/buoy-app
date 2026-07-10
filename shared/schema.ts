@@ -513,11 +513,28 @@ export const projects = sqliteTable("projects", {
   latestNarrativeStatusUpdatedAt: integer("latest_narrative_status_updated_at"),
   latestNarrativeStatusSourceUrl: text("latest_narrative_status_source_url"),
   latestNarrativeStatusSourceLabel: text("latest_narrative_status_source_label"),
+  // Stage 21 — Focus-of-week tier. Nullable epoch-ms; non-null means the
+  // project is currently flagged as focus-of-week (ranks above priority=high).
+  focusOfWeekAt: integer("focus_of_week_at"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = typeof projects.$inferInsert;
+
+// Stage 21 — Daily focus: one nominated action per date (Melbourne local).
+export const dailyFocus = sqliteTable("daily_focus", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  focusDate: text("focus_date").notNull().unique(), // 'YYYY-MM-DD' Melbourne
+  taskId: integer("task_id"),
+  projectId: integer("project_id"),
+  title: text("title").notNull(),
+  linkUrl: text("link_url"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type DailyFocus = typeof dailyFocus.$inferSelect;
+export type InsertDailyFocus = typeof dailyFocus.$inferInsert;
 
 export const projectPhases = sqliteTable("project_phases", {
   id: integer("id").primaryKey({ autoIncrement: true }),

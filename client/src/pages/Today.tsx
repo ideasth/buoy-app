@@ -4,7 +4,7 @@ import { TaskCard } from "@/components/TaskCard";
 import { EnergyTap } from "@/components/EnergyTap";
 import { FocusSession } from "@/components/FocusSession";
 import { useEffect, useMemo, useState } from "react";
-import type { Task, TopThree } from "@shared/schema";
+import type { Task, TopThree, DailyFocus } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Plus, Target, Lock, Sunrise } from "lucide-react";
 import { Link } from "wouter";
@@ -25,6 +25,15 @@ interface CalEvent {
   end: string;
   allDay: boolean;
   location?: string;
+}
+
+interface FocusOfWeekProject {
+  id: number;
+  name: string;
+  kind: string;
+  pmtLabel: string | null;
+  link: string;
+  tasks: { id: number; title: string; deadline: string | null; link: string }[];
 }
 
 export default function Today() {
@@ -65,6 +74,31 @@ export default function Today() {
     for (const it of travelTodayQ.data?.items ?? []) m.set(it.event.uid, it);
     return m;
   }, [travelTodayQ.data]);
+
+  // Stage 21 — Today's action (daily focus) + focus-of-week candidates.
+  const dailyFocusQ = useQuery<DailyFocus | null>({
+    queryKey: ["/api/daily-focus", date],
+    queryFn: async () => (await apiRequest("GET", `/api/daily-focus?date=${date}`)).json(),
+  });
+  const focusOfWeekQ = useQuery<{ projects: FocusOfWeekProject[] }>({
+    queryKey: ["/api/projects/focus-of-week"],
+    queryFn: async () => (await apiRequest("GET", "/api/projects/focus-of-week")).json(),
+  });
+
+  const setDailyAction = async (input: {
+    title: string;
+    projectId?: number | null;
+    taskId?: number | null;
+    linkUrl?: string | null;
+  }) => {
+    await apiRequest("POST", "/api/daily-focus", { focusDate: date, ...input });
+    queryClient.invalidateQueries({ queryKey: ["/api/daily-focus", date] });
+    toast({ title: "Today's action set" });
+  };
+  const clearDailyAction = async () => {
+    await apiRequest("DELETE", `/api/daily-focus?date=${date}`);
+    queryClient.invalidateQueries({ queryKey: ["/api/daily-focus", date] });
+  };
 
   // Carry-over from yesterday
   const yesterday = todayDateStr(new Date(Date.now() - 24 * 3600 * 1000));
@@ -200,6 +234,94 @@ export default function Today() {
           </span>
         </Link>
       )}
+
+      {/* Stage 21 — Today's action (daily focus) */}
+      <section
+        className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4"
+        data-testid="section-todays-action"
+      >
+        <div className="text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1.5">
+          <Target className="h-3.5 w-3.5" />
+          Today's action
+        </div>
+        {dailyFocusQ.data ? (
+          <div className="flex items-start justify-between gap-3">
+            <Link
+              href={dailyFocusQ.data.linkUrl ?? (dailyFocusQ.data.projectId ? `/projects/${dailyFocusQ.data.projectId}` : "#")}
+              className="font-medium text-base hover:underline break-words flex-1"
+              data-testid="text-todays-action"
+            >
+              {dailyFocusQ.data.title}
+            </Link>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={clearDailyAction}
+                data-testid="button-clear-todays-action"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Pick one action for today — ideally from a focus-of-week project.
+            </p>
+            {(focusOfWeekQ.data?.projects ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">
+                No focus-of-week projects yet. Mark one on the{" "}
+                <Link href="/projects" className="text-primary hover:underline">
+                  Projects
+                </Link>{" "}
+                page.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {(focusOfWeekQ.data?.projects ?? []).map((proj) => (
+                  <div key={proj.id} data-testid={`focus-project-${proj.id}`}>
+                    <div className="text-xs font-medium text-muted-foreground mb-1.5">{proj.name}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {proj.tasks.length === 0 ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setDailyAction({ title: proj.name, projectId: proj.id, linkUrl: proj.link })
+                          }
+                          data-testid={`button-set-project-${proj.id}`}
+                        >
+                          {proj.name}
+                        </Button>
+                      ) : (
+                        proj.tasks.map((t) => (
+                          <Button
+                            key={t.id}
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setDailyAction({
+                                title: t.title,
+                                projectId: proj.id,
+                                taskId: t.id,
+                                linkUrl: t.link,
+                              })
+                            }
+                            data-testid={`button-set-task-${t.id}`}
+                          >
+                            {t.title}
+                          </Button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Currently happening */}
       {happeningNow && (
