@@ -516,6 +516,10 @@ export const projects = sqliteTable("projects", {
   // Stage 21 — Focus-of-week tier. Nullable epoch-ms; non-null means the
   // project is currently flagged as focus-of-week (ranks above priority=high).
   focusOfWeekAt: integer("focus_of_week_at"),
+  // Stage 22 — First-class space fields. Both nullable; spaceUrl (when set) is a
+  // validated absolute http(s) URL, spaceName is a free-text label.
+  spaceName: text("space_name"),
+  spaceUrl: text("space_url"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -623,6 +627,10 @@ export const projectActionNotes = sqliteTable("project_action_notes", {
   body: text("body").notNull(),
   sourceUrl: text("source_url"),
   sourceLabel: text("source_label"),
+  // Stage 22 — Thread pointer for an action note. Both nullable; threadUrl
+  // (when set) is a validated absolute http(s) URL, threadName a free-text label.
+  threadName: text("thread_name"),
+  threadUrl: text("thread_url"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
