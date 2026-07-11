@@ -17,18 +17,25 @@ function readSrc(rel: string): string {
 describe("PMT field routes registered (server/routes.ts)", () => {
   const src = readSrc("server/routes.ts");
 
-  it("registers narrative status, phase description, notes, actions, action notes routes", () => {
+  it("registers narrative status, phase description, and notes routes", () => {
     for (const route of [
       '"/api/projects/:id/narrative-status"',
       '"/api/phases/:phaseId/description"',
       '"/api/projects/:id/notes"',
       '"/api/component-notes/:noteId"',
+    ]) {
+      expect(src, `expected route ${route}`).toContain(route);
+    }
+  });
+
+  it("no longer registers any Actions routes (removed in Stage 23)", () => {
+    for (const route of [
       '"/api/projects/:id/actions"',
       '"/api/actions/:actionId"',
       '"/api/actions/:actionId/notes"',
       '"/api/action-notes/:noteId"',
     ]) {
-      expect(src, `expected route ${route}`).toContain(route);
+      expect(src, `route ${route} should be gone`).not.toContain(route);
     }
   });
 
@@ -46,32 +53,21 @@ describe("PMT field routes registered (server/routes.ts)", () => {
     expect(src).toContain("unknown_field:");
   });
 
-  it("defines the ACTION_STATUSES enum with all four values", () => {
-    expect(src).toContain('const ACTION_STATUSES = ["Open", "Active", "Complete", "Parked"]');
-  });
-
-  it("validates action status against the enum", () => {
-    expect(src).toContain("invalid_action_status");
-    expect(src).toContain("ACTION_STATUSES.includes(status)");
-  });
-
   it("enforces length limits on narrative status and description", () => {
     expect(src).toContain("latestNarrativeStatus too long (max 2000)");
     expect(src).toContain("description too long (max 5000)");
     expect(src).toContain("title too long (max 200)");
   });
 
-  it("requires body/title-independent required fields", () => {
+  it("requires body/date-independent required fields", () => {
     expect(src).toContain("latestNarrativeStatus required");
     expect(src).toContain("description required");
     expect(src).toContain("body required");
     expect(src).toContain("noteDate required");
-    expect(src).toContain("title required");
   });
 
   it("validates optional URL fields as blank-or-http(s)", () => {
     expect(src).toContain("isBlankOrValidUrl");
     expect(src).toContain("invalid_source_url");
-    expect(src).toContain("invalid_link_url");
   });
 });

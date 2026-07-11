@@ -101,28 +101,6 @@ interface ComponentNote {
   sourceLabel: string | null;
 }
 
-interface ActionItem {
-  id: number;
-  componentType: string;
-  componentId: number;
-  title: string;
-  status: string;
-  dueDate: string | null;
-  linkUrl: string | null;
-  linkLabel: string | null;
-}
-
-interface ActionNote {
-  id: number;
-  actionId: number;
-  noteDate: string;
-  body: string;
-  sourceUrl: string | null;
-  sourceLabel: string | null;
-  threadName: string | null;
-  threadUrl: string | null;
-}
-
 export default function ProjectDetail() {
   const [, params] = useRoute<{ id: string }>("/projects/:id");
   const id = params ? parseInt(params.id, 10) : NaN;
@@ -141,13 +119,6 @@ export default function ProjectDetail() {
     enabled: Number.isFinite(id),
     queryFn: async () => (await apiRequest("GET", `/api/projects/${id}/notes`)).json(),
   });
-  const actionsKey = ["/api/projects", id, "actions"];
-  const actionsQ = useQuery<ActionItem[]>({
-    queryKey: actionsKey,
-    enabled: Number.isFinite(id),
-    queryFn: async () => (await apiRequest("GET", `/api/projects/${id}/actions`)).json(),
-  });
-
   // Space editor draft.
   const [spaceEditing, setSpaceEditing] = useState(false);
   const [spaceNameDraft, setSpaceNameDraft] = useState("");
@@ -157,10 +128,9 @@ export default function ProjectDetail() {
   const [narrativeDraft, setNarrativeDraft] = useState("");
   const [narrativeUrlDraft, setNarrativeUrlDraft] = useState("");
   const [narrativeLabelDraft, setNarrativeLabelDraft] = useState("");
-  // New component note draft.
-  const [newNote, setNewNote] = useState({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "", sourceLabel: "" });
-  // New action draft.
-  const [newAction, setNewAction] = useState({ title: "", dueDate: "", linkUrl: "", linkLabel: "" });
+  // New component note draft. sourceUrl doubles as the thread pointer; its
+  // label (the page title) is fetched server-side, so there is no label input.
+  const [newNote, setNewNote] = useState({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "" });
   // Phase description drafts, keyed by phase id.
   const [phaseDescEditing, setPhaseDescEditing] = useState<number | null>(null);
   const [phaseDescDraft, setPhaseDescDraft] = useState("");
@@ -199,7 +169,6 @@ export default function ProjectDetail() {
   };
 
   const refreshNotes = () => queryClient.invalidateQueries({ queryKey: notesKey });
-  const refreshActions = () => queryClient.invalidateQueries({ queryKey: actionsKey });
 
   const saveNarrativeStatus = async () => {
     const text = narrativeDraft.trim();
@@ -236,14 +205,18 @@ export default function ProjectDetail() {
   const addNote = async () => {
     const body = newNote.body.trim();
     if (!body) return;
-    await apiRequest("POST", `/api/projects/${id}/notes`, {
-      noteDate: newNote.noteDate || todayMelbourne(),
-      title: newNote.title.trim() || undefined,
-      body,
-      sourceUrl: newNote.sourceUrl.trim() || undefined,
-      sourceLabel: newNote.sourceLabel.trim() || undefined,
-    });
-    setNewNote({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "", sourceLabel: "" });
+    try {
+      await apiRequest("POST", `/api/projects/${id}/notes`, {
+        noteDate: newNote.noteDate || todayMelbourne(),
+        title: newNote.title.trim() || undefined,
+        body,
+        sourceUrl: newNote.sourceUrl.trim() || undefined,
+      });
+    } catch {
+      toast({ title: "Could not add note", description: "Enter a valid http(s) thread URL or leave it blank." });
+      return;
+    }
+    setNewNote({ noteDate: todayMelbourne(), title: "", body: "", sourceUrl: "" });
     refreshNotes();
   };
 
@@ -251,30 +224,6 @@ export default function ProjectDetail() {
     if (!confirm("Delete this note?")) return;
     await apiRequest("DELETE", `/api/component-notes/${noteId}`);
     refreshNotes();
-  };
-
-  const addAction = async () => {
-    const title = newAction.title.trim();
-    if (!title) return;
-    await apiRequest("POST", `/api/projects/${id}/actions`, {
-      title,
-      dueDate: newAction.dueDate || undefined,
-      linkUrl: newAction.linkUrl.trim() || undefined,
-      linkLabel: newAction.linkLabel.trim() || undefined,
-    });
-    setNewAction({ title: "", dueDate: "", linkUrl: "", linkLabel: "" });
-    refreshActions();
-  };
-
-  const setActionStatus = async (actionId: number, status: string) => {
-    await apiRequest("PATCH", `/api/actions/${actionId}`, { status });
-    refreshActions();
-  };
-
-  const deleteAction = async (actionId: number) => {
-    if (!confirm("Delete this action?")) return;
-    await apiRequest("DELETE", `/api/actions/${actionId}`);
-    refreshActions();
   };
 
   const savePhaseDescription = async (phaseId: number) => {
@@ -1207,54 +1156,6 @@ export default function ProjectDetail() {
         </div>
       </section>
 
-      {/* Actions */}
-      <section className="space-y-3" data-testid="section-actions">
-        <h2 className="text-base font-semibold">Actions</h2>
-        <div className="rounded-lg border border-border bg-card divide-y divide-border">
-          {(actionsQ.data ?? []).length === 0 ? (
-            <div className="p-3 text-sm text-muted-foreground italic">No actions.</div>
-          ) : (
-            (actionsQ.data ?? []).map((a) => (
-              <ActionRow
-                key={a.id}
-                action={a}
-                onSetStatus={setActionStatus}
-                onDelete={deleteAction}
-              />
-            ))
-          )}
-        </div>
-        {/* Add action */}
-        <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">Add action</div>
-          <div className="flex flex-wrap gap-2">
-            <Input
-              value={newAction.title}
-              onChange={(e) => setNewAction({ ...newAction, title: e.target.value })}
-              placeholder="Action title"
-              className="h-8 max-w-xs"
-              data-testid="input-new-action"
-            />
-            <Input
-              type="date"
-              value={newAction.dueDate}
-              onChange={(e) => setNewAction({ ...newAction, dueDate: e.target.value })}
-              className="h-8 max-w-[160px]"
-              data-testid="input-new-action-due"
-            />
-            <Button
-              size="sm"
-              onClick={addAction}
-              disabled={!newAction.title.trim()}
-              data-testid="button-add-action"
-            >
-              <Plus className="h-3 w-3 mr-1" />
-              Add
-            </Button>
-          </div>
-        </div>
-      </section>
-
       {/* Notes timeline */}
       <section className="space-y-3" data-testid="section-component-notes">
         <h2 className="text-base font-semibold">Notes timeline</h2>
@@ -1285,8 +1186,9 @@ export default function ProjectDetail() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-blue-600 dark:text-blue-400 hover:underline inline-block"
+                    data-testid={`note-thread-${n.id}`}
                   >
-                    {n.sourceLabel?.trim() || "Source"}
+                    {n.sourceLabel?.trim() || hostnameOrLink(n.sourceUrl)}
                   </a>
                 )}
               </div>
@@ -1313,6 +1215,13 @@ export default function ProjectDetail() {
               data-testid="input-new-note-title"
             />
           </div>
+          <Input
+            value={newNote.sourceUrl}
+            onChange={(e) => setNewNote({ ...newNote, sourceUrl: e.target.value })}
+            placeholder="Thread URL (title auto-detected)"
+            className="h-8 text-sm"
+            data-testid="input-new-note-source-url"
+          />
           <Textarea
             value={newNote.body}
             onChange={(e) => setNewNote({ ...newNote, body: e.target.value })}
@@ -1335,183 +1244,13 @@ export default function ProjectDetail() {
   );
 }
 
-function ActionStatusBadge({ status }: { status: string }) {
-  const cls: Record<string, string> = {
-    Open: "border-border text-muted-foreground",
-    Active: "border-blue-500 text-blue-700 dark:text-blue-400",
-    Complete: "border-green-600 text-green-700 dark:text-green-400",
-    Parked: "border-amber-500 text-amber-700 dark:text-amber-400",
-  };
-  return (
-    <Badge variant="outline" className={cn("text-[10px] py-0 h-4", cls[status] ?? "")}>
-      {status}
-    </Badge>
-  );
-}
-
-const ACTION_STATUS_OPTIONS = ["Open", "Active", "Complete", "Parked"];
-
-function ActionRow({
-  action,
-  onSetStatus,
-  onDelete,
-}: {
-  action: ActionItem;
-  onSetStatus: (id: number, status: string) => void;
-  onDelete: (id: number) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [newNoteBody, setNewNoteBody] = useState("");
-  const [newNoteDate, setNewNoteDate] = useState(todayMelbourne());
-  const [newNoteThreadName, setNewNoteThreadName] = useState("");
-  const [newNoteThreadUrl, setNewNoteThreadUrl] = useState("");
-  const { toast } = useToast();
-  const notesKey = ["/api/actions", action.id, "notes"];
-  const notesQ = useQuery<ActionNote[]>({
-    queryKey: notesKey,
-    enabled: expanded,
-    queryFn: async () => (await apiRequest("GET", `/api/actions/${action.id}/notes`)).json(),
-  });
-
-  const addNote = async () => {
-    const body = newNoteBody.trim();
-    if (!body) return;
-    try {
-      await apiRequest("POST", `/api/actions/${action.id}/notes`, {
-        noteDate: newNoteDate || todayMelbourne(),
-        body,
-        threadName: newNoteThreadName.trim() || undefined,
-        threadUrl: newNoteThreadUrl.trim() || undefined,
-      });
-    } catch {
-      toast({ title: "Could not add note", description: "Enter a valid http(s) thread URL or leave it blank." });
-      return;
-    }
-    setNewNoteBody("");
-    setNewNoteDate(todayMelbourne());
-    setNewNoteThreadName("");
-    setNewNoteThreadUrl("");
-    queryClient.invalidateQueries({ queryKey: notesKey });
-  };
-
-  return (
-    <div className="p-3 space-y-2" data-testid={`action-row-${action.id}`}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <ActionStatusBadge status={action.status} />
-        <span className="text-sm font-medium">{action.title}</span>
-        {action.dueDate && (
-          <span className="text-[11px] text-muted-foreground">due {fmtNoteDate(action.dueDate)}</span>
-        )}
-        {action.linkUrl && (
-          <a
-            href={action.linkUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-          >
-            {action.linkLabel?.trim() || "Link"}
-          </a>
-        )}
-        <div className="ml-auto flex items-center gap-1">
-          <Select value={action.status} onValueChange={(v) => onSetStatus(action.id, v)}>
-            <SelectTrigger className="h-7 w-[120px] text-xs" data-testid={`select-action-status-${action.id}`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ACTION_STATUS_OPTIONS.map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setExpanded((v) => !v)}
-            className="h-7 text-xs"
-            data-testid={`button-toggle-action-notes-${action.id}`}
-          >
-            {expanded ? "Hide notes" : "Notes"}
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => onDelete(action.id)}
-            className="h-7 w-7 text-muted-foreground"
-            aria-label="Delete action"
-            data-testid={`button-delete-action-${action.id}`}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </div>
-      </div>
-      {expanded && (
-        <div className="pl-2 space-y-2">
-          <div className="space-y-1.5" data-testid={`action-notes-${action.id}`}>
-            {(notesQ.data ?? []).length === 0 ? (
-              <div className="text-xs text-muted-foreground italic">No notes.</div>
-            ) : (
-              (notesQ.data ?? []).map((n) => (
-                <div key={n.id} className="text-xs" data-testid={`action-note-${n.id}`}>
-                  <span className="text-muted-foreground mr-1">{fmtNoteDate(n.noteDate)}</span>
-                  <span className="whitespace-pre-wrap">{n.body}</span>
-                  {n.threadUrl && (
-                    <a
-                      href={n.threadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-1 text-blue-600 dark:text-blue-400 hover:underline"
-                      data-testid={`action-note-thread-${n.id}`}
-                    >
-                      {n.threadName?.trim() || "Thread"}
-                    </a>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Input
-              type="date"
-              value={newNoteDate}
-              onChange={(e) => setNewNoteDate(e.target.value)}
-              className="h-7 max-w-[150px] text-xs"
-              data-testid={`input-action-note-date-${action.id}`}
-            />
-            <Input
-              value={newNoteBody}
-              onChange={(e) => setNewNoteBody(e.target.value)}
-              placeholder="Add note"
-              className="h-7 text-xs max-w-xs"
-              data-testid={`input-action-note-body-${action.id}`}
-            />
-            <Input
-              value={newNoteThreadName}
-              onChange={(e) => setNewNoteThreadName(e.target.value)}
-              placeholder="Thread name"
-              className="h-7 text-xs max-w-[150px]"
-              data-testid={`input-action-note-thread-name-${action.id}`}
-            />
-            <Input
-              value={newNoteThreadUrl}
-              onChange={(e) => setNewNoteThreadUrl(e.target.value)}
-              placeholder="Thread URL"
-              className="h-7 text-xs max-w-[200px]"
-              data-testid={`input-action-note-thread-url-${action.id}`}
-            />
-            <Button
-              size="sm"
-              onClick={addNote}
-              disabled={!newNoteBody.trim()}
-              className="h-7 text-xs"
-              data-testid={`button-add-action-note-${action.id}`}
-            >
-              Add
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+// Fallback label for a note's thread link when no page title was fetched.
+function hostnameOrLink(url: string): string {
+  try {
+    return new URL(url).hostname || "Link";
+  } catch {
+    return "Link";
+  }
 }
 
 function TaskRow(props: {

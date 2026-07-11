@@ -602,41 +602,6 @@ export const projectComponentNotes = sqliteTable("project_component_notes", {
 export type ProjectComponentNote = typeof projectComponentNotes.$inferSelect;
 export type InsertProjectComponentNote = typeof projectComponentNotes.$inferInsert;
 
-// PMT actions — tracked actions attached to a PMT component. status is one of
-// Open | Active | Complete | Parked.
-export const projectActions = sqliteTable("project_actions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  componentType: text("component_type").notNull().default("project"),
-  componentId: integer("component_id").notNull(),
-  title: text("title").notNull(),
-  status: text("status").notNull().default("Open"),
-  dueDate: text("due_date"),
-  linkUrl: text("link_url"),
-  linkLabel: text("link_label"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-export type ProjectAction = typeof projectActions.$inferSelect;
-export type InsertProjectAction = typeof projectActions.$inferInsert;
-
-// PMT action notes — dated timeline attached to a project_actions row.
-export const projectActionNotes = sqliteTable("project_action_notes", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  actionId: integer("action_id").notNull(),
-  noteDate: text("note_date").notNull(),
-  body: text("body").notNull(),
-  sourceUrl: text("source_url"),
-  sourceLabel: text("source_label"),
-  // Stage 22 — Thread pointer for an action note. Both nullable; threadUrl
-  // (when set) is a validated absolute http(s) URL, threadName a free-text label.
-  threadName: text("thread_name"),
-  threadUrl: text("thread_url"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
-export type ProjectActionNote = typeof projectActionNotes.$inferSelect;
-export type InsertProjectActionNote = typeof projectActionNotes.$inferInsert;
-
 // Feature 5 — Life Coach: persistent + auto-summarised conversational sessions.
 // Two modes (plan / reflect) toggleable mid-session. Full transcripts stored;
 // only structured summaries replay back into model context on later sessions.
