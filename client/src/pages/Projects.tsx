@@ -1,10 +1,23 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import { createProjectWithPmt } from "@/lib/createProjectFlow";
 import type { Project } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, FolderKanban, Star, DollarSign } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import { ChevronRight, FolderKanban, Star, DollarSign, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAUDPerHour, formatAUDAnnualised } from "@/lib/projectValues";
 
@@ -50,10 +63,40 @@ function priorityBucket(p: ProjectWithNext): number {
 }
 
 export default function Projects() {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPmtLabel, setNewPmtLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+
   const q = useQuery<ProjectWithNext[]>({
     queryKey: ["/api/projects"],
     queryFn: async () => (await apiRequest("GET", "/api/projects")).json(),
   });
+
+  async function handleAddProject() {
+    const name = newName.trim();
+    if (!name || saving) return;
+    setSaving(true);
+    try {
+      const created = await createProjectWithPmt(apiRequest, {
+        name,
+        pmtLabel: newPmtLabel,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/values-summary"] });
+      setAddOpen(false);
+      setNewName("");
+      setNewPmtLabel("");
+      setLocation(`/projects/${created.id}`);
+    } catch (err) {
+      toast({ title: "Could not create project", description: String(err), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
   const summaryQ = useQuery<ValuesSummary>({
     queryKey: ["/api/projects/values-summary"],
     queryFn: async () => (await apiRequest("GET", "/api/projects/values-summary")).json(),
@@ -86,13 +129,82 @@ export default function Projects() {
 
   return (
     <div className="px-5 md:px-8 py-8 md:py-10 space-y-8">
-      <header>
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">Projects</div>
-        <h1 className="text-2xl font-semibold mt-1">Active and parked.</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Synced from Microsoft To Do lists ending in <code className="text-xs">: Active</code> or <code className="text-xs">: Parked</code>. New imports start as Active-Low — promote here.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Projects</div>
+          <h1 className="text-2xl font-semibold mt-1">Active and parked.</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Synced from Microsoft To Do lists ending in <code className="text-xs">: Active</code> or <code className="text-xs">: Parked</code>. New imports start as Active-Low — promote here.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className="shrink-0 gap-1.5"
+          onClick={() => setAddOpen(true)}
+          data-testid="button-add-project"
+        >
+          <Plus className="h-4 w-4" />
+          Add project
+        </Button>
       </header>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-add-project">
+          <DialogHeader>
+            <DialogTitle>Add project</DialogTitle>
+            <DialogDescription>
+              Creates an Active project. Add an optional PMT label to surface it on the PMT register.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="add-project-name">Name</Label>
+              <Input
+                id="add-project-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleAddProject();
+                  }
+                }}
+                placeholder="Project name"
+                autoFocus
+                data-testid="input-add-project-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="add-project-pmt-label">PMT label</Label>
+              <Input
+                id="add-project-pmt-label"
+                value={newPmtLabel}
+                onChange={(e) => setNewPmtLabel(e.target.value)}
+                placeholder="Optional — e.g. Bayside Health"
+                data-testid="input-add-project-pmt-label"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setAddOpen(false)}
+              data-testid="button-add-project-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAddProject}
+              disabled={!newName.trim() || saving}
+              data-testid="button-add-project-save"
+            >
+              {saving ? "Creating…" : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {summaryQ.data && (summaryQ.data.scoredCurrentIncome > 0 || summaryQ.data.primaryFutureIncome) && (
         <section

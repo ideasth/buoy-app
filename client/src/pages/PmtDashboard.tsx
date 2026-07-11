@@ -11,6 +11,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import {
+  type PriorityFilter,
+  DEFAULT_PRIORITY_FILTER,
+  PRIORITY_FILTERS,
+  matchesPriorityFilter,
+  priorityDisplaySortKey,
+} from "@/lib/pmtPriority";
 
 // ---- Types mirroring server/pmt-dashboard.ts ----
 
@@ -26,6 +33,9 @@ interface PmtItem {
   latestThreadUrl: string | null;
   pmtNotes: string | null;
   seedKey: string | null;
+  // Priority signals (from the projects table; used by the priority filter).
+  focusOfWeekAt?: number | null;
+  priority?: string | null;
   // Dashboard rollups (computed server-side; snippet only, never full text).
   hasNarrativeStatus?: boolean;
   narrativeSnippet?: string | null;
@@ -128,8 +138,17 @@ function matchesPmtFilter(item: PmtItem, filter: PmtStatusFilter): boolean {
   return ps === filter;
 }
 
-function matchesFilters(item: PmtItem, fileFilter: FileStatusFilter, pmtFilter: PmtStatusFilter): boolean {
-  return matchesFileFilter(item, fileFilter) && matchesPmtFilter(item, pmtFilter);
+function matchesFilters(
+  item: PmtItem,
+  fileFilter: FileStatusFilter,
+  pmtFilter: PmtStatusFilter,
+  priorityFilter: PriorityFilter,
+): boolean {
+  return (
+    matchesFileFilter(item, fileFilter) &&
+    matchesPmtFilter(item, pmtFilter) &&
+    matchesPriorityFilter(item, priorityFilter)
+  );
 }
 
 // sort-complete-last — Complete items sort last within each group
@@ -147,6 +166,19 @@ function pmtStatusSortKey(ps: string | null): number {
 function sortItemsCompleteList<T extends { pmtStatus: string | null }>(items: T[]): T[] {
   // Stable sort: preserve relative order within same status bucket. sort-complete-last
   return [...items].sort((a, b) => pmtStatusSortKey(a.pmtStatus) - pmtStatusSortKey(b.pmtStatus));
+}
+
+// When Focus-for-Week emphasis mode is active, order items focus-first, then
+// high, then low, with Parked pushed to the bottom (see priorityDisplaySortKey).
+// Complete items still sort last as a tie-breaker. For the other priority
+// options ordering is unchanged (complete-last only).
+function sortItemsForDisplay<T extends PmtItem>(items: T[], priorityFilter: PriorityFilter): T[] {
+  if (priorityFilter !== "focus-of-week") return sortItemsCompleteList(items);
+  return [...items].sort((a, b) => {
+    const pd = priorityDisplaySortKey(a) - priorityDisplaySortKey(b);
+    if (pd !== 0) return pd;
+    return pmtStatusSortKey(a.pmtStatus) - pmtStatusSortKey(b.pmtStatus);
+  });
 }
 
 // Fixed status display order for the header summary: Active → Parked → Complete
@@ -269,11 +301,13 @@ function LabelSection({
   group,
   fileFilter,
   pmtFilter,
+  priorityFilter,
   onTaskCreated,
 }: {
   group: LabelGroup;
   fileFilter: FileStatusFilter;
   pmtFilter: PmtStatusFilter;
+  priorityFilter: PriorityFilter;
   onTaskCreated: () => void;
 }) {
   // Flatten all items to get a count of those that pass the filters.
@@ -281,24 +315,29 @@ function LabelSection({
     ...group.orphanIssues,
     ...group.items.flatMap((e) => [e.project, ...e.subProjects, ...e.issues]),
   ];
-  const filteredCount = allItems.filter((i) => matchesFilters(i, fileFilter, pmtFilter)).length;
+  const filteredCount = allItems.filter((i) => matchesFilters(i, fileFilter, pmtFilter, priorityFilter)).length;
 
-  if ((fileFilter !== "all" || pmtFilter !== "all") && filteredCount === 0) return null;
+  if ((fileFilter !== "all" || pmtFilter !== "all" || priorityFilter !== "all") && filteredCount === 0) return null;
 
   // Build status counts in fixed order (Open, Active, Parked, Complete), skip zero counts.
   const orderedStatusEntries = STATUS_DISPLAY_ORDER
     .filter((s) => (group.statusCounts[s] ?? 0) > 0)
     .map((s) => [s, group.statusCounts[s]] as [string, number]);
 
-  // Sort orphan issues so Complete appears last. sort-complete-last
-  const sortedOrphanIssues = sortItemsCompleteList(group.orphanIssues);
+  // Order orphan issues (focus-first in emphasis mode, else complete-last).
+  const sortedOrphanIssues = sortItemsForDisplay(group.orphanIssues, priorityFilter);
 
-  // Sort project entries so Complete-status projects appear last. sort-complete-last
-  const sortedEntries = sortItemsCompleteList(
-    group.items.map((e) => ({ ...e, pmtStatus: e.project.pmtStatus }))
+  // Order project entries by their project row's priority/status.
+  const sortedEntries = sortItemsForDisplay(
+    group.items.map((e) => ({ ...e, ...e.project })),
+    priorityFilter,
   ).map((e) => {
-    const { pmtStatus: _ps, ...entry } = e;
-    return entry as LabeledProjectEntry;
+    const entry: LabeledProjectEntry = {
+      project: e.project,
+      subProjects: e.subProjects,
+      issues: e.issues,
+    };
+    return entry;
   });
 
   return (
@@ -317,7 +356,7 @@ function LabelSection({
       <div className="divide-y divide-border px-4">
         {/* Orphan issues rendered first */}
         {sortedOrphanIssues
-          .filter((i) => matchesFilters(i, fileFilter, pmtFilter))
+          .filter((i) => matchesFilters(i, fileFilter, pmtFilter, priorityFilter))
           .map((issue) => (
             <ItemRow key={issue.id} item={issue} indent={0} onTaskCreated={onTaskCreated} />
           ))}
@@ -325,22 +364,22 @@ function LabelSection({
         {sortedEntries
           .filter(
             (entry) =>
-              matchesFilters(entry.project, fileFilter, pmtFilter) ||
-              entry.subProjects.some((sp) => matchesFilters(sp, fileFilter, pmtFilter)) ||
-              entry.issues.some((iss) => matchesFilters(iss, fileFilter, pmtFilter)),
+              matchesFilters(entry.project, fileFilter, pmtFilter, priorityFilter) ||
+              entry.subProjects.some((sp) => matchesFilters(sp, fileFilter, pmtFilter, priorityFilter)) ||
+              entry.issues.some((iss) => matchesFilters(iss, fileFilter, pmtFilter, priorityFilter)),
           )
           .map((entry) => (
             <div key={entry.project.id}>
-              {matchesFilters(entry.project, fileFilter, pmtFilter) && (
+              {matchesFilters(entry.project, fileFilter, pmtFilter, priorityFilter) && (
                 <ItemRow item={entry.project} indent={0} onTaskCreated={onTaskCreated} />
               )}
-              {sortItemsCompleteList(entry.subProjects)
-                .filter((sp) => matchesFilters(sp, fileFilter, pmtFilter))
+              {sortItemsForDisplay(entry.subProjects, priorityFilter)
+                .filter((sp) => matchesFilters(sp, fileFilter, pmtFilter, priorityFilter))
                 .map((sp) => (
                   <ItemRow key={sp.id} item={sp} indent={1} onTaskCreated={onTaskCreated} />
                 ))}
-              {sortItemsCompleteList(entry.issues)
-                .filter((iss) => matchesFilters(iss, fileFilter, pmtFilter))
+              {sortItemsForDisplay(entry.issues, priorityFilter)
+                .filter((iss) => matchesFilters(iss, fileFilter, pmtFilter, priorityFilter))
                 .map((iss) => (
                   <ItemRow key={iss.id} item={iss} indent={1} onTaskCreated={onTaskCreated} />
                 ))}
@@ -356,6 +395,7 @@ function LabelSection({
 export default function PmtDashboard() {
   const [fileFilter, setFileFilter] = useState<FileStatusFilter>("all");
   const [pmtFilter, setPmtFilter] = useState<PmtStatusFilter>("active");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>(DEFAULT_PRIORITY_FILTER);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery<DashboardData>({
@@ -448,6 +488,19 @@ export default function PmtDashboard() {
             <SelectItem value="complete">Complete</SelectItem>
           </SelectContent>
         </Select>
+        <Select
+          value={priorityFilter}
+          onValueChange={(v) => setPriorityFilter(v as PriorityFilter)}
+        >
+          <SelectTrigger className="h-8 w-[170px]" data-testid="select-priority-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PRIORITY_FILTERS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Content */}
@@ -465,6 +518,7 @@ export default function PmtDashboard() {
               group={group}
               fileFilter={fileFilter}
               pmtFilter={pmtFilter}
+              priorityFilter={priorityFilter}
               onTaskCreated={handleTaskCreated}
             />
           ))}
