@@ -1679,3 +1679,18 @@ curl -sS -H "X-Anchor-Sync-Secret: $SECRET" \
 - Today page: one-tap "Today's action" card.
 - Smoke (live): /api/health {"ok":true} on buoy + anchor back-compat; /api/projects/focus-of-week -> {"projects":[]}; /api/daily-focus -> null; invalid priority PATCH -> 400. All pass.
 - Companion: user skill focus-anchor-adhd updated (focus-of-week tier ranks above high; needs-files nudge; set-today's-action flow). Daily 05:30 AEST morning anchor cron created (id 14825290; UTC 30 19; retune to 30 18 after AEDT cutover Sun 5 Oct 2026).
+
+## 2026-07-11 09:30 AEST — Stage 22: PMT Status reorder + Space fields + (interim) action-note thread fields
+- Commit deployed: fbce5c3 (merge of stage-22-pmt-status-space)
+- Corrects Stage 21 mistake: removed the generic `select-status`/`setStatus` selector. PMT Status (testid `select-pmt-status`, options Active|Parked|Complete) now shows for ALL projects, ordered ABOVE Priority. Boot migration maps any legacy Open status -> Active.
+- New: projects.spaceName + projects.spaceUrl (nullable, first-class). PATCH /api/projects/:id accepts spaceName/spaceUrl with http(s) validation (400 invalid_space_url). Editable Space card in ProjectDetail.
+- Interim (SUPERSEDED by Stage 23): added threadName/threadUrl to project_action_notes + thread inputs on action notes. This was the wrong entity and was fully reverted in Stage 23.
+- Tests: 639 passing. Build OK.
+
+## 2026-07-11 10:58 AEST — Stage 23: remove Actions feature; Notes-timeline thread URL with server-fetched page title
+- Commit deployed: c475023 (merge of stage-23-notes-thread; branch head e328c66)
+- Removed the Actions feature ENTIRELY: Actions section + ActionRow/ActionStatusBadge in ProjectDetail.tsx; all /api/.../actions + action-note routes; action storage helpers + DDL; projectActions + projectActionNotes schema/types (this also removed the Stage 22 action-note threadName/threadUrl columns). Guarded idempotent boot migration DROPs project_action_notes then project_actions. projects.nextActionTaskId (points at project_tasks) kept.
+- Notes timeline (project_component_notes) repurposed its existing sourceUrl/sourceLabel pair as the thread pointer: sourceUrl = user-entered URL; sourceLabel = page <title> AUTO-FETCHED server-side. Manual source-label input removed from Add Note form (now Date/Title/Note + single Thread URL input). Saved notes render sourceLabel as a clickable link (hostname/"Link" fallback).
+- New helper server/thread-title.ts: fetchThreadTitle(url) (GET ~8s timeout, <title> then og:title fallback, cap ~200 chars, never throws) + resolveNoteSource (injectable fetcher for offline tests). POST /api/projects/:id/notes validates sourceUrl absolute http(s) else 400 invalid_source_url; empty/null clears both fields.
+- Tests: 646 passing across 55 files. Build OK. Spec: STAGE_23_NOTES_THREAD_SPEC.md at repo root.
+- Smoke (live, buoy.thinhalo.com): /api/health {"ok":true}; VPS HEAD c475023 with 0 action routes in compiled server bundle; POST note with invalid sourceUrl -> 400 invalid_source_url; POST with https://example.com/ -> sourceLabel "Example Domain" (server-fetched); test note deleted afterward. NOTE: /api/projects/:id/actions now returns 200 HTML (SPA catch-all), not JSON 404 — authoritative check is the server-bundle route grep (0), not the HTTP status.
