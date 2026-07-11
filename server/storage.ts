@@ -18,8 +18,6 @@ import {
   projectComponents,
   projectTasks,
   projectComponentNotes,
-  projectActions,
-  projectActionNotes,
   dailyCheckIns,
   dailyFactors,
   issues,
@@ -67,10 +65,6 @@ import type {
   InsertProjectTask,
   ProjectComponentNote,
   InsertProjectComponentNote,
-  ProjectAction,
-  InsertProjectAction,
-  ProjectActionNote,
-  InsertProjectActionNote,
   DailyCheckIn,
   InsertDailyCheckIn,
   DailyFactors,
@@ -371,7 +365,7 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 CREATE INDEX IF NOT EXISTS idx_ptasks_project ON project_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_ptasks_component ON project_tasks(component_id);
 
--- PMT component notes (dated timeline), actions, and action notes.
+-- PMT component notes (dated timeline).
 CREATE TABLE IF NOT EXISTS project_component_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   component_type TEXT NOT NULL DEFAULT 'project',
@@ -385,32 +379,6 @@ CREATE TABLE IF NOT EXISTS project_component_notes (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_component_notes_component ON project_component_notes(component_type, component_id, note_date);
-
-CREATE TABLE IF NOT EXISTS project_actions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  component_type TEXT NOT NULL DEFAULT 'project',
-  component_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Open',
-  due_date TEXT,
-  link_url TEXT,
-  link_label TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_actions_component ON project_actions(component_type, component_id);
-
-CREATE TABLE IF NOT EXISTS project_action_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_id INTEGER NOT NULL,
-  note_date TEXT NOT NULL,
-  body TEXT NOT NULL,
-  source_url TEXT,
-  source_label TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_action_notes_action ON project_action_notes(action_id, note_date);
 
 -- Stage 21 — Daily focus: one nominated action per date (Melbourne local)
 CREATE TABLE IF NOT EXISTS daily_focus (
@@ -657,9 +625,6 @@ for (const stmt of [
   // Stage 22 — First-class space fields (additive; both nullable TEXT).
   "ALTER TABLE projects ADD COLUMN space_name TEXT",
   "ALTER TABLE projects ADD COLUMN space_url TEXT",
-  // Stage 22 — Action-note thread pointer (additive; both nullable TEXT).
-  "ALTER TABLE project_action_notes ADD COLUMN thread_name TEXT",
-  "ALTER TABLE project_action_notes ADD COLUMN thread_url TEXT",
   // Coach session retention + deep-think (Feature 5 polish, 2026-05-08).
   "ALTER TABLE coach_sessions ADD COLUMN deep_think INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE coach_sessions ADD COLUMN archived_at INTEGER",
@@ -773,6 +738,14 @@ for (const stmt of [
 try {
   sqlite.prepare(`UPDATE projects SET pmt_status='Active' WHERE pmt_status='Open'`).run();
 } catch (e) { /* harmless if column not yet present */ }
+
+// Stage 23 — Remove the Actions feature. Drop the action-notes child table
+// first (FK-free but conceptually a child), then the actions table. Guarded and
+// idempotent (DROP TABLE IF EXISTS), safe to re-run on every boot.
+try {
+  sqlite.exec(`DROP TABLE IF EXISTS project_action_notes;`);
+  sqlite.exec(`DROP TABLE IF EXISTS project_actions;`);
+} catch { /* already dropped */ }
 
 // Stage 20 — PMT indexes (best-effort, safe to run on every boot).
 try {
@@ -2074,15 +2047,9 @@ export class Storage {
       .from(projects)
       .where(isNotNull(projects.pmtLabel))
       .all();
-    // Enrich each row with dashboard rollups: a short narrative snippet, a
-    // no-narrative flag, and a count of open/active actions. Long-form text is
-    // never surfaced on the dashboard — only a truncated snippet.
-    const actionCounts = new Map<number, number>();
-    for (const a of db.select().from(projectActions).where(eq(projectActions.componentType, "project")).all()) {
-      if (a.status === "Open" || a.status === "Active") {
-        actionCounts.set(a.componentId, (actionCounts.get(a.componentId) ?? 0) + 1);
-      }
-    }
+    // Enrich each row with dashboard rollups: a short narrative snippet and a
+    // no-narrative flag. Long-form text is never surfaced on the dashboard —
+    // only a truncated snippet.
     const phaseDescCounts = new Map<number, number>();
     for (const ph of db.select().from(projectPhases).all()) {
       if (ph.description != null && ph.description.trim() !== "") {
@@ -2095,7 +2062,7 @@ export class Storage {
         ...r,
         hasNarrativeStatus: ns !== "",
         narrativeSnippet: ns === "" ? null : (ns.length > 140 ? ns.slice(0, 140) + "…" : ns),
-        openActiveActionCount: actionCounts.get(r.id) ?? 0,
+        openActiveActionCount: 0,
         phaseDescriptionCount: phaseDescCounts.get(r.id) ?? 0,
       };
     });
@@ -2253,94 +2220,6 @@ export class Storage {
   }
   deleteComponentNote(id: number): void {
     db.delete(projectComponentNotes).where(eq(projectComponentNotes.id, id)).run();
-  }
-
-  // ----- Actions -----
-  listActions(componentType: string, componentId: number): ProjectAction[] {
-    return db
-      .select()
-      .from(projectActions)
-      .where(and(
-        eq(projectActions.componentType, componentType),
-        eq(projectActions.componentId, componentId),
-      ))
-      .orderBy(projectActions.id)
-      .all();
-  }
-  createAction(input: {
-    componentType: string;
-    componentId: number;
-    title: string;
-    status?: string;
-    dueDate?: string | null;
-    linkUrl?: string | null;
-    linkLabel?: string | null;
-  }): ProjectAction {
-    const now = Date.now();
-    return db.insert(projectActions).values({
-      componentType: input.componentType,
-      componentId: input.componentId,
-      title: input.title,
-      status: input.status ?? "Open",
-      dueDate: input.dueDate ?? null,
-      linkUrl: input.linkUrl ?? null,
-      linkLabel: input.linkLabel ?? null,
-      createdAt: now,
-      updatedAt: now,
-    }).returning().get();
-  }
-  updateAction(id: number, updates: Partial<InsertProjectAction>): ProjectAction | undefined {
-    db.update(projectActions)
-      .set({ ...updates, updatedAt: Date.now() })
-      .where(eq(projectActions.id, id))
-      .run();
-    return db.select().from(projectActions).where(eq(projectActions.id, id)).get();
-  }
-  deleteAction(id: number): void {
-    db.delete(projectActionNotes).where(eq(projectActionNotes.actionId, id)).run();
-    db.delete(projectActions).where(eq(projectActions.id, id)).run();
-  }
-
-  // ----- Action notes -----
-  listActionNotes(actionId: number): ProjectActionNote[] {
-    return db
-      .select()
-      .from(projectActionNotes)
-      .where(eq(projectActionNotes.actionId, actionId))
-      .orderBy(projectActionNotes.noteDate, projectActionNotes.id)
-      .all();
-  }
-  createActionNote(input: {
-    actionId: number;
-    noteDate: string;
-    body: string;
-    sourceUrl?: string | null;
-    sourceLabel?: string | null;
-    threadName?: string | null;
-    threadUrl?: string | null;
-  }): ProjectActionNote {
-    const now = Date.now();
-    return db.insert(projectActionNotes).values({
-      actionId: input.actionId,
-      noteDate: input.noteDate,
-      body: input.body,
-      sourceUrl: input.sourceUrl ?? null,
-      sourceLabel: input.sourceLabel ?? null,
-      threadName: input.threadName ?? null,
-      threadUrl: input.threadUrl ?? null,
-      createdAt: now,
-      updatedAt: now,
-    }).returning().get();
-  }
-  updateActionNote(id: number, updates: Partial<InsertProjectActionNote>): ProjectActionNote | undefined {
-    db.update(projectActionNotes)
-      .set({ ...updates, updatedAt: Date.now() })
-      .where(eq(projectActionNotes.id, id))
-      .run();
-    return db.select().from(projectActionNotes).where(eq(projectActionNotes.id, id)).get();
-  }
-  deleteActionNote(id: number): void {
-    db.delete(projectActionNotes).where(eq(projectActionNotes.id, id)).run();
   }
 
   seedDefaultHabitsIfNeeded() {

@@ -1,6 +1,8 @@
 // filepath: test/stage22-space-fields.test.ts
-// Stage 22 — PMT status ordering fix + first-class space fields + action-note
-// thread pointers.
+// Stage 22 — PMT status ordering fix + first-class space fields.
+//
+// Note: the Stage 22 action-note thread pointer was removed in Stage 23 (the
+// Actions feature was deleted entirely), so those tests no longer exist here.
 //
 // Hermetic, mirroring test/focus-of-week.test.ts: in-memory SQLite round-trips
 // for the additive migrations plus source-text guards on server/routes.ts and
@@ -29,30 +31,14 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 `;
 
-const ACTION_NOTES_DDL = `
-CREATE TABLE IF NOT EXISTS project_action_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_id INTEGER NOT NULL,
-  note_date TEXT NOT NULL,
-  body TEXT NOT NULL,
-  source_url TEXT,
-  source_label TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-`;
-
 // Mirror of the Stage 22 additive ALTERs in server/storage.ts.
 const ALTER_STMTS = [
   "ALTER TABLE projects ADD COLUMN space_name TEXT",
   "ALTER TABLE projects ADD COLUMN space_url TEXT",
-  "ALTER TABLE project_action_notes ADD COLUMN thread_name TEXT",
-  "ALTER TABLE project_action_notes ADD COLUMN thread_url TEXT",
 ];
 
 function applyMigrations(db: Database.Database): void {
   db.exec(PROJECTS_DDL);
-  db.exec(ACTION_NOTES_DDL);
   for (const stmt of ALTER_STMTS) {
     try { db.exec(stmt); } catch { /* already exists */ }
   }
@@ -62,7 +48,7 @@ function applyMigrations(db: Database.Database): void {
   } catch { /* column absent */ }
 }
 
-// Mirror of the spaceUrl / threadUrl validation used in server/routes.ts.
+// Mirror of the spaceUrl validation used in server/routes.ts.
 function isBlankOrValidUrl(v: unknown): boolean {
   if (v == null || v === "") return true;
   if (typeof v !== "string") return false;
@@ -75,15 +61,12 @@ function isBlankOrValidUrl(v: unknown): boolean {
 }
 
 describe("Stage 22 migrations", () => {
-  it("adds space_name/space_url to projects and thread_name/thread_url to action notes", () => {
+  it("adds space_name/space_url to projects", () => {
     const db = new Database(":memory:");
     applyMigrations(db);
     const projCols = (db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>).map((c) => c.name);
     expect(projCols).toContain("space_name");
     expect(projCols).toContain("space_url");
-    const noteCols = (db.prepare("PRAGMA table_info(project_action_notes)").all() as Array<{ name: string }>).map((c) => c.name);
-    expect(noteCols).toContain("thread_name");
-    expect(noteCols).toContain("thread_url");
   });
 
   it("is idempotent: re-applying (re-open) does not error and adds each column once", () => {
@@ -128,7 +111,7 @@ describe("Space fields round-trip", () => {
   });
 });
 
-describe("spaceUrl / threadUrl validation (mirror of routes.ts)", () => {
+describe("spaceUrl validation (mirror of routes.ts)", () => {
   it("accepts blank/null and absolute http(s) URLs", () => {
     expect(isBlankOrValidUrl(null)).toBe(true);
     expect(isBlankOrValidUrl("")).toBe(true);
@@ -141,20 +124,6 @@ describe("spaceUrl / threadUrl validation (mirror of routes.ts)", () => {
     expect(isBlankOrValidUrl("javascript:alert(1)")).toBe(false);
     expect(isBlankOrValidUrl("not a url")).toBe(false);
     expect(isBlankOrValidUrl("example.com")).toBe(false);
-  });
-});
-
-describe("Action-note thread fields round-trip", () => {
-  it("stores threadName + threadUrl and returns them on a list-equivalent read", () => {
-    const db = new Database(":memory:");
-    applyMigrations(db);
-    const now = Date.now();
-    db.prepare(
-      "INSERT INTO project_action_notes (action_id, note_date, body, thread_name, thread_url, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
-    ).run(1, "2026-07-10", "did a thing", "Slack thread", "https://slack.example/thread/1", now, now);
-    const row = db.prepare("SELECT thread_name, thread_url FROM project_action_notes WHERE action_id=?").get(1) as { thread_name: string | null; thread_url: string | null };
-    expect(row.thread_name).toBe("Slack thread");
-    expect(row.thread_url).toBe("https://slack.example/thread/1");
   });
 });
 
@@ -196,12 +165,6 @@ describe("server/routes.ts source guards", () => {
     expect(src).toContain("invalid_space_url");
   });
 
-  it("action-note routes accept threadName/threadUrl and validate the URL", () => {
-    expect(src).toContain('"threadName"');
-    expect(src).toContain('"threadUrl"');
-    expect(src).toContain("invalid_thread_url");
-  });
-
   it("still restricts pmtStatus to Active|Parked|Complete (no Open)", () => {
     expect(src).toContain('["Active", "Parked", "Complete"].includes(updates.pmtStatus)');
   });
@@ -213,17 +176,10 @@ describe("server/storage.ts source guards", () => {
   it("declares the Stage 22 additive ALTERs", () => {
     expect(src).toContain("ALTER TABLE projects ADD COLUMN space_name TEXT");
     expect(src).toContain("ALTER TABLE projects ADD COLUMN space_url TEXT");
-    expect(src).toContain("ALTER TABLE project_action_notes ADD COLUMN thread_name TEXT");
-    expect(src).toContain("ALTER TABLE project_action_notes ADD COLUMN thread_url TEXT");
   });
 
   it("runs the idempotent Open -> Active data migration", () => {
     expect(src).toContain("UPDATE projects SET pmt_status='Active' WHERE pmt_status='Open'");
-  });
-
-  it("createActionNote persists threadName/threadUrl", () => {
-    expect(src).toContain("threadName: input.threadName ?? null");
-    expect(src).toContain("threadUrl: input.threadUrl ?? null");
   });
 });
 
@@ -249,15 +205,5 @@ describe("client/src/pages/ProjectDetail.tsx source guards", () => {
     expect(src).toContain('data-testid="input-space-url"');
     expect(src).toContain('data-testid="link-space"');
     expect(src).toContain("No space linked yet.");
-  });
-
-  it("adds thread name + url inputs to the add-action-note form", () => {
-    expect(src).toContain("input-action-note-thread-name-");
-    expect(src).toContain("input-action-note-thread-url-");
-  });
-
-  it("renders an existing action note thread as a clickable link", () => {
-    expect(src).toContain("action-note-thread-");
-    expect(src).toContain("n.threadUrl");
   });
 });

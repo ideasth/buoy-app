@@ -1,6 +1,9 @@
 // filepath: test/pmt-fields.test.ts
 // PMT component fields — hermetic schema/storage tests for narrative status,
-// phase description, component notes, actions, and action notes.
+// phase description, and component notes.
+//
+// Note: the Actions feature (project_actions / project_action_notes) was
+// removed in Stage 23, so those tests no longer exist here.
 //
 // Mirrors the CREATE TABLE + ALTER TABLE pattern from server/storage.ts so a
 // regression in the migration path lands here loudly. No server boot.
@@ -39,30 +42,6 @@ CREATE TABLE IF NOT EXISTS project_component_notes (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_component_notes_component ON project_component_notes(component_type, component_id, note_date);
-CREATE TABLE IF NOT EXISTS project_actions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  component_type TEXT NOT NULL DEFAULT 'project',
-  component_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Open',
-  due_date TEXT,
-  link_url TEXT,
-  link_label TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_actions_component ON project_actions(component_type, component_id);
-CREATE TABLE IF NOT EXISTS project_action_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_id INTEGER NOT NULL,
-  note_date TEXT NOT NULL,
-  body TEXT NOT NULL,
-  source_url TEXT,
-  source_label TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_action_notes_action ON project_action_notes(action_id, note_date);
 `;
 
 // The additive ALTER statements from server/storage.ts (subset relevant here).
@@ -171,42 +150,5 @@ describe("component notes timeline", () => {
       "SELECT body FROM project_component_notes WHERE component_type='project' AND component_id=1 ORDER BY note_date ASC, id ASC",
     ).all() as Array<{ body: string }>;
     expect(rows.map((r) => r.body)).toEqual(["first", "second", "third"]);
-  });
-});
-
-describe("actions + action notes", () => {
-  it("creates actions with default Open status and lists them", () => {
-    const db = setupDb();
-    const now = Date.now();
-    db.prepare("INSERT INTO project_actions (component_type, component_id, title, created_at, updated_at) VALUES ('project', 1, ?, ?, ?)")
-      .run("Draft letter", now, now);
-    const a = db.prepare("SELECT title, status FROM project_actions WHERE component_id=1").get() as any;
-    expect(a.title).toBe("Draft letter");
-    expect(a.status).toBe("Open");
-  });
-
-  it("updates action status through the enum", () => {
-    const db = setupDb();
-    const now = Date.now();
-    const res = db.prepare("INSERT INTO project_actions (component_type, component_id, title, created_at, updated_at) VALUES ('project', 1, ?, ?, ?)").run("A", now, now);
-    const id = res.lastInsertRowid as number;
-    for (const status of ["Active", "Parked", "Complete"]) {
-      db.prepare("UPDATE project_actions SET status=? WHERE id=?").run(status, id);
-      const row = db.prepare("SELECT status FROM project_actions WHERE id=?").get(id) as any;
-      expect(row.status).toBe(status);
-    }
-  });
-
-  it("lists action notes chronologically", () => {
-    const db = setupDb();
-    const now = Date.now();
-    const res = db.prepare("INSERT INTO project_actions (component_type, component_id, title, created_at, updated_at) VALUES ('project', 1, ?, ?, ?)").run("A", now, now);
-    const actionId = res.lastInsertRowid as number;
-    const ins = db.prepare("INSERT INTO project_action_notes (action_id, note_date, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)");
-    ins.run(actionId, "2026-04-01", "b", now, now);
-    ins.run(actionId, "2026-02-01", "a", now, now);
-    ins.run(actionId, "2026-06-01", "c", now, now);
-    const rows = db.prepare("SELECT body FROM project_action_notes WHERE action_id=? ORDER BY note_date ASC, id ASC").all(actionId) as Array<{ body: string }>;
-    expect(rows.map((r) => r.body)).toEqual(["a", "b", "c"]);
   });
 });

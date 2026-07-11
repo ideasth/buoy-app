@@ -1,8 +1,10 @@
 // filepath: test/pmt-fields-ui.test.ts
 // PMT component fields — UI source-text guards.
 // Mirrors test/pmt-dashboard-ui.test.ts: reads page source and asserts the
-// new affordances (narrative status box, phase description editor, actions
-// section, notes timeline) and dashboard rollup badges are present.
+// new affordances (narrative status box, phase description editor, notes
+// timeline) and dashboard rollup badges are present.
+//
+// Note: the Actions section was removed in Stage 23.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -29,26 +31,20 @@ describe("ProjectDetail.tsx — PMT component field affordances", () => {
     expect(src).toContain("button-save-phase-description-");
   });
 
-  it("renders the actions section with an add-action control", () => {
-    expect(src).toContain("section-actions");
-    expect(src).toContain("input-new-action");
-    expect(src).toContain("button-add-action");
-  });
-
-  it("renders the component notes timeline section", () => {
+  it("renders the component notes timeline section with a thread URL input", () => {
     expect(src).toContain("section-component-notes");
     expect(src).toContain("textarea-new-note-body");
+    expect(src).toContain("input-new-note-source-url");
   });
 
-  it("renders per-action status select and action notes", () => {
-    expect(src).toContain("action-row-");
-    expect(src).toContain("select-action-status-");
-    expect(src).toContain("button-add-action-note-");
+  it("no longer renders the Actions section (removed in Stage 23)", () => {
+    expect(src).not.toContain("section-actions");
+    expect(src).not.toContain("action-row-");
+    expect(src).not.toContain("select-action-status-");
   });
 
   it("queries the new sub-resource endpoints", () => {
     expect(src).toContain("/notes");
-    expect(src).toContain("/actions");
     expect(src).toContain("/narrative-status");
   });
 });
