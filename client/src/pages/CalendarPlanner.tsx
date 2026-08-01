@@ -22,7 +22,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Plus, Pencil, Trash2 } from "lucide-react";
+import { AddEventDialog } from "@/components/AddEventDialog";
+import { useToast } from "@/hooks/use-toast";
 import { fmtTime as fmtTimeShared, todayDateStr } from "@/lib/anchor";
 import { TravelBadge } from "@/components/TravelBadge";
 import type { TravelTodayItem } from "@/lib/travel";
@@ -50,6 +52,9 @@ function useTravelTodayMap(enabled: boolean = true) {
   }, [q.data]);
 }
 
+type CalEventSource = "rules" | "external" | "adhoc";
+type AdhocCategory = "oliver_work" | "oliver_personal" | "family";
+
 interface CalEvent {
   uid: string;
   summary: string;
@@ -58,7 +63,30 @@ interface CalEvent {
   allDay: boolean;
   description?: string;
   location?: string;
+  // Source tag from backend — drives the /calendar colour legend.
+  source?: CalEventSource;
+  // Present only for adhoc events — enables edit/delete affordance in DayDrawer.
+  adhocId?: number;
+  adhocCategory?: AdhocCategory;
 }
+
+// Source → CSS class map. Green = adhoc (user-added), Blue = rules (generated
+// by build_calendars.py), Purple = external (mirrored from published feeds).
+const SOURCE_COLOR_TEXT: Record<CalEventSource, string> = {
+  adhoc: "text-emerald-700 dark:text-emerald-400",
+  rules: "text-blue-700 dark:text-blue-400",
+  external: "text-purple-700 dark:text-purple-400",
+};
+const SOURCE_COLOR_DOT: Record<CalEventSource, string> = {
+  adhoc: "bg-emerald-500",
+  rules: "bg-blue-500",
+  external: "bg-purple-500",
+};
+const SOURCE_LABEL: Record<CalEventSource, string> = {
+  adhoc: "Adhoc (Buoy)",
+  rules: "Rules-based",
+  external: "External feed",
+};
 
 interface PlannerNote {
   id: number;
@@ -323,6 +351,8 @@ export default function CalendarPlanner() {
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const [drawerDate, setDrawerDate] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [addEventOpen, setAddEventOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null);
   // Stage 16: Find a time dialog.
   const [findTimeOpen, setFindTimeOpen] = useState(false);
 
@@ -406,6 +436,18 @@ export default function CalendarPlanner() {
           <Button
             size="sm"
             variant="outline"
+            onClick={() => {
+              setEditingEvent(null);
+              setAddEventOpen(true);
+            }}
+            data-testid="button-add-event"
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            Add event
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setExportOpen(true)}
             data-testid="button-export"
           >
@@ -414,6 +456,17 @@ export default function CalendarPlanner() {
           </Button>
         </div>
       </header>
+
+      {/* Colour legend for the yearly planner */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Legend:</span>
+        {(Object.keys(SOURCE_COLOR_DOT) as CalEventSource[]).map((s) => (
+          <span key={s} className="flex items-center gap-1.5">
+            <span className={cn("inline-block h-2 w-2 rounded-full", SOURCE_COLOR_DOT[s])} />
+            {SOURCE_LABEL[s]}
+          </span>
+        ))}
+      </div>
 
       {/* Stage 16 — Find a time dialog */}
       <Dialog open={findTimeOpen} onOpenChange={setFindTimeOpen}>
@@ -494,9 +547,35 @@ export default function CalendarPlanner() {
         events={events}
         existingNote={drawerDate ? noteByDate.get(drawerDate)?.note ?? "" : ""}
         onClose={() => setDrawerDate(null)}
+        onEditAdhoc={(ev) => {
+          setEditingEvent(ev);
+          setAddEventOpen(true);
+        }}
       />
 
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} />
+
+      <AddEventDialog
+        open={addEventOpen}
+        onOpenChange={(o) => {
+          setAddEventOpen(o);
+          if (!o) setEditingEvent(null);
+        }}
+        editingId={editingEvent?.adhocId ?? null}
+        initial={
+          editingEvent && editingEvent.adhocCategory
+            ? {
+                category: editingEvent.adhocCategory,
+                title: editingEvent.summary,
+                start_utc: editingEvent.start,
+                end_utc: editingEvent.end,
+                all_day: !!editingEvent.allDay,
+                location: editingEvent.location ?? "",
+                notes: editingEvent.description ?? "",
+              }
+            : null
+        }
+      />
     </div>
   );
 }
@@ -725,7 +804,7 @@ function YearGroupedTable({
   // Each cell holds a list of event entries with sort metadata so we can put
   // all-day events at the top, then chronological timed events. No truncation
   // ("+N more" removed) — every event is rendered, fully expanded.
-  type CellEntry = { text: string; allDay: boolean; startMs: number };
+  type CellEntry = { text: string; allDay: boolean; startMs: number; source: CalEventSource };
   const grid = useMemo(() => {
     const map = new Map<string, Record<ColKey, CellEntry[]>>();
     for (const d of days) {
@@ -753,6 +832,7 @@ function YearGroupedTable({
             text: summariseEventForCell(e),
             allDay: !!e.allDay,
             startMs,
+            source: (e.source ?? "rules") as CalEventSource,
           });
         }
         cur.setDate(cur.getDate() + 1);
@@ -773,6 +853,7 @@ function YearGroupedTable({
           text: line,
           allDay: true,
           startMs: 0,
+          source: "rules",
         });
       }
     }
@@ -916,8 +997,9 @@ function YearGroupedTable({
                               className={cn(
                                 "break-words",
                                 en.allDay && "font-semibold",
+                                SOURCE_COLOR_TEXT[en.source],
                               )}
-                              title={en.text}
+                              title={`${en.text} \u00b7 ${SOURCE_LABEL[en.source]}`}
                             >
                               {en.text}
                             </div>
@@ -1016,16 +1098,44 @@ function DayDrawer({
   events,
   existingNote,
   onClose,
+  onEditAdhoc,
 }: {
   date: string | null;
   events: CalEvent[];
   existingNote: string;
   onClose: () => void;
+  onEditAdhoc?: (event: CalEvent) => void;
 }) {
   const isTodayDrawer = date === todayDateStr();
   const travelByUid = useTravelTodayMap(isTodayDrawer);
   const [note, setNote] = useState(existingNote);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  async function handleDeleteAdhoc(ev: CalEvent) {
+    if (!ev.adhocId) return;
+    if (!window.confirm(`Delete "${ev.summary}"? This cannot be undone from the UI.`)) return;
+    setDeletingId(ev.adhocId);
+    try {
+      const r = await apiRequest("DELETE", `/api/events/${ev.adhocId}`);
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        toast({
+          title: "Delete failed",
+          description: err.error || `HTTP ${r.status}`,
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({ title: "Event deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/planner/events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/today-events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+    } finally {
+      setDeletingId(null);
+    }
+  }
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -1088,10 +1198,12 @@ function DayDrawer({
                 <div className="text-sm text-muted-foreground italic">No events.</div>
               ) : (
                 <div className="space-y-1.5">
-                  {dayEvents.map((e) => (
+                  {dayEvents.map((e) => {
+                    const src = (e.source ?? "rules") as CalEventSource;
+                    return (
                     <div
                       key={e.uid + e.start}
-                      className="rounded-md border bg-card p-2 grid grid-cols-[80px_1fr] gap-3"
+                      className="rounded-md border bg-card p-2 grid grid-cols-[80px_1fr_auto] gap-3"
                     >
                       <div className="text-xs tabular-nums text-muted-foreground">
                         {e.allDay ? "all-day" : (
@@ -1102,7 +1214,10 @@ function DayDrawer({
                         )}
                       </div>
                       <div className="min-w-0">
-                        <div className="font-medium text-sm truncate">{e.summary}</div>
+                        <div className={cn("font-medium text-sm truncate flex items-center gap-1.5", SOURCE_COLOR_TEXT[src])}>
+                          <span className={cn("inline-block h-2 w-2 rounded-full shrink-0", SOURCE_COLOR_DOT[src])} />
+                          <span className="truncate">{e.summary}</span>
+                        </div>
                         {e.location && (
                           <div className="text-xs text-muted-foreground truncate">
                             {e.location}
@@ -1119,8 +1234,36 @@ function DayDrawer({
                           );
                         })()}
                       </div>
+                      {src === "adhoc" && e.adhocId ? (
+                        <div className="flex flex-col gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            aria-label="Edit event"
+                            onClick={() => onEditAdhoc?.(e)}
+                            data-testid={`button-edit-adhoc-${e.adhocId}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive hover:text-destructive"
+                            aria-label="Delete event"
+                            disabled={deletingId === e.adhocId}
+                            onClick={() => handleDeleteAdhoc(e)}
+                            data-testid={`button-delete-adhoc-${e.adhocId}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div />
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>

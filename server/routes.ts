@@ -12,6 +12,7 @@ import {
 } from "@shared/schema";
 import { upsertDailyCheckIn } from "./storage";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
+import { listBuoyEvents as _listBuoyEventsForMerge } from "./buoy-events-storage";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
@@ -479,10 +480,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ---- Calendar events ----
   async function getMergedPlannerEvents(force = false) {
     const s = storage.getSettings();
-    return getCachedEventsForFeeds([
+    const feedEvents = await getCachedEventsForFeeds([
       { url: s.calendar_ics_url },
-      { url: s.aupfhs_ics_url || "", summaryPrefix: "[Personal]" },
+      { url: s.aupfhs_ics_url || "", summaryPrefix: "[Personal]", forceSource: "external" },
     ], force);
+    // Merge SQLite adhoc events so newly-added items appear immediately, before
+    // the next full ICS rebuild lands them in the master feed.
+    // De-dupe: skip any adhoc row whose UID already exists in the ICS feed
+    // (that means the rebuild has already materialised it).
+    try {
+      const existingUids = new Set(feedEvents.map((e) => e.uid));
+      const adhocRows = _listBuoyEventsForMerge({}) as any[];
+      for (const row of adhocRows) {
+        const uid = `buoy-adhoc-${row.category.replace(/_/g, "-")}-${row.id}@buoy`;
+        if (existingUids.has(uid)) continue;
+        feedEvents.push({
+          uid,
+          summary: row.title,
+          start: row.start_utc,
+          end: row.end_utc,
+          allDay: !!row.all_day,
+          description: row.notes || undefined,
+          location: row.location || undefined,
+          source: "adhoc",
+          adhocId: row.id,
+          adhocCategory: row.category,
+        });
+      }
+    } catch (e) {
+      console.warn("[planner] failed to merge adhoc events:", (e as Error).message);
+    }
+    return feedEvents;
   }
 
   app.get("/api/today-events", async (_req, res) => {
@@ -2257,6 +2285,142 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!ok) return void res.status(404).json({ error: "not found" });
     res.status(204).send();
   });
+
+  // -----------------------------------------------------------------------
+  // Buoy adhoc events (2026-08-01) — user-added events merged into the
+  // Oliver-Work / Oliver-Personal / Family ICS bundles by build_calendars.py.
+  // Per-category ICS endpoints below are consumed by the calendar sync cron.
+  // -----------------------------------------------------------------------
+  {
+    const {
+      listBuoyEvents,
+      getBuoyEvent,
+      createBuoyEvent,
+      patchBuoyEvent,
+      deleteBuoyEvent,
+      isBuoyEventCategory,
+      BUOY_EVENT_CATEGORIES,
+      getCalendarDirtySince,
+      clearCalendarDirty,
+    } = await import("./buoy-events-storage");
+    const { emitAdhocCategoryIcs } = await import("./buoy-events-ics");
+
+    app.get("/api/events", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const category = req.query.category ? String(req.query.category) : undefined;
+      if (category && !isBuoyEventCategory(category)) {
+        return void res.status(400).json({ error: "invalid category" });
+      }
+      const fromUtc = req.query.from ? String(req.query.from) : undefined;
+      const toUtc = req.query.to ? String(req.query.to) : undefined;
+      const events = listBuoyEvents({
+        category: category as any,
+        fromUtc,
+        toUtc,
+      });
+      res.json({ events, categories: BUOY_EVENT_CATEGORIES });
+    });
+
+    app.get("/api/events/:id", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (!id) return void res.status(400).json({ error: "invalid id" });
+      const ev = getBuoyEvent(id);
+      if (!ev || ev.deleted_at) return void res.status(404).json({ error: "not found" });
+      res.json(ev);
+    });
+
+    app.post("/api/events", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      try {
+        const ev = createBuoyEvent({ ...req.body, added_by: "admin" });
+        res.status(201).json(ev);
+      } catch (err: any) {
+        res.status(400).json({ error: String(err.message) });
+      }
+    });
+
+    app.patch("/api/events/:id", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (!id) return void res.status(400).json({ error: "invalid id" });
+      try {
+        const ev = patchBuoyEvent(id, req.body);
+        if (!ev) return void res.status(404).json({ error: "not found" });
+        res.json(ev);
+      } catch (err: any) {
+        res.status(400).json({ error: String(err.message) });
+      }
+    });
+
+    app.delete("/api/events/:id", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const id = parseInt(String(req.params.id), 10);
+      if (!id) return void res.status(400).json({ error: "invalid id" });
+      const ok = deleteBuoyEvent(id);
+      if (!ok) return void res.status(404).json({ error: "not found" });
+      res.status(204).send();
+    });
+
+    // Per-category ICS endpoints consumed by build_calendars.py. Sync-secret
+    // gated (requireUserOrOrchestrator) so the calendar cron's HTTPS fetch
+    // succeeds while public exposure is blocked.
+    function serveCategoryIcs(cat: "oliver_work" | "oliver_personal" | "family") {
+      return (req: Request, res: Response) => {
+        if (!requireUserOrOrchestrator(req, res)) return;
+        const now = Date.now();
+        const fromUtc = new Date(now - 30 * 86400000).toISOString();
+        const toUtc = new Date(now + 18 * 30 * 86400000).toISOString();
+        const events = listBuoyEvents({ category: cat, fromUtc, toUtc });
+        const ics = emitAdhocCategoryIcs(cat, events);
+        res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+        res.setHeader("Content-Disposition", `inline; filename="adhoc-${cat.replace("_","-")}.ics"`);
+        res.setHeader("Cache-Control", "private, max-age=60");
+        res.send(ics);
+      };
+    }
+    app.get("/api/adhoc-events/oliver-work.ics", serveCategoryIcs("oliver_work"));
+    app.get("/api/adhoc-events/oliver-personal.ics", serveCategoryIcs("oliver_personal"));
+    app.get("/api/adhoc-events/family.ics", serveCategoryIcs("family"));
+
+    // Dirty-flag surface for the hourly cheap-tick cron (Phase 3).
+    app.get("/api/calendar/dirty", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const since = getCalendarDirtySince();
+      res.json({ dirty: since !== null, since });
+    });
+    app.post("/api/calendar/dirty/clear", (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      clearCalendarDirty();
+      res.json({ ok: true });
+    });
+
+    // Free-text event parser — uses baked Perplexity Sonar key. Returns
+    // structured event fields the frontend pre-fills in the Add Event dialog
+    // (user then confirms/edits before saving).
+    const { parseFreeTextEvent } = await import("./buoy-events-parse");
+    app.post("/api/events/parse", async (req: Request, res: Response) => {
+      if (!requireUserOrOrchestrator(req, res)) return;
+      const text = String(req.body?.text ?? "").trim();
+      if (!text) {
+        return void res.status(400).json({ error: "text required" });
+      }
+      if (text.length > 2000) {
+        return void res.status(400).json({ error: "text too long (max 2000 chars)" });
+      }
+      const referenceDate = String(req.body?.referenceDate ?? new Date().toISOString());
+      try {
+        const parsed = await parseFreeTextEvent(text, referenceDate);
+        res.json(parsed);
+      } catch (err: any) {
+        const status = err?.status ?? 500;
+        res.status(status).json({
+          error: String(err?.message ?? err),
+          details: err?.details,
+        });
+      }
+    });
+  }
 
   // -----------------------------------------------------------------------
   // Stage 17 — family events also accessible from apex (admin)
