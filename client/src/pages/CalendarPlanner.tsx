@@ -815,7 +815,16 @@ function YearGroupedTable({
       map.set(k, empty);
     }
     for (const e of events) {
-      const col = columnFor(e.summary || "");
+      // Adhoc events don't carry [Category] prefixes in the summary, so the
+      // keyword-based columnFor() often returns null (e.g. "Qantas QF413").
+      // Route them by adhocCategory first, then fall back to columnFor.
+      let col: ColKey | null = null;
+      if (e.source === "adhoc") {
+        if (e.adhocCategory === "family") col = "family_notes";
+        else col = "oliver_all"; // oliver_work | oliver_personal | undefined
+      } else {
+        col = columnFor(e.summary || "");
+      }
       if (!col) continue;
       const evStartKey = dateKey(new Date(e.start));
       const endDt = e.allDay ? new Date(new Date(e.end).getTime() - 86400000) : new Date(e.end);
