@@ -77,6 +77,8 @@ export async function parseFreeTextEvent(
     throw err;
   }
 
+  // Perplexity's chat/completions API requires json_schema (not json_object)
+  // for structured JSON. See https://docs.perplexity.ai/api-reference/structured-outputs.
   const body = {
     model: PARSE_MODEL,
     messages: [
@@ -90,7 +92,33 @@ export async function parseFreeTextEvent(
     temperature: 0.1,
     max_tokens: 400,
     disable_search: true,
-    response_format: { type: "json_object" as const },
+    response_format: {
+      type: "json_schema" as const,
+      json_schema: {
+        schema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            start_utc: { type: "string" },
+            end_utc: { type: "string" },
+            all_day: { type: "boolean" },
+            location: { type: ["string", "null"] },
+            notes: { type: ["string", "null"] },
+            confidence: { type: "string", enum: ["high", "medium", "low"] },
+            warnings: { type: "array", items: { type: "string" } },
+          },
+          required: [
+            "title",
+            "start_utc",
+            "end_utc",
+            "all_day",
+            "confidence",
+            "warnings",
+          ],
+          additionalProperties: false,
+        },
+      },
+    },
   };
 
   const resp = await fetch(PERPLEXITY_URL, {
