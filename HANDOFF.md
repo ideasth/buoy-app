@@ -2,6 +2,31 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-08-01 (AM AEST) — Adhoc events + free-text parse + calendar cron split — DEPLOYED
+
+**Why:** User asked for ad-hoc calendar events (drop-ins that don't fit the 4-week rotation rules), with free-text pasting ("Coffee with Sam next Thursday 3pm"), colour-coded sourcing (blue=rules, green=adhoc, purple=external ICS), and cheaper calendar syncing (was 2×daily full rebuild + deploy_website — most days no upstream change, so wasted credits).
+
+**Shipped (commits `d0df931` feat + `90cc2b2` fix, bundle `07b0cbdb22c47e64dd2dcd8dc563ae03`):**
+- **Backend (`server/`):** `buoy-events-storage.ts` (SQLite table + CRUD), `buoy-events-ics.ts` (per-category ICS emitter), `buoy-events-parse.ts` (Perplexity Sonar free-text parser — uses `json_schema` response format, not `json_object`), routes for `GET/POST /api/events`, `GET/PATCH/DELETE /api/events/:id`, `POST /api/events/parse`, `GET /api/adhoc-events/{oliver-work,oliver-personal,family}.ics`, `GET /api/calendar/dirty`, `POST /api/calendar/dirty/clear`. Types extended in `server/ics.ts` (`CalEventSource` + `classifyEventSource`).
+- **Frontend (`client/src/`):** `components/AddEventDialog.tsx` — new dialog with pickers/paste toggle, Melbourne wall-clock ↔ UTC helpers, edit mode; `pages/CalendarPlanner.tsx` — extended `CalEvent` with `source`/`adhocId`/`adhocCategory`, `SOURCE_COLOR_*` maps, Add-event button, colour legend row, source-tagged CellEntry, DayDrawer edit/delete with confirm.
+- **`build_calendars.py`:** fetches the 3 adhoc-events ICS endpoints (with `X-Buoy-Sync-Secret` header), merges into per-category bundles before `write_ics`.
+- **`push_to_github.sh`:** writes `/tmp/ics_push_result` marker (`pushed`/`no-change`/`skipped`) so the calendar cron can guard `deploy_website` — no deploy when nothing changed.
+
+**Bug during smoke (fixed same session):** Sonar API rejected `response_format.type=json_object` — must use `json_schema` with a `schema` block. Fixed in `buoy-events-parse.ts` line 80-122 with full schema (title/start_utc/end_utc/all_day/location/notes/confidence/warnings).
+
+**Verified live:**
+- `POST /api/events/parse` with "Coffee with Sam next Thursday 3pm at Higher Ground" → 200 with parsed fields, confidence high.
+- All 3 adhoc-events ICS endpoints 200 (with sync-secret header).
+- Events CRUD returns `{events:[], categories:[oliver_work, oliver_personal, family]}`.
+- `/api/calendar/dirty` returns `{dirty:false, since:null}`.
+
+**Cron changes (Phase 3):**
+- Deleted `2928f9fa` (twice-daily full rebuild `0 8,20 * * *`).
+- Created `08f6d0c7` — cheap-tick `0 20-23,0-11 * * *` UTC (= 06-22 AEST hourly). STEP 0 runs `/home/user/workspace/cron_tracking/calendar_cheap_tick/check_changes.sh` which fingerprints Marieke iCloud (ETag) + AUPFHS Outlook (Content-Length) + Buoy dirty flag. Exit 0 → proceed to full rebuild; exit 1 → subagent stops silently. Expected: 17 ticks/day, ~14-16 short-circuit, ~1-3 full rebuild. DST retune Sun 5 Oct 2026 → `0 19-23,0-11 * * *`.
+- Created `be52e800` — weekly forced rebuild `0 17 * * 6` UTC (= Sunday 03:00 AEST). Safety net for missed changes. DST retune → `0 16 * * 6`.
+
+**Follow-ups:** Parse endpoint gives 2h default duration when only a start time is provided (e.g. "3pm" → 15:00-17:00). Prompt could be tightened to prefer 30-60 min defaults, but acceptable for now. `MAC_MINI_*` and `THINHALO_VPS_SHARE_SUMMARY.md` churn stashed and dropped as tooling noise.
+
 ## 2026-06-26 (AM AEST) — Templates page + Year-Planner Wk column driven by MasterTemplateCalendar.xlsx
 
 **Why:** Codify the 4-week rotation (Elgin House, Sandringham, Peninsula Health, Kids-with-us) as the single source of truth. The xlsx (`MasterTemplateCalendar.xlsx`, stored in OneDrive and committed to `client/public/`) is parsed at build time into a generated JSON. Surfaces (a) a new in-app Templates page rendering the rotation grid + Work Links + Notes, and (b) a Wk column in CalendarPlanner and the Year Planner xlsx export so each row carries its rotation week numbers (EH/SH/PH/Kids).
