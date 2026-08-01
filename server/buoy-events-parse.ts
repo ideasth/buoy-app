@@ -47,15 +47,50 @@ Reference date/time (Melbourne, Australia/Melbourne): ${referenceDate}
 
 Interpret relative dates ("tomorrow", "next Thursday", "Friday", "in two weeks") against this reference. Assume Melbourne local time for all wall-clock times unless a timezone is explicitly stated.
 
-Rules:
+General rules:
 - If the text mentions no time and no all-day marker, assume 09:00 local for 1 hour.
 - If it says "all day" or gives only a date, set all_day=true and use midnight-to-midnight in Melbourne time.
 - If a duration is given ("for 30 min", "2 hours"), use it; else default to 60 minutes.
-- title: short, imperative, no leading pronouns. Strip location and time words.
-- location: the venue only ("Higher Ground", "204 Collins St"), not the whole city.
-- notes: anything meaningful that isn't title/time/location (e.g. "bring the contract"). Empty string if none.
-- confidence: "high" if date+time+title are all unambiguous; "medium" if the model had to pick a default; "low" if the text was very ambiguous.
-- warnings: list any assumptions you made (e.g. "assumed 9am start", "guessed year=2026").
+- location: the venue and address if given ("Higher Ground, 650 Spencer St"), not the whole city.
+- notes: anything meaningful that isn't title/time/location (booking reference, contact numbers, room count, guest count). Empty string if none.
+- warnings: list any assumptions you made ("assumed 9am start", "guessed year=2026", "multi-day booking — verify checkout time").
+
+Title selection (prefer venue/organisation over time-words):
+- Prefer the venue or organisation name from the first line of a pasted itinerary ("Holiday Inn Express Sydney Airport", "Qantas QF400", "Frances Perry House").
+- Do NOT use time-words as the title ("Check in", "Boarding", "Doors open", "Arrival", "Departure") — those are activity labels, not events.
+- For casual notes without a venue ("coffee with Sam"), use a short imperative title ("Coffee with Sam").
+- Strip location, time, and person-count words from the title.
+
+Multi-day booking pattern (CRITICAL):
+When the text describes a booking that spans multiple days with distinct check-in/check-out or arrival/departure markers, emit ONE event spanning the whole booking, not two separate events, and not one same-day event.
+- Recognise patterns: "Check in X / Check out Y" with a date range "Dates A-B" or "A to B".
+- start_utc = first date (A) at the check-in / arrival / start time.
+- end_utc = last date (B) at the check-out / departure / end time.
+- title = venue/organisation name.
+- Add warning "multi-day booking — verify checkout time" and set confidence="medium".
+
+Confidence:
+- "high" only when date, time, and title are all unambiguously stated in the text.
+- "medium" when you picked a default (duration, year, checkout time) or applied the multi-day booking pattern.
+- "low" when the input is genuinely ambiguous.
+
+Example (multi-day hotel booking):
+Input:
+  Holiday Inn Express Sydney Airport
+  2-12 Sarah Street, Mascot, NSW 2020
+  Reservations: 1-888-465-4329
+  Check in 2:00 pm / Check out 10:00 am
+  Dates Aug 9-10, 2026
+  1 room, 1 guest
+Output (with reference year 2026, Melbourne local):
+  title: "Holiday Inn Express Sydney Airport"
+  start_utc: "2026-08-09T04:00:00Z"   (9 Aug 14:00 AEST)
+  end_utc:   "2026-08-10T00:00:00Z"   (10 Aug 10:00 AEST)
+  all_day: false
+  location: "2-12 Sarah Street, Mascot, NSW 2020"
+  notes: "Reservations 1-888-465-4329. 1 room, 1 guest."
+  confidence: "medium"
+  warnings: ["multi-day booking — verify checkout time"]
 
 Return ONLY a JSON object with these exact keys: title, start_utc, end_utc, all_day, location, notes, confidence, warnings.
 Both start_utc and end_utc MUST be ISO 8601 with a trailing Z (UTC).
