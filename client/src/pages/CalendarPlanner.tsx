@@ -984,24 +984,30 @@ function YearGroupedTable({
                     <td
                       key={c.key}
                       className={cn(
-                        "border-r p-1.5 align-top text-[11px] leading-tight",
+                        "border-r p-1.5 align-top text-[11px] leading-snug",
                         entries.length > 0 ? GROUP_BG[c.group] : "",
                       )}
                       onClick={() => onPickDay(k)}
                     >
                       {entries.length > 0 && (
-                        <div className="space-y-0.5">
+                        <div className="space-y-1">
                           {entries.map((en, i) => (
                             <div
                               key={i}
                               className={cn(
-                                "break-words",
-                                en.allDay && "font-semibold",
+                                "break-words flex items-start gap-1",
                                 SOURCE_COLOR_TEXT[en.source],
                               )}
-                              title={`${en.text} \u00b7 ${SOURCE_LABEL[en.source]}`}
+                              title={`${en.text} \u00b7 ${SOURCE_LABEL[en.source]}${en.allDay ? " \u00b7 all-day" : ""}`}
                             >
-                              {en.text}
+                              {en.allDay ? (
+                                <span className="inline-flex items-center rounded-sm border border-current px-1 py-px text-[9px] font-semibold uppercase leading-none tracking-wide shrink-0 mt-px">
+                                  all-day
+                                </span>
+                              ) : (
+                                <span aria-hidden="true" className="select-none shrink-0 leading-none mt-1">•</span>
+                              )}
+                              <span className={cn("break-words", en.allDay && "font-semibold")}>{en.text}</span>
                             </div>
                           ))}
                         </div>
