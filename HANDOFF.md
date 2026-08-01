@@ -2,6 +2,22 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-08-01 (PM AEST) — Adhoc events: SQLite bind fix + parse-prompt tightening
+
+**Two same-day fixes to the new adhoc-events feature.**
+
+**Fix 1 — SQLite bind error (commit `70ad77f`, bundle `d1bfbc09`):** `POST /api/events` returned 400 `SQLite3 can only bind numbers, strings, bigints, buffers, and null`. Cause: `server/buoy-events-storage.ts` passed the frontend's JS boolean `all_day` straight to better-sqlite3. Fixed with `args.all_day ? 1 : 0` in both `createBuoyEvent` and `patchBuoyEvent`.
+
+**Fix 2 — Parse prompt tightening for multi-day itineraries (commit `92e3763`, bundle `470e6976`):** Pasted hotel itinerary ("Check in X / Check out Y / Dates A-B") returned title="Check in" and collapsed the two dates into a same-day event. Rewrote the Sonar system prompt in `server/buoy-events-parse.ts` with three additions:
+1. Title selection: prefer venue/organisation name over time-words ("Check in", "Boarding", "Doors open").
+2. Multi-day booking pattern: recognise check-in/check-out with a date range and emit ONE event spanning both, with confidence="medium" and a "verify checkout time" warning.
+3. Concrete few-shot example using the Holiday Inn Sydney Airport paste for structural anchoring.
+
+**Verified live (3 scenarios):**
+- Holiday Inn multi-day: title "Holiday Inn Express Sydney Airport", 9 Aug 14:00 to 10 Aug 10:00 AEST, medium confidence + warning. OK.
+- "Coffee with Sam next Thursday 3pm at Higher Ground": 15:00-16:00 AEST (60min default now honoured properly — was 2h). OK.
+- Qantas QF400 Melbourne-Sydney: single-day 07:30-09:00, high confidence. OK.
+
 ## 2026-08-01 (AM AEST) — Adhoc events + free-text parse + calendar cron split — DEPLOYED
 
 **Why:** User asked for ad-hoc calendar events (drop-ins that don't fit the 4-week rotation rules), with free-text pasting ("Coffee with Sam next Thursday 3pm"), colour-coded sourcing (blue=rules, green=adhoc, purple=external ICS), and cheaper calendar syncing (was 2×daily full rebuild + deploy_website — most days no upstream change, so wasted credits).
