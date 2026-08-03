@@ -824,6 +824,14 @@ function YearGroupedTable({
         else col = "oliver_all"; // oliver_work | oliver_personal | undefined
       } else {
         col = columnFor(e.summary || "");
+        // Fallback: any rules-sourced event that didn't match a keyword bucket
+        // (e.g. "ADMIN (STUDENTS) (AM)" from the Peninsula roster feed with the
+        // [Peninsula Health] prefix stripped upstream) still needs to render
+        // somewhere. Default to the Oliver-All column so the Yearly Planner
+        // never silently drops a roster event that the Daily view shows.
+        if (!col && (e.source ?? "rules") === "rules") {
+          col = "oliver_all";
+        }
       }
       if (!col) continue;
       const evStartKey = dateKey(new Date(e.start));
