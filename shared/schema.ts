@@ -719,3 +719,238 @@ export const coachMessages = sqliteTable("coach_messages", {
 });
 export type CoachMessage = typeof coachMessages.$inferSelect;
 export type InsertCoachMessage = typeof coachMessages.$inferInsert;
+
+// Stage 24 (2026-08-11) — Relationship Transition module.
+//
+// A single-user governance surface for the 1–3-month separation transition.
+// Read-only outbound by design: no send routes, no child-facing surface,
+// no automatic messaging. Every user-authored record carries a
+// `record_type` classification so documented facts are never conflated
+// with recollection, reported statements, or inference.
+//
+// See STAGE_24_RELATIONSHIP_TRANSITION_SPEC.md for the full brief.
+
+// Singleton state row (id = 1). Holds phase, decision statement,
+// decision-driver ratings, and interaction-climate JSON.
+export const transitionState = sqliteTable("transition_state", {
+  id: integer("id").primaryKey(),
+  phase: text("phase").notNull().default("decision_taken"),
+  decisionStatement: text("decision_statement"),
+  decisionStatementUpdatedAt: integer("decision_statement_updated_at"),
+  driverRelationshipEnd: integer("driver_relationship_end"),
+  driverFinancialPressure: integer("driver_financial_pressure"),
+  driverWorkloadPressure: integer("driver_workload_pressure"),
+  driverChildImpact: integer("driver_child_impact"),
+  driverRelationshipQuality: integer("driver_relationship_quality"),
+  driverHealthImpact: integer("driver_health_impact"),
+  driverBusinessImpact: integer("driver_business_impact"),
+  driversUpdatedAt: integer("drivers_updated_at"),
+  interactionClimate: text("interaction_climate"), // JSON blob
+  interactionClimateUpdatedAt: integer("interaction_climate_updated_at"),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TransitionState = typeof transitionState.$inferSelect;
+export type InsertTransitionState = typeof transitionState.$inferInsert;
+
+// Dynamic action plan. Horizons: 72h / 2w / 1_3m / later.
+export const transitionActions = sqliteTable("transition_actions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  horizon: text("horizon").notNull().default("2w"),
+  area: text("area").notNull().default("general"),
+  title: text("title").notNull(),
+  detail: text("detail"),
+  status: text("status").notNull().default("Open"),
+  dueAt: integer("due_at"),
+  recordType: text("record_type").notNull().default("recommendation"),
+  confidentiality: text("confidentiality").notNull().default("private"),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  seedKey: text("seed_key"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at"),
+});
+export type TransitionAction = typeof transitionActions.$inferSelect;
+export type InsertTransitionAction = typeof transitionActions.$inferInsert;
+
+// Unified evidence & reflection ledger. Every row carries record_type.
+export const transitionLedger = sqliteTable("transition_ledger", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  recordType: text("record_type").notNull(),
+  category: text("category"),
+  title: text("title"),
+  body: text("body").notNull(),
+  eventDate: text("event_date"),
+  sourceKind: text("source_kind"),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  perspective: text("perspective").notNull().default("me"),
+  confidentiality: text("confidentiality").notNull().default("private"),
+  seedKey: text("seed_key"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TransitionLedgerEntry = typeof transitionLedger.$inferSelect;
+export type InsertTransitionLedgerEntry = typeof transitionLedger.$inferInsert;
+
+// Financial reconciliation register. Amounts in cents to avoid float drift.
+export const transitionFinancialItems = sqliteTable("transition_financial_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  category: text("category").notNull().default("other"),
+  description: text("description").notNull(),
+  amountAudCents: integer("amount_aud_cents"),
+  direction: text("direction").notNull().default("unknown"),
+  eventDate: text("event_date"),
+  evidenceStatus: text("evidence_status").notNull().default("partial"),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  notes: text("notes"),
+  recordType: text("record_type").notNull().default("documented_fact"),
+  confidentiality: text("confidentiality").notNull().default("private"),
+  seedKey: text("seed_key"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TransitionFinancialItem = typeof transitionFinancialItems.$inferSelect;
+export type InsertTransitionFinancialItem = typeof transitionFinancialItems.$inferInsert;
+
+// IT handover inventory. Never store raw credentials in notes — server
+// route rejects the write if the notes body contains password / totp /
+// api key / secret / recovery code.
+export const transitionItHandover = sqliteTable("transition_it_handover", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  system: text("system").notNull(),
+  accountContext: text("account_context"),
+  accessStatus: text("access_status").notNull().default("unknown"),
+  handoverStatus: text("handover_status").notNull().default("not_started"),
+  sensitivity: text("sensitivity").notNull().default("standard"),
+  notes: text("notes"),
+  nextAction: text("next_action"),
+  dueAt: integer("due_at"),
+  recordType: text("record_type").notNull().default("recommendation"),
+  confidentiality: text("confidentiality").notNull().default("private"),
+  seedKey: text("seed_key"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TransitionItHandoverEntry = typeof transitionItHandover.$inferSelect;
+export type InsertTransitionItHandoverEntry = typeof transitionItHandover.$inferInsert;
+
+// Shared constants surfaced to server + client via @shared.
+export const TRANSITION_RECORD_TYPES = [
+  "documented_fact",
+  "self_report",
+  "reported_other_statement",
+  "historical_summary",
+  "inference",
+  "recommendation",
+  "open_question",
+] as const;
+export type TransitionRecordType = (typeof TRANSITION_RECORD_TYPES)[number];
+
+export const TRANSITION_CONFIDENTIALITY_LEVELS = [
+  "private",
+  "therapist",
+  "lawyer",
+  "mediator",
+] as const;
+export type TransitionConfidentiality =
+  (typeof TRANSITION_CONFIDENTIALITY_LEVELS)[number];
+
+export const TRANSITION_PHASES = [
+  "awareness",
+  "decision_taken",
+  "first_conversations",
+  "separation_active",
+  "stabilising",
+  "co_parenting_steady",
+] as const;
+export type TransitionPhase = (typeof TRANSITION_PHASES)[number];
+
+export const TRANSITION_ACTION_STATUSES = [
+  "Open",
+  "Active",
+  "Complete",
+  "Parked",
+] as const;
+export type TransitionActionStatus = (typeof TRANSITION_ACTION_STATUSES)[number];
+
+export const TRANSITION_HORIZONS = ["72h", "2w", "1_3m", "later"] as const;
+export type TransitionHorizon = (typeof TRANSITION_HORIZONS)[number];
+
+export const TRANSITION_LEDGER_PERSPECTIVES = [
+  "me",
+  "other",
+  "both",
+  "unknown",
+] as const;
+
+export const TRANSITION_SOURCE_KINDS = [
+  "message",
+  "email",
+  "document",
+  "bank_transaction",
+  "photo",
+  "witness_report",
+  "own_recollection",
+  "inference",
+  "other",
+] as const;
+
+export const TRANSITION_FIN_CATEGORIES = [
+  "furniture",
+  "white_goods",
+  "tools",
+  "tickets",
+  "travel",
+  "groceries",
+  "renovations",
+  "subscriptions",
+  "other",
+] as const;
+
+export const TRANSITION_FIN_DIRECTIONS = [
+  "paid_by_me",
+  "paid_by_other",
+  "shared",
+  "unknown",
+] as const;
+
+export const TRANSITION_FIN_EVIDENCE_STATUSES = [
+  "documented",
+  "partial",
+  "recollection_only",
+] as const;
+
+export const TRANSITION_IT_ACCESS_STATUSES = [
+  "me_only",
+  "other_only",
+  "shared",
+  "unknown",
+  "revoked",
+] as const;
+
+export const TRANSITION_IT_HANDOVER_STATUSES = [
+  "not_started",
+  "in_progress",
+  "complete",
+  "blocked",
+] as const;
+
+export const TRANSITION_IT_SENSITIVITY = ["standard", "sensitive"] as const;
+
+export const TRANSITION_EXPORT_AUDIENCES = [
+  "lawyer",
+  "therapist",
+  "mediator",
+  "child_comm",
+  "redacted_chronology",
+] as const;
+export type TransitionExportAudience =
+  (typeof TRANSITION_EXPORT_AUDIENCES)[number];
+
+// Server-side use only; kept here so it is shared with tests.
+export const TRANSITION_CREDENTIAL_REGEX =
+  /\b(password|passphrase|pin|totp|otp|secret|token|api[_-]?key|recovery[_-]?code)\b/i;
+

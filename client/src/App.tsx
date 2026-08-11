@@ -40,6 +40,9 @@ const FindTime = lazy(() => import("@/pages/FindTime"));
 // Stage 17: Calendar settings pages.
 const CalendarSettings = lazy(() => import("@/pages/CalendarSettings"));
 const CalendarBlocks = lazy(() => import("@/pages/CalendarBlocks"));
+// Stage 24 — Relationships hub + Relationship Transition surface.
+const RelationshipsHub = lazy(() => import("@/pages/RelationshipsHub"));
+const RelationshipTransition = lazy(() => import("@/pages/RelationshipTransition"));
 
 // Tiny fallback shown for the few hundred ms each lazy chunk takes to fetch.
 // Intentionally minimal — a centred spinner string is less jarring than a
@@ -124,6 +127,9 @@ function AppRouter() {
       <Route path="/calm" component={Calm} />
       <Route path="/review" component={Review} />
       <Route path="/issues" component={Issues} />
+      {/* Stage 24 — Relationships hub + Relationship Transition surface. */}
+      <Route path="/relationships/transition" component={RelationshipTransition} />
+      <Route path="/relationships" component={RelationshipsHub} />
       <Route path="/calendar-planner" component={CalendarPlanner} />
       {/* Legacy redirects — keep deep links + bookmarks working */}
       <Route path="/calendar" component={CalendarPlanner} />

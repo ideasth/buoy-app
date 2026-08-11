@@ -33,6 +33,7 @@ export const NAV: NavItem[] = [
   { href: "/pmt", label: "PMT" },
   { href: "/projects", label: "Projects" },
   { href: "/issues", label: "Issues" },
+  { href: "/relationships", label: "Relationships" },
   { href: "/habits", label: "Habits" },
   { divider: true },
   { href: "/admin", label: "Admin" },

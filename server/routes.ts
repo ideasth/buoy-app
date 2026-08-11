@@ -204,6 +204,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     hasSyncSecret,
   );
 
+  // ---- Stage 24: Relationship Transition module ----
+  // Schema + seed run once at boot; register routes on the apex app.
+  try {
+    const { ensureTransitionSchema, seedTransitionModule } = await import(
+      "./transition-storage"
+    );
+    const { registerTransitionRoutes } = await import("./transition-routes");
+    ensureTransitionSchema();
+    seedTransitionModule();
+    registerTransitionRoutes(app);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[transition] failed to initialise Stage 24 module:", err);
+  }
+
   // ---- Tasks ----
   app.get("/api/tasks", (_req, res) => res.json(storage.listTasks()));
 
