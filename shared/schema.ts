@@ -837,6 +837,25 @@ export const transitionItHandover = sqliteTable("transition_it_handover", {
 export type TransitionItHandoverEntry = typeof transitionItHandover.$inferSelect;
 export type InsertTransitionItHandoverEntry = typeof transitionItHandover.$inferInsert;
 
+// Stage 24b (2026-08-13) — chronological notes timeline against a single
+// transition action. Mirrors the existing project_action_notes pattern:
+// append-only from the UI (edit/delete supported via API), one row per
+// note, ordered by created_at.
+export const transitionActionNotes = sqliteTable("transition_action_notes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actionId: integer("action_id").notNull(),
+  body: text("body").notNull(),
+  recordType: text("record_type").notNull().default("self_report"),
+  confidentiality: text("confidentiality").notNull().default("private"),
+  sourceUrl: text("source_url"),
+  sourceLabel: text("source_label"),
+  seedKey: text("seed_key"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export type TransitionActionNote = typeof transitionActionNotes.$inferSelect;
+export type InsertTransitionActionNote = typeof transitionActionNotes.$inferInsert;
+
 // Shared constants surfaced to server + client via @shared.
 export const TRANSITION_RECORD_TYPES = [
   "documented_fact",

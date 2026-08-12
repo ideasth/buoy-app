@@ -205,6 +205,7 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
 function ActionPlan() {
   const [rows, setRows] = useState<any[]>([]);
   const [horizon, setHorizon] = useState<string>("");
+  const [openNotesFor, setOpenNotesFor] = useState<number | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -252,36 +253,176 @@ function ActionPlan() {
       {[...byHorizon.entries()].map(([h, items]) => (
         <section key={h} className="rounded-lg border bg-card p-4">
           <h3 className="text-sm font-semibold mb-2">{h}</h3>
-          <ul className="space-y-2">
+          <ul className="space-y-3">
             {items.map((r) => (
-              <li key={r.id} className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium">{r.title}</span>
-                    <RecordTypeBadge type={r.recordType} />
-                    <ConfidentialityBadge level={r.confidentiality} />
-                    <span className="text-xs text-muted-foreground">{r.area}</span>
+              <li key={r.id} className="rounded border bg-background p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium">{r.title}</span>
+                      <RecordTypeBadge type={r.recordType} />
+                      <ConfidentialityBadge level={r.confidentiality} />
+                      <span className="text-xs text-muted-foreground">{r.area}</span>
+                    </div>
+                    {r.detail ? (
+                      <p className="text-sm text-muted-foreground mt-1">{r.detail}</p>
+                    ) : null}
                   </div>
-                  {r.detail ? (
-                    <p className="text-sm text-muted-foreground mt-1">{r.detail}</p>
-                  ) : null}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenNotesFor((cur) => (cur === r.id ? null : r.id))
+                      }
+                      className="rounded border px-2 py-1 text-xs"
+                      aria-expanded={openNotesFor === r.id}
+                    >
+                      {openNotesFor === r.id ? "Hide notes" : "Notes"}
+                    </button>
+                    <select
+                      className="rounded border bg-background px-2 py-1 text-xs"
+                      value={r.status}
+                      onChange={(e) => void setStatus(r.id, e.target.value)}
+                    >
+                      {["Open", "Active", "Complete", "Parked"].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <select
-                  className="rounded border bg-background px-2 py-1 text-xs"
-                  value={r.status}
-                  onChange={(e) => void setStatus(r.id, e.target.value)}
-                >
-                  {["Open", "Active", "Complete", "Parked"].map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                {openNotesFor === r.id ? (
+                  <ActionNotes actionId={r.id} />
+                ) : null}
               </li>
             ))}
           </ul>
         </section>
       ))}
+    </div>
+  );
+}
+
+function ActionNotes({ actionId }: { actionId: number }) {
+  const [notes, setNotes] = useState<any[]>([]);
+  const [body, setBody] = useState("");
+  const [recordType, setRecordType] = useState<string>("self_report");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionId]);
+
+  async function refresh() {
+    try {
+      const rows = await apiJson<any[]>(`/api/transition/actions/${actionId}/notes`);
+      setNotes(rows);
+      setLoaded(true);
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    }
+  }
+
+  async function addNote() {
+    if (!body.trim()) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      await apiJson(`/api/transition/actions/${actionId}/notes`, {
+        method: "POST",
+        body: { body: body.trim(), recordType, confidentiality: "private" },
+      });
+      setBody("");
+      await refresh();
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeNote(id: number) {
+    if (!window.confirm("Delete this note?")) return;
+    try {
+      await apiJson(`/api/transition/action-notes/${id}`, { method: "DELETE" });
+      await refresh();
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t pt-3 space-y-3">
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-muted-foreground">Notes</div>
+        {!loaded ? (
+          <div className="text-xs text-muted-foreground">Loading…</div>
+        ) : notes.length === 0 ? (
+          <div className="text-xs text-muted-foreground">
+            No notes yet. Capture advice, calls, dates, or decisions as they come in.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {notes.map((n) => (
+              <li key={n.id} className="rounded border bg-card px-2 py-2">
+                <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                  <span>{new Date(n.createdAt).toLocaleString()}</span>
+                  <RecordTypeBadge type={n.recordType} />
+                  <ConfidentialityBadge level={n.confidentiality} />
+                  <button
+                    type="button"
+                    onClick={() => void removeNote(n.id)}
+                    className="ml-auto text-xs underline text-muted-foreground hover:text-foreground"
+                  >
+                    Delete
+                  </button>
+                </div>
+                <p className="text-sm whitespace-pre-wrap mt-1">{n.body}</p>
+                {n.sourceLabel || n.sourceUrl ? (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Source: {n.sourceLabel ?? n.sourceUrl}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="space-y-2">
+        <textarea
+          className="w-full min-h-[80px] rounded border bg-background p-2 text-sm"
+          placeholder="Add a note — what was said, what was decided, next step, source."
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-muted-foreground">Record type:</label>
+          <select
+            className="rounded border bg-background px-2 py-1 text-xs"
+            value={recordType}
+            onChange={(e) => setRecordType(e.target.value)}
+          >
+            {RECORD_TYPES.map((rt) => (
+              <option key={rt} value={rt}>
+                {rt}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => void addNote()}
+            disabled={saving || !body.trim()}
+            className="rounded border px-3 py-1 text-xs bg-primary text-primary-foreground disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Add note"}
+          </button>
+        </div>
+        {err ? <div className="text-xs text-red-600">{err}</div> : null}
+      </div>
     </div>
   );
 }

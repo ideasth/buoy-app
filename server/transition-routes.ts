@@ -8,10 +8,12 @@ import express from "express";
 import {
   buildTransitionExport,
   createTransitionAction,
+  createTransitionActionNote,
   createTransitionFinancial,
   createTransitionIt,
   createTransitionLedgerEntry,
   deleteTransitionAction,
+  deleteTransitionActionNote,
   deleteTransitionFinancial,
   deleteTransitionIt,
   deleteTransitionLedgerEntry,
@@ -21,11 +23,13 @@ import {
   getTransitionLedgerEntry,
   getTransitionState,
   getTransitionSummary,
+  listTransitionActionNotes,
   listTransitionActions,
   listTransitionFinancial,
   listTransitionIt,
   listTransitionLedger,
   patchTransitionAction,
+  patchTransitionActionNote,
   patchTransitionFinancial,
   patchTransitionIt,
   patchTransitionLedgerEntry,
@@ -114,6 +118,51 @@ export function registerTransitionRoutes(app: Express): void {
     const id = parseId(req);
     if (id == null) return sendErr(res, Object.assign(new Error("invalid_id"), { status: 400, code: "invalid_id" }));
     const ok = deleteTransitionAction(id);
+    if (!ok) return res.status(404).json({ error: "not_found" });
+    res.status(204).end();
+  });
+
+  // ---- action notes (Stage 24b) ----
+  app.get("/api/transition/actions/:id/notes", (req, res) => {
+    const id = parseId(req);
+    if (id == null) return sendErr(res, Object.assign(new Error("invalid_id"), { status: 400, code: "invalid_id" }));
+    try {
+      const action = getTransitionAction(id);
+      if (!action) return res.status(404).json({ error: "not_found" });
+      res.json(listTransitionActionNotes(id));
+    } catch (err) {
+      sendErr(res, err);
+    }
+  });
+
+  app.post("/api/transition/actions/:id/notes", json, (req, res) => {
+    const id = parseId(req);
+    if (id == null) return sendErr(res, Object.assign(new Error("invalid_id"), { status: 400, code: "invalid_id" }));
+    try {
+      const row = createTransitionActionNote(id, req.body ?? {});
+      if (!row) return res.status(404).json({ error: "not_found" });
+      res.status(201).json(row);
+    } catch (err) {
+      sendErr(res, err);
+    }
+  });
+
+  app.patch("/api/transition/action-notes/:id", json, (req, res) => {
+    const id = parseId(req);
+    if (id == null) return sendErr(res, Object.assign(new Error("invalid_id"), { status: 400, code: "invalid_id" }));
+    try {
+      const row = patchTransitionActionNote(id, req.body ?? {});
+      if (!row) return res.status(404).json({ error: "not_found" });
+      res.json(row);
+    } catch (err) {
+      sendErr(res, err);
+    }
+  });
+
+  app.delete("/api/transition/action-notes/:id", (req, res) => {
+    const id = parseId(req);
+    if (id == null) return sendErr(res, Object.assign(new Error("invalid_id"), { status: 400, code: "invalid_id" }));
+    const ok = deleteTransitionActionNote(id);
     if (!ok) return res.status(404).json({ error: "not_found" });
     res.status(204).end();
   });

@@ -133,6 +133,23 @@ export function ensureTransitionSchema(db: Database.Database = rawSqlite as any)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_transition_it_seed_key
       ON transition_it_handover(seed_key) WHERE seed_key IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS transition_action_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action_id INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      record_type TEXT NOT NULL DEFAULT 'self_report',
+      confidentiality TEXT NOT NULL DEFAULT 'private',
+      source_url TEXT,
+      source_label TEXT,
+      seed_key TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_transition_action_notes_action
+      ON transition_action_notes(action_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transition_action_notes_seed_key
+      ON transition_action_notes(seed_key) WHERE seed_key IS NOT NULL;
   `);
 }
 
@@ -1226,6 +1243,131 @@ export function patchTransitionIt(id: number, body: any) {
 export function deleteTransitionIt(id: number) {
   return rawSqlite
     .prepare("DELETE FROM transition_it_handover WHERE id = ?")
+    .run(id).changes > 0;
+}
+
+// ---------- action notes ----------
+
+const NOTE_INSERT_FIELDS = [
+  "body",
+  "recordType",
+  "confidentiality",
+  "sourceUrl",
+  "sourceLabel",
+] as const;
+
+function normalizeNoteRow(r: any) {
+  return {
+    id: r.id,
+    actionId: r.action_id,
+    body: r.body,
+    recordType: r.record_type,
+    confidentiality: r.confidentiality,
+    sourceUrl: r.source_url,
+    sourceLabel: r.source_label,
+    seedKey: r.seed_key,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export function listTransitionActionNotes(actionId: number) {
+  const rows = rawSqlite
+    .prepare(
+      "SELECT * FROM transition_action_notes WHERE action_id = ? ORDER BY created_at ASC, id ASC",
+    )
+    .all(actionId) as any[];
+  return rows.map(normalizeNoteRow);
+}
+
+function validateNote(body: any, isPatch: boolean) {
+  const allowed = new Set<string>(NOTE_INSERT_FIELDS);
+  for (const k of Object.keys(body)) {
+    if (!allowed.has(k)) throw enumError(`unknown_field:${k}`);
+  }
+  if ("recordType" in body && !inEnum(TRANSITION_RECORD_TYPES, body.recordType)) {
+    throw enumError("invalid_record_type");
+  }
+  if (
+    "confidentiality" in body &&
+    !inEnum(TRANSITION_CONFIDENTIALITY_LEVELS, body.confidentiality)
+  ) {
+    throw enumError("invalid_confidentiality");
+  }
+  if (!isPatch) {
+    if (typeof body.body !== "string" || body.body.trim() === "") {
+      throw enumError("invalid_body");
+    }
+  }
+}
+
+export function createTransitionActionNote(actionId: number, body: any) {
+  const action = rawSqlite
+    .prepare("SELECT id FROM transition_actions WHERE id = ?")
+    .get(actionId) as { id: number } | undefined;
+  if (!action) return null;
+  validateNote(body, false);
+  const now = nowMs();
+  const info = rawSqlite
+    .prepare(
+      `INSERT INTO transition_action_notes
+        (action_id, body, record_type, confidentiality, source_url, source_label,
+         seed_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    )
+    .run(
+      actionId,
+      body.body,
+      body.recordType ?? "self_report",
+      body.confidentiality ?? "private",
+      body.sourceUrl ?? null,
+      body.sourceLabel ?? null,
+      now,
+      now,
+    );
+  return getTransitionActionNote(Number(info.lastInsertRowid));
+}
+
+export function getTransitionActionNote(id: number) {
+  const r = rawSqlite
+    .prepare("SELECT * FROM transition_action_notes WHERE id = ?")
+    .get(id) as any;
+  return r ? normalizeNoteRow(r) : null;
+}
+
+export function patchTransitionActionNote(id: number, body: any) {
+  validateNote(body, true);
+  const existing = getTransitionActionNote(id);
+  if (!existing) return null;
+  const now = nowMs();
+  const sets: string[] = [];
+  const params: any[] = [];
+  const map: Record<string, string> = {
+    body: "body",
+    recordType: "record_type",
+    confidentiality: "confidentiality",
+    sourceUrl: "source_url",
+    sourceLabel: "source_label",
+  };
+  for (const [k, col] of Object.entries(map)) {
+    if (k in body) {
+      sets.push(`${col} = ?`);
+      params.push(body[k]);
+    }
+  }
+  if (sets.length === 0) return existing;
+  sets.push("updated_at = ?");
+  params.push(now);
+  params.push(id);
+  rawSqlite
+    .prepare(`UPDATE transition_action_notes SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...params);
+  return getTransitionActionNote(id);
+}
+
+export function deleteTransitionActionNote(id: number) {
+  return rawSqlite
+    .prepare("DELETE FROM transition_action_notes WHERE id = ?")
     .run(id).changes > 0;
 }
 

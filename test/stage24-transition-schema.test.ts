@@ -97,3 +97,52 @@ describe("Stage 24 — credential guard regex", () => {
     }
   });
 });
+
+describe("Stage 24b \u2014 transition_action_notes", () => {
+  it("stores a notes timeline per action, ordered by created_at ASC", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE transition_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE transition_action_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action_id INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        record_type TEXT NOT NULL DEFAULT 'self_report',
+        confidentiality TEXT NOT NULL DEFAULT 'private',
+        source_url TEXT,
+        source_label TEXT,
+        seed_key TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_notes_action ON transition_action_notes(action_id, created_at);
+    `);
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO transition_actions (title, created_at, updated_at) VALUES (?, ?, ?)",
+    ).run("Call solicitor", now, now);
+    const actionId = 1;
+    const insertNote = db.prepare(
+      "INSERT INTO transition_action_notes (action_id, body, created_at, updated_at) VALUES (?, ?, ?, ?)",
+    );
+    insertNote.run(actionId, "Left voicemail", now, now);
+    insertNote.run(actionId, "Callback confirmed for Thursday", now + 1, now + 1);
+    insertNote.run(actionId, "Initial advice: no big-ticket moves", now + 2, now + 2);
+
+    const rows = db
+      .prepare(
+        "SELECT body FROM transition_action_notes WHERE action_id = ? ORDER BY created_at ASC, id ASC",
+      )
+      .all(actionId) as Array<{ body: string }>;
+    expect(rows.map((r) => r.body)).toEqual([
+      "Left voicemail",
+      "Callback confirmed for Thursday",
+      "Initial advice: no big-ticket moves",
+    ]);
+  });
+});
