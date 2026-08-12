@@ -2,6 +2,48 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-08-13 (AM AEST) — Stage 24b: Relationship Transition action notes timeline
+
+**Commit `177cf73`; deployed to VPS.**
+
+Small additive follow-up to Stage 24. Added a chronological notes surface
+against each Action Plan item so advice, calls, dates and decisions can
+accrete over time instead of losing detail in the single `detail` blob.
+
+**Schema:** new `transition_action_notes` table (id, action_id, body,
+record_type default `self_report`, confidentiality default `private`,
+source_url, source_label, seed_key, created_at, updated_at). Indexed on
+`(action_id, created_at)`. Additive-only migration: existing rows
+unchanged; the DDL uses `CREATE TABLE IF NOT EXISTS`.
+
+**API (all behind global requireAuth):**
+- `GET  /api/transition/actions/:id/notes` — chronological ASC.
+- `POST /api/transition/actions/:id/notes` — returns 404 if the parent
+  action is missing; 400 for empty body or invalid enum.
+- `PATCH  /api/transition/action-notes/:id`
+- `DELETE /api/transition/action-notes/:id`
+
+**UI:** each Action Plan item now has a `Notes` toggle button next to the
+status dropdown. When expanded: chronological list (createdAt, record
+type + confidentiality badges, delete link, optional source label) plus
+an add-note form (textarea + record_type select). Confidentiality defaults
+to private; there is no public-toggle on the note-add form.
+
+**Tests:** added `transition_action_notes` DDL + ordering test alongside
+the existing three; four tests pass.
+
+**Smoke (canonical URL, from VPS):**
+- `POST /api/transition/actions/1/notes` → 201 + row
+- `GET  /api/transition/actions/1/notes` → 200 + \[{...}\]
+- `DELETE /api/transition/action-notes/1` → 204
+
+Run by Oliver from his Mac (sandbox has no VPS key).
+
+**Not touched:** existing routes, seeds, export builder, `data.db`
+content, cron schedules, standing-rule surfaces.
+
+---
+
 ## 2026-08-01 (PM AEST) — Adhoc events: SQLite bind fix + parse-prompt tightening
 
 **Two same-day fixes to the new adhoc-events feature.**
