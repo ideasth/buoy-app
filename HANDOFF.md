@@ -2,6 +2,58 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-08-17 (AM AEST) — Master rotation template refresh: work-only, anchor 24 Aug 2026
+
+**Commit `64434c0`; deployed to VPS `f4292cbec207819e9fe5979ff62be457`.**
+
+Oliver uploaded `MasterTemplateCalendar-updated17Aug2026.xlsx`. Two schema
+changes vs the previous live file:
+
+1. **Kids column dropped entirely.** The old 12-column layout (`A`=Week-Date
+   formula, `B`=SH week, `C`=EH week, `D`=PH week, `E`=Kids week, `F..L`=Mon..Sun
+   roster row, plus a Kids row at `rr+1`) is replaced with an 11-column layout
+   (`A`=Week-Date, `B`=SH, `C`=EH, `D`=PH, `E..K`=Mon..Sun roster; no per-week
+   Kids row). Custody data now lives outside the template.
+2. **Anchor date** `B4` shifts from Mon 29 Jun 2026 → **Mon 24 Aug 2026**
+   (exactly 8 weeks = 2 full 4-week cycles later, so historical week labels are
+   unchanged for dates on/after 29 Jun; only the anchor-of-record moves).
+
+**Parser (`scripts/build-master-template.cjs`):** now layout-aware.
+`detectLayout(ws)` scans column A for `"Week-Date alignment:"` to locate the
+header row, then checks `E{headerRow}` — if it starts with `"Kids"` it uses
+the historical `F..L` day columns and reads a Kids row at `rr+1`; otherwise
+it shifts day columns to `E..K` and sets `kidsWeek=null` / `days.<d>.kids=""`.
+Week-row detection continues to auto-find rosterCandidates via the `Week N`
+label in column B, so shifts caused by inserting or removing metadata rows
+above the table stay tolerated.
+
+**UI:**
+- `Templates.tsx` — Week-numbers cell hides the `Kids <n>` line and the Kids
+  sub-block in each day cell when no week has a `kidsWeek` or any per-day
+  `kids` string (i.e., the sheet is work-only).
+- `CalendarPlanner.tsx` yearly-planner Wk column — `Kids {n}` line hidden per
+  week when `w.kidsWeek == null`.
+
+**Verify:** parser output `weeks=4, anchor=2026-08-24, kidsWeek all null,
+links=9, notes=1`. Local `npm run build` + pre-commit vitest pass. External
+smoke on both hosts returns `{"ok":true}` and `/MasterTemplateCalendar.xlsx`
+serves the 13,027-byte new file.
+
+**Downstream unchanged:** `build_calendars.py` (root-workspace ICS pipeline)
+reads its kids/family rotation from hardcoded `NEW_FAMILY` arrays, not from
+the parsed template's Family/Kids field. So dropping the Kids column has no
+effect on the `/icloud/*` kids ICS feeds — that pipeline is already
+independent of the master template's custody data.
+
+**Follow-up — CI has been failing since 2026-08-03 (pre-existing, unrelated):**
+`tsc --noEmit` and `vitest` in `.github/workflows/ci.yml` cannot resolve
+`../client/src/generated/master-template.json` because the CI job runs `tsc`
+directly without the `prebuild` step that generates the file. The VPS deploy
+is unaffected (it runs `npm run build`, which triggers `prebuild`). Fix
+candidate: add a `npx tsx scripts/build-master-template.cjs` step (or
+equivalent `npm run prebuild`) before `tsc --noEmit` and `vitest run` in the
+workflow. Deferred — not in scope for the template refresh.
+
 ## 2026-08-13 (AM AEST) — Stage 24b: Relationship Transition action notes timeline
 
 **Commit `177cf73`; deployed to VPS.**
