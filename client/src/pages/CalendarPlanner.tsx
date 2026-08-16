@@ -990,7 +990,7 @@ function YearGroupedTable({
                         <div>EH {fmtWk(w.ehWeek)}</div>
                         <div>SH {fmtWk(w.shWeek)}</div>
                         <div>PH {fmtWk(w.phWeek)}</div>
-                        <div>Kids {fmtWk(w.kidsWeek)}</div>
+                        {w.kidsWeek != null && <div>Kids {fmtWk(w.kidsWeek)}</div>}
                       </>
                     );
                   })()}

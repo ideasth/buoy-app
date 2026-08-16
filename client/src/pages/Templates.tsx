@@ -59,6 +59,12 @@ function formatDateTimeAu(iso: string): string {
 
 export default function Templates() {
   const weeks = template.weeks;
+  // Kids column is optional in the source xlsx (dropped from the 2026-08-17
+  // revision). Show the Kids week label only when at least one week has one.
+  const showKids = useMemo(
+    () => weeks.some((w) => w.kidsWeek != null || Object.values(w.days).some((d) => d.kids)),
+    [weeks],
+  );
   const linksBySection = useMemo(() => groupLinks(template.workLinks), []);
 
   return (
@@ -154,7 +160,7 @@ export default function Templates() {
             </thead>
             <tbody>
               {weeks.map((w) => (
-                <WeekRow key={w.index} week={w} />
+                <WeekRow key={w.index} week={w} showKids={showKids} />
               ))}
             </tbody>
           </table>
@@ -211,7 +217,7 @@ export default function Templates() {
   );
 }
 
-function WeekRow({ week }: { week: RotationWeek }) {
+function WeekRow({ week, showKids }: { week: RotationWeek; showKids: boolean }) {
   return (
     <tr className="border-b align-top">
       <td className="border-r p-2 font-semibold whitespace-nowrap">
@@ -224,7 +230,7 @@ function WeekRow({ week }: { week: RotationWeek }) {
         <div>EH {fmt(week.ehWeek)}</div>
         <div>SH {fmt(week.shWeek)}</div>
         <div>PH {fmt(week.phWeek)}</div>
-        <div>Kids {fmt(week.kidsWeek)}</div>
+        {showKids && <div>Kids {fmt(week.kidsWeek)}</div>}
       </td>
       {DAY_LABELS.map((d) => {
         const day = week.days[d.key];

@@ -47,25 +47,55 @@ const OUT_DIR = path.join(REPO_ROOT, "client/src/generated");
 const OUT_JSON = path.join(OUT_DIR, "master-template.json");
 
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-// xlsx column letters for Mon-Sun roster columns (header row 6, F..L).
-const DAY_COL_LETTERS = ["F", "G", "H", "I", "J", "K", "L"];
+const COL_LETTERS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N"];
 
-// Auto-detect the rotation start row by locating the row whose A/B cells hold the
-// anchor date (A is a `=B4+N*7` formula) and B is the Week-N label. Falls back to
-// the historical row positions if detection fails. The table is 4 cycles × 2 rows.
-function detectWeekRows(ws) {
-  const candidates = [];
-  for (let r = 1; r <= Math.min(ws.rowCount, 40); r++) {
+// Detect the header row + column layout. Historically the sheet had a 12-column
+// layout with a "Kids week" column (E) between PH-week (D) and the day columns
+// (F..L). The 2026-08-17 revision drops the Kids column entirely, so the day
+// columns move left by one (E..K) and the per-week roster row is no longer
+// followed by a Kids row.
+//
+// Returns { headerRow, hasKidsColumn, dayColLetters, weekRows, kidsWeekCol }.
+// weekRows are the rows carrying roster data (Week-N label in B). kidsRowFor(rr)
+// returns rr+1 when hasKidsColumn is true, else null (no separate kids row).
+function detectLayout(ws) {
+  let headerRow = null;
+  const maxScan = Math.min(ws.rowCount, 40);
+  for (let r = 1; r <= maxScan; r++) {
+    const aText = cellText(ws.getCell(`A${r}`)).toLowerCase();
+    if (aText.startsWith("week-date alignment")) {
+      headerRow = r;
+      break;
+    }
+  }
+
+  // Fallback: use the row above the first roster row.
+  const rosterCandidates = [];
+  for (let r = 1; r <= maxScan; r++) {
     const bText = cellText(ws.getCell(`B${r}`));
     const aDate = asDate(ws.getCell(`A${r}`).value);
     if (/^Week\s+\d+/i.test(bText) && aDate instanceof Date) {
-      candidates.push(r);
-      if (candidates.length === 4) break;
+      rosterCandidates.push(r);
+      if (rosterCandidates.length === 4) break;
     }
   }
-  if (candidates.length === 4) return candidates;
-  // Fallback: old layout (header row 5 → data starts row 6) or current (header row 6 → row 7).
-  return [7, 9, 11, 13];
+  if (!headerRow && rosterCandidates.length > 0) headerRow = rosterCandidates[0] - 1;
+  if (!headerRow) headerRow = 6; // last-resort default matching historical layout.
+
+  // Kids-column detection: header text at E{headerRow}.
+  const eHeader = cellText(ws.getCell(`E${headerRow}`)).toLowerCase();
+  const hasKidsColumn = eHeader.startsWith("kids");
+
+  const dayStartColIdx = hasKidsColumn ? 5 /* F */ : 4 /* E */;
+  const dayColLetters = COL_LETTERS.slice(dayStartColIdx, dayStartColIdx + 7);
+  const kidsWeekCol = hasKidsColumn ? "E" : null;
+
+  // Roster rows are the 4 rows with Week-N label. When the Kids column exists,
+  // each roster row is followed by a Kids row (rr+1). Otherwise there's no
+  // per-week Kids row.
+  const weekRows = rosterCandidates.length === 4 ? rosterCandidates : [7, 9, 11, 13];
+
+  return { headerRow, hasKidsColumn, dayColLetters, kidsWeekCol, weekRows };
 }
 
 function toIsoDateOnly(d) {
@@ -151,21 +181,24 @@ async function main() {
   // Row positions are detected dynamically so xlsx edits that shift the header
   // (e.g. inserting metadata rows) don't break parsing.
   const weeks = [];
-  const weekRows = detectWeekRows(ws);
+  const layout = detectLayout(ws);
+  const { hasKidsColumn, dayColLetters, kidsWeekCol, weekRows } = layout;
   for (const rosterRow of weekRows) {
-    const kidsRow = rosterRow + 1;
+    const kidsRow = hasKidsColumn ? rosterRow + 1 : null;
     const weekStartIso = toIsoDateOnly(asDate(ws.getCell(`A${rosterRow}`).value));
 
     const shWeek = parseWeekLabel(cellText(ws.getCell(`B${rosterRow}`)));
     const ehWeek = parseWeekLabel(cellText(ws.getCell(`C${rosterRow}`)));
     const phWeek = parseWeekLabel(cellText(ws.getCell(`D${rosterRow}`)));
-    const kidsWeek = parseWeekLabel(cellText(ws.getCell(`E${rosterRow}`)));
+    const kidsWeek = kidsWeekCol
+      ? parseWeekLabel(cellText(ws.getCell(`${kidsWeekCol}${rosterRow}`)))
+      : null;
 
     const days = {};
     for (let i = 0; i < DAY_KEYS.length; i++) {
-      const col = DAY_COL_LETTERS[i];
+      const col = dayColLetters[i];
       const roster = cellText(ws.getCell(`${col}${rosterRow}`));
-      const kids = cellText(ws.getCell(`${col}${kidsRow}`));
+      const kids = kidsRow ? cellText(ws.getCell(`${col}${kidsRow}`)) : "";
       days[DAY_KEYS[i]] = { roster, kids };
     }
 
@@ -187,8 +220,11 @@ async function main() {
   const notes = [];
   let currentSection = "";
   let inNotes = false;
-  // Start scanning two rows below the last rotation row (kidsRow + 1 + 1 blank).
-  const linksStartRow = weekRows[weekRows.length - 1] + 2;
+  // Start scanning below the rotation block. When the Kids row is present the
+  // rotation block spans 2 rows per week (roster + kids), so leave a blank row
+  // after the final kids row. Without the Kids column, the roster row is the
+  // last table row so leave one blank row after it.
+  const linksStartRow = weekRows[weekRows.length - 1] + (hasKidsColumn ? 3 : 2);
   for (let r = linksStartRow; r <= ws.rowCount; r++) {
     const cell = ws.getCell(`A${r}`);
     const text = cellText(cell);
