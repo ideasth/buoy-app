@@ -1829,3 +1829,12 @@ curl -sS -H "X-Anchor-Sync-Secret: $SECRET" \
 - New helper server/thread-title.ts: fetchThreadTitle(url) (GET ~8s timeout, <title> then og:title fallback, cap ~200 chars, never throws) + resolveNoteSource (injectable fetcher for offline tests). POST /api/projects/:id/notes validates sourceUrl absolute http(s) else 400 invalid_source_url; empty/null clears both fields.
 - Tests: 646 passing across 55 files. Build OK. Spec: STAGE_23_NOTES_THREAD_SPEC.md at repo root.
 - Smoke (live, buoy.thinhalo.com): /api/health {"ok":true}; VPS HEAD c475023 with 0 action routes in compiled server bundle; POST note with invalid sourceUrl -> 400 invalid_source_url; POST with https://example.com/ -> sourceLabel "Example Domain" (server-fetched); test note deleted afterward. NOTE: /api/projects/:id/actions now returns 200 HTML (SPA catch-all), not JSON 404 — authoritative check is the server-bundle route grep (0), not the HTTP status.
+
+## 2026-09-03 06:40 AEST — MasterTemplateCalendar updated (Elgin-only rotation)
+
+- Replaced client/public/MasterTemplateCalendar.xlsx with user-supplied update.
+- Revision date bumped 2026-06-26 -> 2026-09-03.
+- Content change: Peninsula and Sandringham commitments removed from Week 1 Tue/Wed/Thu/Fri; only Elgin House days retained across the 4-week cycle. Matches Oliver's transition to Elgin-only workflow.
+- Sheet name unchanged (`Current-EH-PH-SH-Kids-26062026`) — Year-Planner Wk column loader keys on sheet name + cell shape, so no code change needed.
+- Redeploy triggered via /opt/buoy/ops/deploy.sh after this commit.
+
