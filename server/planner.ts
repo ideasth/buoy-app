@@ -148,15 +148,11 @@ function eventsForDay(events: CalEvent[], day: string): CalEvent[] {
 
 // --- Column classifier (mirrors client/src/pages/CalendarPlanner.tsx) -----
 
-type ColKey =
-  | "oliver_all"
-  | "m_art"
-  | "couple"
-  | "kids_with_us"
-  | "kids_activities"
-  | "kids_terms"
-  | "ph";
-type GroupKey = "oliver" | "marieke" | "couple" | "family";
+// Stage 25 (3 Sep 2026): Marieke / Couple / Kids (with-us, activities, terms)
+// and Family Notes columns removed from the year view. Only Oliver-All and
+// Public Holidays remain. Mirrors client/src/pages/CalendarPlanner.tsx.
+type ColKey = "oliver_all" | "ph";
+type GroupKey = "oliver" | "family";
 
 interface ColDef {
   key: ColKey;
@@ -166,24 +162,15 @@ interface ColDef {
 
 const COL_DEFS: ColDef[] = [
   { key: "oliver_all",      label: "Oliver-All",       group: "oliver" },
-  { key: "m_art",           label: "Marieke Art",      group: "marieke" },
-  { key: "couple",          label: "Marieke & Oliver", group: "couple" },
-  { key: "kids_with_us",    label: "Kids with Us",     group: "family" },
-  { key: "kids_activities", label: "Kids Activities",  group: "family" },
-  { key: "kids_terms",      label: "Kids Term Dates",  group: "family" },
   { key: "ph",              label: "Public Holidays",  group: "family" },
 ];
 
 const GROUP_COLOR: Record<GroupKey, string> = {
   oliver:  COLOR.oliver,
-  marieke: COLOR.marieke,
-  couple:  COLOR.couple,
   family:  COLOR.family,
 };
 const GROUP_LABEL: Record<GroupKey, string> = {
   oliver:  "Oliver",
-  marieke: "Marieke",
-  couple:  "Marieke & Oliver",
   family:  "Family",
 };
 
@@ -191,45 +178,8 @@ function columnFor(summary: string): ColKey | null {
   const raw = (summary || "").trim();
   const s = raw.toLowerCase();
 
-  // 1. Couple (matched first so "Marieke physio" doesn't fall through to Marieke)
-  if (
-    s.includes("couple time") ||
-    s.includes("cup of tea") ||
-    s.includes("marieke physio") ||
-    s.includes("date night")
-  ) {
-    return "couple";
-  }
-
-  // 2. Marieke Art
-  if (
-    s.includes("marieke art") ||
-    s.includes("marieke \u2014 art") ||
-    s.includes("marieke - art") ||
-    s.includes("marieke \u2014 art class") ||
-    s.includes("art class")
-  ) {
-    return "m_art";
-  }
-
-  // 3. Family — kids buckets, terms, public holidays
-  if (s.includes("kids with us")) return "kids_with_us";
-  if (s.includes("kids head off") || s.includes("kids back") || s.includes("handover")) {
-    return "kids_with_us";
-  }
-
-  if (
-    s.includes("school term") ||
-    s.includes("term ") ||
-    s.includes(" term") ||
-    s.includes("school holidays") ||
-    s.includes("first day of school") ||
-    s.includes("last day of school") ||
-    (s.includes("school") && (s.includes("nmps") || s.includes("uhs")))
-  ) {
-    return "kids_terms";
-  }
-
+  // Public holidays only for the family group — all other Marieke/Kids buckets
+  // have been stripped and now return null (suppressed from year view).
   if (
     s.includes("public holiday") ||
     s.includes("anzac") ||
@@ -248,19 +198,6 @@ function columnFor(summary: string): ColKey | null {
     s.includes("australia day")
   ) {
     return "ph";
-  }
-
-  if (
-    raw.startsWith("Hilde:") ||
-    raw.startsWith("Axel:") ||
-    raw.startsWith("Hilde \u2014") ||
-    raw.startsWith("Axel \u2014") ||
-    raw.startsWith("Hilde -") ||
-    raw.startsWith("Axel -") ||
-    s.startsWith("hilde ") ||
-    s.startsWith("axel ")
-  ) {
-    return "kids_activities";
   }
 
   // 4. Oliver-All — [Category] prefixes from build_calendars.py + legacy keywords
@@ -307,11 +244,6 @@ function summariseEventForCell(e: CalEvent): string {
   const time = e.allDay ? "" : `${fmtTime(e.start)} `;
   const stripped = sum
     .replace(/^\[(Elgin House|Sandringham|Peninsula Health|On-call|Travel|Medicolegal|Personal)\]\s*/, "")
-    .replace(/^Hilde:\s*/i, "")
-    .replace(/^Axel:\s*/i, "")
-    .replace(/^Hilde\s*[\u2013\u2014-]\s*/i, "")
-    .replace(/^Axel\s*[\u2013\u2014-]\s*/i, "")
-    .replace(/^Marieke\s*[\u2013\u2014-]\s*/i, "")
     .replace(/^On-call\s*[\u2013\u2014-]\s*/i, "")
     .replace(/^Travel\s*[\u2013\u2014-]\s*/i, "")
     .replace(/^Medicolegal\s*[\u2013\u2014-]\s*/i, "");
@@ -636,12 +568,10 @@ export async function buildPlannerXlsx(
         const dayEvents = eventsForDay(events, k);
         if (dayEvents.length > 0) {
           // Pick a colour from the most "important" group present.
-          // Resolution order: oliver > couple > marieke > family.
+          // Resolution order: oliver > family (public holidays).
           const groups = dayEvents.map((e) => groupFor(e.summary)).filter(Boolean) as GroupKey[];
           let color: string | null = null;
           if (groups.includes("oliver")) color = COLOR.oliver;
-          else if (groups.includes("couple")) color = COLOR.couple;
-          else if (groups.includes("marieke")) color = COLOR.marieke;
           else if (groups.includes("family")) color = COLOR.family;
           // Override with OOO red if anything is flagged out-of-office
           if (dayEvents.some((e) => detectOoo(e.summary).flag)) color = COLOR.ooo;
@@ -787,7 +717,7 @@ export async function buildPlannerXlsx(
   lh.font = { bold: true, color: { argb: COLOR.headerText } };
   lh.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.header } };
 
-  for (const grp of ["oliver", "marieke", "couple", "family"] as GroupKey[]) {
+  for (const grp of ["oliver", "family"] as GroupKey[]) {
     const leaves = COL_DEFS.filter((c) => c.group === grp).map((c) => c.label).join(", ");
     const row = legend.addRow([GROUP_LABEL[grp], leaves, ""]);
     row.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROUP_COLOR[grp] } };
@@ -802,7 +732,7 @@ export async function buildPlannerXlsx(
   legend.addRow(["Generated", new Date().toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })]);
   legend.addRow([
     "Layout",
-    "Year Planner sheet mirrors CalendarPlanner.tsx — 4 super-groups × 7 leaf columns.",
+    "Year Planner sheet mirrors CalendarPlanner.tsx — 2 super-groups (Oliver / Family) × 2 leaf columns (Oliver-All / Public Holidays).",
   ]);
 
   const buf = await wb.xlsx.writeBuffer();

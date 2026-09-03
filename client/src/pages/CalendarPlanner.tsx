@@ -112,65 +112,17 @@ interface PlannerNote {
 
 type ColKey =
   | "oliver_all"
-  | "m_art"
-  | "couple"
-  | "kids_with_us"
-  | "kids_activities"
-  | "family_notes"
-  | "kids_terms"
   | "ph";
 
 function columnFor(summary: string): ColKey | null {
   const raw = (summary || "").trim();
   const s = raw.toLowerCase();
 
-  // 0. Family Notes — explicit prefix [Family Notes] from Anchor-generated feed.
-  if (raw.startsWith("[Family Notes]") || s.startsWith("family note:")) {
-    return "family_notes";
-  }
-
-  // 1. Couple (Marieke & Oliver) — match BEFORE Marieke so "Couple time" /
-  //    "Marieke physio" don't fall through to the Marieke column.
-  if (
-    s.includes("couple time") ||
-    s.includes("cup of tea") ||
-    s.includes("marieke physio") ||
-    s.includes("date night")
-  ) {
-    return "couple";
-  }
-
-  // 2. Marieke Art (the only Marieke column kept)
-  if (
-    s.includes("marieke art") ||
-    s.includes("marieke \u2014 art") ||
-    s.includes("marieke - art") ||
-    s.includes("marieke \u2014 art class") ||
-    s.includes("art class")
-  ) {
-    return "m_art";
-  }
-
-  // 3. Family — Kids buckets, term dates, public holidays
-  if (s.includes("kids with us")) return "kids_with_us";
-  if (s.includes("kids head off") || s.includes("kids back") || s.includes("handover")) {
-    return "kids_with_us";
-  }
-
-  // School term/holiday banners
-  if (
-    s.includes("school term") ||
-    s.includes("term ") ||
-    s.includes(" term") ||
-    s.includes("school holidays") ||
-    s.includes("first day of school") ||
-    s.includes("last day of school") ||
-    (s.includes("school") && (s.includes("nmps") || s.includes("uhs")))
-  ) {
-    return "kids_terms";
-  }
-
-  // Public holidays — Vic public holidays + significant special days
+  // Public holidays — Vic public holidays + significant special days (kept as
+  // separate calendar per user request 3 Sep 2026). Marieke / Couple / Kids
+  // (with-us, activities, terms) and Family Notes columns were removed on the
+  // same date; anything that used to route there now returns null and is
+  // suppressed from the year view.
   if (
     s.includes("public holiday") ||
     s.includes("anzac") ||
@@ -189,21 +141,6 @@ function columnFor(summary: string): ColKey | null {
     s.includes("australia day")
   ) {
     return "ph";
-  }
-
-  // Kids activities — anything Hilde:/Axel: prefixed (combined kids feed),
-  // OR legacy "Hilde — …" / "Axel — …" lines.
-  if (
-    raw.startsWith("Hilde:") ||
-    raw.startsWith("Axel:") ||
-    raw.startsWith("Hilde \u2014") ||
-    raw.startsWith("Axel \u2014") ||
-    raw.startsWith("Hilde -") ||
-    raw.startsWith("Axel -") ||
-    s.startsWith("hilde ") ||
-    s.startsWith("axel ")
-  ) {
-    return "kids_activities";
   }
 
   // 4. Oliver-All — match the [Category] prefixes the build script emits, plus
@@ -241,41 +178,30 @@ function columnFor(summary: string): ColKey | null {
   return null;
 }
 
-// Column order (left → right) requested 7 May 2026:
-//   Oliver-All, Marieke Art, Kids with Us, Kids Activities, Family Notes,
-//   Kids Term Dates, Public Holidays.
-// Couple (Marieke & Oliver) was removed from the year view per user request.
+// Column order (left → right) — Stage 25 (3 Sep 2026): Marieke / Couple /
+// Kids (with-us, activities, terms) and Family Notes columns removed. Only
+// Oliver-All plus Public Holidays remain in the year view.
 const COL_DEFS: Array<{
   key: ColKey;
   label: string;
-  group: "oliver" | "marieke" | "couple" | "family";
+  group: "oliver" | "family";
 }> = [
   { key: "oliver_all",      label: "Oliver-All",       group: "oliver" },
-  { key: "m_art",           label: "Marieke Art",      group: "marieke" },
-  { key: "couple",          label: "Couple",           group: "couple" },
-  { key: "kids_with_us",    label: "Kids with Us",     group: "family" },
-  { key: "kids_activities", label: "Kids Activities",  group: "family" },
-  { key: "family_notes",    label: "Family Notes",     group: "family" },
-  { key: "kids_terms",      label: "Kids Term Dates",  group: "family" },
   { key: "ph",              label: "Public Holidays",  group: "family" },
 ];
 
-const GROUP_BG: Record<"oliver" | "marieke" | "couple" | "family", string> = {
+const GROUP_BG: Record<"oliver" | "family", string> = {
   oliver:  "bg-sky-100 dark:bg-sky-950/60",
-  marieke: "bg-purple-100 dark:bg-purple-950/60",
-  couple:  "bg-pink-100 dark:bg-pink-950/60",
   family:  "bg-emerald-100 dark:bg-emerald-950/60",
 };
-const GROUP_LABEL: Record<"oliver" | "marieke" | "couple" | "family", string> = {
+const GROUP_LABEL: Record<"oliver" | "family", string> = {
   oliver:  "Oliver",
-  marieke: "Marieke",
-  couple:  "Marieke & Oliver",
   family:  "Family",
 };
 
-// ----------- Today/section classifier (simple 4-group) ---------------------
+// ----------- Today/section classifier ------------------------------------
 // Used by the Today section header chips. Mirrors the year-view groups.
-type GroupKey = "oliver" | "marieke" | "couple" | "family";
+type GroupKey = "oliver" | "family";
 
 function groupFor(summary: string): GroupKey | null {
   const col = columnFor(summary);
@@ -286,8 +212,6 @@ function groupFor(summary: string): GroupKey | null {
 
 const GROUP_CHIP_BG: Record<GroupKey, string> = {
   oliver:  "bg-sky-200/60 dark:bg-sky-900/40",
-  marieke: "bg-purple-200/60 dark:bg-purple-900/40",
-  couple:  "bg-pink-200/60 dark:bg-pink-900/40",
   family:  "bg-emerald-200/60 dark:bg-emerald-900/40",
 };
 
@@ -820,7 +744,10 @@ function YearGroupedTable({
       // Route them by adhocCategory first, then fall back to columnFor.
       let col: ColKey | null = null;
       if (e.source === "adhoc") {
-        if (e.adhocCategory === "family") col = "family_notes";
+        // Stage 25 (3 Sep 2026): family_notes column removed; drop family adhoc
+        // events from the year view entirely. Oliver work/personal still route
+        // to oliver_all.
+        if (e.adhocCategory === "family") col = null;
         else col = "oliver_all"; // oliver_work | oliver_personal | undefined
       } else {
         col = columnFor(e.summary || "");
@@ -856,24 +783,10 @@ function YearGroupedTable({
         if (evStartKey === evEndKey) break;
       }
     }
-    // Inject Family Notes (one per date, multiline split). Treated as all-day.
-    for (const n of notes) {
-      const dayMap = map.get(n.date);
-      if (!dayMap) continue;
-      const lines = (n.note || "")
-        .split(/\r?\n+/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      if (!dayMap.family_notes) continue;
-      for (const line of lines) {
-        dayMap.family_notes.push({
-          text: line,
-          allDay: true,
-          startMs: 0,
-          source: "rules",
-        });
-      }
-    }
+    // Stage 25 (3 Sep 2026): Family Notes column removed from year view.
+    // Notes are still edited via the FamilyNotesPanel on the Today section
+    // (backed by /api/planner/notes) — they simply no longer inject rows into
+    // the year grid.
     // Sort each cell: all-day first, then by start time.
     for (const dayMap of Array.from(map.values())) {
       for (const k of Object.keys(dayMap) as ColKey[]) {
@@ -887,7 +800,7 @@ function YearGroupedTable({
   }, [days, events, notes, endKey]);
 
   const groupSpans = useMemo(() => {
-    const groups: Array<{ group: "oliver" | "marieke" | "couple" | "family"; span: number }> = [];
+    const groups: Array<{ group: "oliver" | "family"; span: number }> = [];
     for (const def of COL_DEFS) {
       const last = groups[groups.length - 1];
       if (last && last.group === def.group) last.span += 1;
@@ -1041,7 +954,9 @@ function YearGroupedTable({
   );
 }
 
-// --- Template sections (Oliver / Marieke / Kids) -------------------------
+// --- Template sections (Oliver / Family) ---------------------------------
+// Stage 25 (3 Sep 2026): Marieke and Kids sections removed. Only Oliver and
+// the Public Holidays reference remain.
 
 function TemplateSections() {
   const sections: Array<{
@@ -1055,30 +970,17 @@ function TemplateSections() {
       items: [
         { name: "Oliver-All",      summary: "Combined feed: Elgin House, Sandringham, Peninsula Health, On-call, Travel, Medicolegal, Personal — events prefixed with [Category]." },
         { name: "Oliver-Work",     summary: "All paid clinical work (Elgin / Sandringham / Peninsula / Sandy roster)." },
-        { name: "On-call.ics",     summary: "Sandringham + Alfred 24h shifts. Triggers couple-time skip on the day + the following morning." },
+        { name: "On-call.ics",     summary: "Sandringham + Alfred 24h shifts." },
         { name: "Oliver-Travel",   summary: "Conferences, flights, hotels, annual leave, RDOs." },
         { name: "Medicolegal",     summary: "Independent medico-legal opinions / report deadlines / court dates." },
         { name: "Oliver-Personal", summary: "GP, dental, haircut, gym, podiatry, optometry, personal medical." },
       ],
     },
     {
-      title: "Marieke — calendar templates",
-      group: "marieke",
-      items: [
-        { name: "Marieke-Art",      summary: "Mondays 09:00–22:00 single block (continuous, includes travel time). AIR Wallan studio dates layer on top via Marieke-Studio." },
-        { name: "Marieke-Studio",   summary: "AIR Wallan artist-in-residence sessions on discrete dates." },
-        { name: "Marieke-Personal", summary: "Sourced ONLY from Marieke's iCloud feed — never from the build script. Read-only." },
-        { name: "Marieke & Oliver", summary: "Friday date night, weekend kids-off blocks, Tea (10pm nightly), Marieke physio (10pm every alternate day from Mon 4 May 2026)." },
-      ],
-    },
-    {
-      title: "Kids — calendar templates",
+      title: "Family — calendar templates",
       group: "family",
       items: [
-        { name: "Kids-with-us",    summary: "Banner days when the kids are with us. Driven by 4-week NEW_FAMILY rotation (anchor Mon 4 May 2026 = SH wk1 / PH wk4 / Kids wk1 / EH wk1), school-holiday 50:50 alternation (Term 1 2026 hols = Oliver-first), and recurring special days (Mother's/Father's Day, Daniel & Marieke birthdays)." },
-        { name: "Kids-Activities", summary: "Combined Hilde + Axel activities, pre-fixed with 'Hilde:' / 'Axel:'. Sorted by start." },
-        { name: "Kids-Term-Dates", summary: "School term + holiday banners for both schools (Hilde @ NMPS, Axel @ UHS)." },
-        { name: "Public Holidays", summary: "Victorian public holidays, plus Mother's Day, Father's Day, family birthdays." },
+        { name: "Public Holidays", summary: "Victorian public holidays and significant special days (Christmas / Easter / ANZAC / Labour Day / King's Birthday / Melbourne Cup / AFL Grand Final / Australia Day)." },
       ],
     },
   ];

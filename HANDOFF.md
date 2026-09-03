@@ -2,6 +2,37 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-09-03 (13:15 AEST) — CalendarPlanner: strip 6 family columns, keep Oliver-All + Public Holidays
+
+**Prev VPS commit `00d217a`; this deploy after commit-and-push.**
+
+Oliver asked to remove Marieke, Marieke Art, Marieke & Oliver, Couple, Family,
+Kids with us, Kids Activities and Kids Term Dates from the Yearly Planner.
+Public Holidays stays as a separate column. The Family Notes free-text panel
+under Today (`PUT /api/planner/notes/:date`) is preserved.
+
+**Client (`client/src/pages/CalendarPlanner.tsx`):** `ColKey` reduced to
+`"oliver_all" | "ph"`. Classifier no longer routes anything to Couple, Marieke
+or Kids buckets — family-adhoc events now return `col = null` (rendered as a
+hidden row and skipped in Excel export). `COL_DEFS`, `GROUP_BG`, `GROUP_LABEL`
+and `CHIP_BG` reduced to the two remaining columns. Family Notes
+injection loop into the grid removed; `FamilyNotesPanel` on the Today section
+is untouched. `TemplateSections` reduced from 8 to 2 groups.
+
+**Server (`server/planner.ts`):** `ColKey` union stripped identically.
+Classifier returns null for the removed categories. `summariseEventForCell`
+strip-regex cleaned of `Hilde`, `Axel`, `Marieke` prefixes. Excel colour
+resolution and legend loop reduced to `oliver > family`. `layoutNote` updated
+to "2 super-groups × 2 leaf columns".
+
+**Bundle:** `dist/public/assets/CalendarPlanner-CRAOZB1z.js` = 62.46 kB
+(was 65.79 kB). `dist/index.cjs` = 1.2 mb (unchanged). `npx tsc --noEmit` clean.
+
+**Grid after change:** Day | Date | Wk | Oliver-All | Public Holidays.
+Two super-groups: Oliver (1 col) + Family (1 col = PH). Unused `marieke` and
+`couple` fields still present in the `COLOR` palette in `server/planner.ts`
+(harmless).
+
 ## 2026-08-17 (AM AEST) — Master rotation template refresh: work-only, anchor 24 Aug 2026
 
 **Commit `64434c0`; deployed to VPS `f4292cbec207819e9fe5979ff62be457`.**
