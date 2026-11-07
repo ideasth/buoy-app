@@ -4,7 +4,10 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ## 2026-11-08 (AEDT) — Stage 25: On Time (leave-by cues, phone/watch alerts, email triage)
 
-**Status: built, tested, committed. NOT deployed. Master switch `enabled` defaults to false.**
+**Status: deployed to VPS 2026-11-07 15:07 AEDT, commit `8996438` (bundle md5 fcfcff75). Alerts and email OFF.**
+Smoke: /api/health 200 on buoy + anchor (both headers); /api/ontime/status enabled=false,
+emailEnabled=false, engine running, plan OK; /api/ontime/config 401 without auth; bad ack token 404.
+Preview Sat 7 to Mon 9 Nov: 11 routine + 3 Today cues, no travel cues (check against calendar at checkpoint c).
 
 ADHD time-management feature. Everything runs inside the Buoy process on the VPS
 (no Perplexity credits, no Viva Insights).
