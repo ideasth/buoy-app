@@ -25,6 +25,8 @@ export interface EngineDeps {
   send: Sender;
   now?: () => number;
   llmFactory?: (cfg: OnTimeConfig) => LlmCall | null;
+  /** Tests: stop drainTriage from scheduling a follow-up batch. */
+  noAutoContinue?: boolean;
   graphCreds?: () => GraphCreds | null;
   pollInboxFn?: typeof pollInbox;
 }
@@ -93,6 +95,10 @@ export class OnTimeEngine {
       if (cfg.emailEnabled) {
         const last = this.status.lastMailPollAt ?? 0;
         if (now - last >= cfg.emailPollMinutes * 60_000) await this.pollMail();
+        void this.drainTriage();
+      } else if (this.d.store.queuedCount() > 0) {
+        // Stage 25.1: manually uploaded emails keep sorting (and resume after a
+        // restart) even while automatic mail reading is off.
         void this.drainTriage();
       }
       if (now - this.lastPruneAt > 3_600_000) {
@@ -291,6 +297,10 @@ export class OnTimeEngine {
       this.status.lastClassifyError = (e as Error).message;
     } finally {
       this.classifying = false;
+    }
+    // Stage 25.1: large batches — keep going in the background until empty.
+    if (n >= maxItems && this.d.store.queuedCount() > 0 && !this.d.noAutoContinue) {
+      setTimeout(() => { void this.drainTriage(maxItems); }, 0);
     }
     return n;
   }

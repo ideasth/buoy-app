@@ -6,7 +6,7 @@
 
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, buildApiUrl, buildAuthHeaders, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +42,7 @@ export function EmailTriagePanel() {
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const q = useQuery<{ items: Item[]; counts: Record<string, number>; queued: number }>({
@@ -71,11 +72,59 @@ export function EmailTriagePanel() {
     }
   };
 
+  // Stage 25.1: any number of .eml/.msg files (uploaded one by one with a
+  // single summary at the end), or a .zip of them for large batches.
+  const uploadZip = async (f: File) => {
+    setProgress(`Uploading ${f.name}…`);
+    const res = await fetch(buildApiUrl("/api/ontime/email-upload-zip"), {
+      method: "POST",
+      headers: buildAuthHeaders({ "Content-Type": "application/zip" }),
+      body: f,
+      credentials: "omit",
+    });
+    const r = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+    const extras = [
+      r.duplicates ? `${r.duplicates} already uploaded` : "",
+      r.skippedOld ? `${r.skippedOld} older than 30 days skipped` : "",
+      r.skippedLarge ? `${r.skippedLarge} too large` : "",
+      r.failed ? `${r.failed} unreadable` : "",
+    ].filter(Boolean).join(", ");
+    toast({ title: `${r.added} of ${r.emails} emails added`, description: `${extras ? extras + ". " : ""}Sorting in the background.` });
+  };
+
   const onFiles = async (files: FileList | null) => {
-    if (!files) return;
-    for (const f of Array.from(files).slice(0, 10)) {
-      if (f.size > 15 * 1024 * 1024) { toast({ title: `${f.name} is too large`, variant: "destructive" }); continue; }
-      await upload({ filename: f.name, contentBase64: toBase64(await f.arrayBuffer()) });
+    if (!files || files.length === 0) return;
+    const list = Array.from(files);
+    const zips = list.filter((f) => f.name.toLowerCase().endsWith(".zip"));
+    const emails = list.filter((f) => /\.(eml|msg)$/i.test(f.name));
+    setBusy(true);
+    try {
+      for (const z of zips) {
+        try { await uploadZip(z); } catch (e) {
+          toast({ title: `${z.name} failed`, description: (e as Error).message, variant: "destructive" });
+        }
+      }
+      if (emails.length === 1) {
+        await upload({ filename: emails[0].name, contentBase64: toBase64(await emails[0].arrayBuffer()) });
+      } else if (emails.length > 1) {
+        let added = 0, dup = 0, failed = 0;
+        for (let i = 0; i < emails.length; i++) {
+          const f = emails[i];
+          setProgress(`Uploading ${i + 1} of ${emails.length}…`);
+          if (f.size > 15 * 1024 * 1024) { failed++; continue; }
+          try {
+            const r = await (await apiRequest("POST", "/api/ontime/email-upload", { filename: f.name, contentBase64: toBase64(await f.arrayBuffer()) })).json();
+            if (r.duplicate) dup++; else added++;
+          } catch { failed++; }
+        }
+        toast({ title: `${added} of ${emails.length} emails added`, description: `${dup ? `${dup} already uploaded. ` : ""}${failed ? `${failed} failed. ` : ""}Sorting in the background.` });
+      }
+      if (!zips.length && !emails.length) toast({ title: "Nothing to upload", description: "Use .eml, .msg or .zip files.", variant: "destructive" });
+    } finally {
+      setProgress(null);
+      setBusy(false);
+      refresh();
     }
   };
 
@@ -96,7 +145,7 @@ export function EmailTriagePanel() {
           <h2 className="text-lg font-semibold">Sorted inbox</h2>
           <p className="text-xs text-muted-foreground">
             Sorted on the Buoy server by a private model; nothing leaves the server.
-            {q.data?.queued ? ` Sorting ${q.data.queued}…` : ""}
+            {q.data?.queued ? ` Sorting: ${q.data.queued} left (about ${Math.max(1, Math.round((q.data.queued * 16) / 60))} min).` : ""}
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={syncNow} data-testid="button-email-sync">
@@ -163,10 +212,11 @@ export function EmailTriagePanel() {
         onDrop={(e) => { e.preventDefault(); setDragOver(false); void onFiles(e.dataTransfer.files); }}
         data-testid="email-upload-box"
       >
-        <div className="text-sm font-medium">Add an email (e.g. Safer Care Victoria)</div>
-        <div className="text-xs text-muted-foreground">Drag .eml or .msg files here, or paste the email text below.</div>
+        <div className="text-sm font-medium">Add emails (e.g. Safer Care Victoria, or a bulk export)</div>
+        <div className="text-xs text-muted-foreground">Drag .eml or .msg files here (any number), a .zip of them for large batches, or paste the email text below. Emails older than 30 days are skipped.</div>
+        {progress ? <div className="text-xs font-medium" data-testid="text-upload-progress">{progress}</div> : null}
         <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".eml,.msg,message/rfc822" multiple className="hidden" onChange={(e) => { void onFiles(e.target.files); e.target.value = ""; }} />
+          <input ref={fileRef} type="file" accept=".eml,.msg,.zip,message/rfc822,application/zip" multiple className="hidden" onChange={(e) => { void onFiles(e.target.files); e.target.value = ""; }} />
           <Button size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
             <Upload className="h-4 w-4 mr-1" /> Choose files
           </Button>

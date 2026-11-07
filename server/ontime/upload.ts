@@ -93,3 +93,59 @@ export async function parseUpload(input: { filename?: string; contentBase64?: st
   if (name.endsWith(".msg") || isOle) return parseMsg(buf);
   return parseEml(buf);
 }
+
+// ---- Stage 25.1: bulk zip upload -------------------------------------------
+// A zip of .eml/.msg files (e.g. a Finder folder compressed on the Mac).
+// Entries are parsed in memory; nothing is written to disk. Emails older
+// than `maxAgeDays` are skipped because the triage store prunes them within
+// the hour anyway. Guards: entry count cap and per-entry size cap.
+
+export interface ZipParseResult {
+  parsed: ParsedUpload[];
+  totalEntries: number;
+  emailEntries: number;
+  skippedOld: number;
+  skippedLarge: number;
+  failed: number;
+}
+
+export async function parseZip(
+  buf: Buffer,
+  opts: { now?: number; maxAgeDays?: number; maxEntries?: number } = {},
+): Promise<ZipParseResult> {
+  const JSZipMod: any = await import("jszip");
+  const JSZip: any = JSZipMod.default ?? JSZipMod;
+  const now = opts.now ?? Date.now();
+  const maxAgeDays = opts.maxAgeDays ?? 30;
+  const maxEntries = opts.maxEntries ?? 3000;
+  let zip: any;
+  try {
+    zip = await JSZip.loadAsync(buf);
+  } catch {
+    throw new Error("not a valid zip file");
+  }
+  const entries = Object.values(zip.files as Record<string, any>).filter((f: any) => !f.dir);
+  const out: ZipParseResult = { parsed: [], totalEntries: entries.length, emailEntries: 0, skippedOld: 0, skippedLarge: 0, failed: 0 };
+  const cutoff = now - maxAgeDays * 86_400_000;
+  for (const f of entries) {
+    const name = String(f.name);
+    const base = name.split("/").pop() ?? "";
+    if (name.startsWith("__MACOSX/") || base.startsWith("._") || base.startsWith(".")) continue;
+    const lower = base.toLowerCase();
+    if (!lower.endsWith(".eml") && !lower.endsWith(".msg")) continue;
+    out.emailEntries++;
+    if (out.emailEntries > maxEntries) throw new Error(`too many emails in zip (max ${maxEntries})`);
+    const declared = Number(f._data?.uncompressedSize ?? 0);
+    if (declared > 15 * 1024 * 1024) { out.skippedLarge++; continue; }
+    try {
+      const data: Buffer = await f.async("nodebuffer");
+      if (data.length > 15 * 1024 * 1024) { out.skippedLarge++; continue; }
+      const p = await parseUpload({ filename: base, contentBase64: data.toString("base64") });
+      if (p.receivedAt < cutoff) { out.skippedOld++; continue; }
+      out.parsed.push(p);
+    } catch {
+      out.failed++;
+    }
+  }
+  return out;
+}

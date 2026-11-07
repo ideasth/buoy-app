@@ -14,7 +14,8 @@ import { OnTimeEngine } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
 import { readGraphCreds } from "./graph";
-import { parseUpload } from "./upload";
+import { parseUpload, parseZip } from "./upload";
+import express from "express";
 import { addDaysKey, melbDateKey, melbToUtcMs } from "./time";
 
 export interface OnTimeRouteDeps {
@@ -192,6 +193,36 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
       res.status(400).json({ error: (e as Error).message });
     }
   });
+
+  // Stage 25.1 — bulk upload: one zip of .eml/.msg files, sent as raw bytes.
+  // Sorting continues in the background until the queue is empty.
+  app.post(
+    "/api/ontime/email-upload-zip",
+    express.raw({ type: () => true, limit: "300mb" }),
+    async (req, res) => {
+      if (!deps.guard(req, res)) return;
+      try {
+        const buf = req.body as Buffer;
+        if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ error: "empty upload" });
+        const z = await parseZip(buf);
+        let inserted = 0, duplicates = 0;
+        for (const p of z.parsed) {
+          const r = store.insertTriage({
+            source: "upload", externalId: p.externalId, receivedAt: p.receivedAt, sender: p.sender,
+            senderName: p.senderName, subject: p.subject, snippet: p.body.slice(0, 400), webLink: null, bodyForLlm: p.body,
+          });
+          if (r.inserted) inserted++; else duplicates++;
+        }
+        void engine.drainTriage();
+        res.json({
+          emails: z.emailEntries, added: inserted, duplicates, skippedOld: z.skippedOld,
+          skippedLarge: z.skippedLarge, failed: z.failed, queued: store.queuedCount(),
+        });
+      } catch (e) {
+        res.status(400).json({ error: (e as Error).message });
+      }
+    },
+  );
 
   app.post("/api/ontime/email-sync-now", async (req, res) => {
     if (!deps.guard(req, res)) return;
