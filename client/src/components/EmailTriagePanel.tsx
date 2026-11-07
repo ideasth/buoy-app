@@ -112,7 +112,7 @@ export function EmailTriagePanel() {
         for (let i = 0; i < emails.length; i++) {
           const f = emails[i];
           setProgress(`Uploading ${i + 1} of ${emails.length}…`);
-          if (f.size > 15 * 1024 * 1024) { failed++; continue; }
+          if (f.size > 25 * 1024 * 1024) { failed++; continue; }
           try {
             const r = await (await apiRequest("POST", "/api/ontime/email-upload", { filename: f.name, contentBase64: toBase64(await f.arrayBuffer()) })).json();
             if (r.duplicate) dup++; else added++;

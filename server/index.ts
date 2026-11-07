@@ -25,7 +25,8 @@ const jsonDefault = express.json({
     req.rawBody = buf;
   },
 });
-const jsonUpload = express.json({ limit: "20mb" });
+// 25 MB per email (MAX_EMAIL_MB) is ~33.4 MB once base64-encoded.
+const jsonUpload = express.json({ limit: "36mb" });
 app.use((req, res, next) =>
   req.path === "/api/ontime/email-upload" ? jsonUpload(req, res, next) : jsonDefault(req, res, next),
 );

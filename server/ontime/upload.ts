@@ -86,7 +86,7 @@ export async function parseUpload(input: { filename?: string; contentBase64?: st
   if (input.text && input.text.trim()) return parsePasted(input.text);
   if (!input.contentBase64) throw new Error("no content");
   const buf = Buffer.from(input.contentBase64, "base64");
-  if (buf.length > 15 * 1024 * 1024) throw new Error("file too large (15 MB max)");
+  if (buf.length > MAX_EMAIL_BYTES) throw new Error(`file too large (${MAX_EMAIL_MB} MB max)`);
   const name = (input.filename ?? "").toLowerCase();
   // OLE compound file magic = .msg
   const isOle = buf.length > 8 && buf.readUInt32BE(0) === 0xd0cf11e0;
@@ -108,6 +108,11 @@ export interface ZipParseResult {
   skippedLarge: number;
   failed: number;
 }
+
+// Per-email size cap (Stage 25.1b: raised 15 -> 25 MB). Only the first 6000
+// characters of text are kept, so attachments cost unpack time, not storage.
+export const MAX_EMAIL_MB = 25;
+export const MAX_EMAIL_BYTES = MAX_EMAIL_MB * 1024 * 1024;
 
 export async function parseZip(
   buf: Buffer,
@@ -136,10 +141,10 @@ export async function parseZip(
     out.emailEntries++;
     if (out.emailEntries > maxEntries) throw new Error(`too many emails in zip (max ${maxEntries})`);
     const declared = Number(f._data?.uncompressedSize ?? 0);
-    if (declared > 15 * 1024 * 1024) { out.skippedLarge++; continue; }
+    if (declared > MAX_EMAIL_BYTES) { out.skippedLarge++; continue; }
     try {
       const data: Buffer = await f.async("nodebuffer");
-      if (data.length > 15 * 1024 * 1024) { out.skippedLarge++; continue; }
+      if (data.length > MAX_EMAIL_BYTES) { out.skippedLarge++; continue; }
       const p = await parseUpload({ filename: base, contentBase64: data.toString("base64") });
       if (p.receivedAt < cutoff) { out.skippedOld++; continue; }
       out.parsed.push(p);

@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import JSZip from "jszip";
 import { OnTimeStore } from "../server/ontime/store";
 import { OnTimeEngine } from "../server/ontime/engine";
-import { parseZip } from "../server/ontime/upload";
+import { MAX_EMAIL_BYTES, parseZip } from "../server/ontime/upload";
 import { melbToUtcMs } from "../server/ontime/time";
 
 const NOW = melbToUtcMs("2026-11-10", "07:00");
@@ -58,6 +58,20 @@ describe("parseZip", () => {
   it("enforces the entry cap", async () => {
     await expect(parseZip(await makeZip(), { now: NOW, maxEntries: 2 })).rejects.toThrow(/too many emails/);
   });
+});
+
+describe("per-email size cap (25 MB)", () => {
+  it("accepts a 20 MB email and skips a 26 MB one", async () => {
+    expect(MAX_EMAIL_BYTES).toBe(25 * 1024 * 1024);
+    const pad = (mb: number) => "x".repeat(mb * 1024 * 1024);
+    const z = new JSZip();
+    z.file("big/ok.eml", eml("b1", "Mon, 09 Nov 2026 09:00:00 +1100", "Twenty") + pad(20), { compression: "DEFLATE" });
+    z.file("big/too-big.eml", eml("b2", "Mon, 09 Nov 2026 09:00:00 +1100", "TwentySix") + pad(26), { compression: "DEFLATE" });
+    const buf = Buffer.from(await z.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+    const r = await parseZip(buf, { now: NOW });
+    expect(r.parsed.map((p) => p.subject)).toEqual(["Twenty"]);
+    expect(r.skippedLarge).toBe(1);
+  }, 30000);
 });
 
 describe("background sorting", () => {
