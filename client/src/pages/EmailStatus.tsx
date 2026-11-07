@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { EmailTriagePanel } from "@/components/EmailTriagePanel";
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Flag, X, Mail } from "lucide-react";
 
 function fmtDate(ms: number): string {
@@ -80,6 +81,8 @@ export default function EmailStatus() {
           Flagged or high-importance emails with no reply from you yet. Edit the drafted response, then copy + send from Outlook.
         </p>
       </header>
+
+      <EmailTriagePanel />
 
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">

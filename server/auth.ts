@@ -203,6 +203,9 @@ const SYNC_ALLOWLIST_PREFIXES = [
   // apex session cookie.  Allowlist the /cal/ prefix so the requireAuth
   // middleware doesn't reject calendar-app subscription requests.
   "/cal/",
+  // Stage 25: ntfy action buttons (phone/watch) — authorised by a random
+  // per-alert token checked in server/ontime/routes.ts, not the session.
+  "/api/ontime/ack/",
   // Stage 19: sibling LLM proxy. The /api/llm/* routes enforce their own
   // gates (loopback + X-Sibling-Id + X-Sibling-Auth) inside
   // server/llm-proxy-routes.ts, so requireAuth must let these through

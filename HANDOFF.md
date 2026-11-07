@@ -2,6 +2,43 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-11-08 (AEDT) — Stage 25: On Time (leave-by cues, phone/watch alerts, email triage)
+
+**Status: built, tested, committed. NOT deployed. Master switch `enabled` defaults to false.**
+
+ADHD time-management feature. Everything runs inside the Buoy process on the VPS
+(no Perplexity credits, no Viva Insights).
+
+- `server/ontime/` — time (Melbourne TZ), config, plan (pure planner), store
+  (own tables: ontime_config, ontime_alerts, email_triage, ontime_kv), notify
+  (ntfy publisher), engine (30 s tick), triage (rules + local Ollama), graph
+  (read-only Mail.Read delta poll), upload (.eml/.msg/pasted), routes.
+- Cues per calendar event with a travel match: Get ready (leave-by minus 30),
+  Wrap up (minus 10), Leave now; leave-by = start minus (allow + 15 buffer).
+  No travel match: Starts soon (minus 10). Privacy labels: watch shows the
+  location name or "Appointment", never the event title.
+- Leave now has buttons On my way / Snooze 5 (max 2) / Running late (pre-filled
+  SMS, user sends it). Unacknowledged after 2 min: one firmer alert (priority 5).
+- 06:30 Today alert: first leave-by, Top 3, act-today email count.
+- Daily routine nudges (physio, Top 3, work block, cello, swim, flat feet) —
+  editable on the On Time page; suppressed while an event is on and in quiet hours.
+- Email: sorted inbox panel inside Email Status (no Inbox page). Tabs Act today /
+  This week / Waiting / FYI. Upload box for SCV emails. Deadlines create a Buoy
+  task (priority deadline). Act-today + near deadline -> phone nudge (max 4/day).
+  Email body is cleared after classification; On Time responses are not logged.
+- Auth: all `/api/ontime/*` need session or sync secret, except
+  `/api/ontime/ack/:token` (random per-alert token; added to SYNC_ALLOWLIST_PREFIXES).
+- `/api/ontime/email-upload` gets a 20 MB JSON limit (server/index.ts).
+- Secrets (never in config/DB): `/home/jod/buoy/.secrets/ntfy_token`,
+  `/home/jod/buoy/.secrets/graph_mail.json` {tenantId, clientId, clientSecret, mailbox}.
+  Override dir with BUOY_SECRETS_DIR.
+- New deps: mailparser, @kenjiuno/msgreader (external in the bundle; npm ci on VPS).
+- Tests: test/stage25-ontime-plan.test.ts, test/stage25-ontime-engine.test.ts.
+
+Follow-ups (each needs Oliver's go-ahead): deploy; self-hosted ntfy behind Caddy
+(thinhalo-vps-config repo); Entra app + ApplicationAccessPolicy for Mail.Read;
+review preview against the real calendar, then switch on.
+
 ## 2026-09-03 (13:15 AEST) — CalendarPlanner: strip 6 family columns, keep Oliver-All + Public Holidays
 
 **Prev VPS commit `00d217a`; this deploy after commit-and-push.**

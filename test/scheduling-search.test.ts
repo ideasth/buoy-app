@@ -10,9 +10,26 @@ import type { CalEvent } from "../server/ics";
 
 // ---- Helpers ---------------------------------------------------------------
 
+/** Melbourne UTC offset in hours (10 or 11) at the given instant. */
+function melbOffsetHours(instantMs: number): number {
+  const parts = new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Melbourne", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(instantMs));
+  const g = (t: string) => Number(parts.find((p) => p.type === t)!.value);
+  const asUtc = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour") % 24, g("minute"));
+  return Math.round((asUtc - instantMs) / 3_600_000);
+}
+
+/** Melbourne wall-clock hour of an instant. */
+function melbHour(instantMs: number): number {
+  return (new Date(instantMs).getUTCHours() + melbOffsetHours(instantMs)) % 24;
+}
+
 /**
- * Build a CalEvent that is busy on the given AEST date from startH to endH.
- * We use a fixed Melbourne offset of +10:00 (AEST) for deterministic tests.
+ * Build a CalEvent that is busy on the given Melbourne date from startH to endH.
+ * Uses the real Melbourne offset for that date (+10 AEST or +11 AEDT), so
+ * the tests pass year-round, not only outside daylight saving.
  */
 function busyEvent(
   uid: string,
@@ -23,8 +40,8 @@ function busyEvent(
 ): CalEvent {
   const [y, m, d] = dateYYYYMMDD.split("-").map(Number);
   function iso(h: number): string {
-    const date = new Date(Date.UTC(y, m - 1, d, h - 10, 0, 0)); // offset -10 to get Melbourne time
-    return date.toISOString();
+    const off = melbOffsetHours(Date.UTC(y, m - 1, d, h - 10, 0, 0));
+    return new Date(Date.UTC(y, m - 1, d, h - off, 0, 0)).toISOString();
   }
   return {
     uid,
@@ -54,8 +71,7 @@ function baseParsed(overrides: Partial<ParsedScheduling> = {}): ParsedScheduling
 function nextWeekday(targetDow: number): string {
   // 0=Sun, 1=Mon, ..., 6=Sat
   const now = new Date();
-  // Use Melbourne offset +10 approximate.
-  const melbNow = new Date(now.getTime() + 10 * 3600 * 1000);
+  const melbNow = new Date(now.getTime() + melbOffsetHours(now.getTime()) * 3600 * 1000);
   const dow = melbNow.getUTCDay();
   let daysAhead = targetDow - dow;
   if (daysAhead <= 0) daysAhead += 7;
@@ -101,8 +117,7 @@ describe("searchSlots — dense calendar", () => {
     expect(result.candidates.length).toBeGreaterThan(0);
     // First candidate meetingStart should be around 09:00 Melbourne time
     const firstStart = new Date(result.candidates[0].meetingStart);
-    // Approx check: hour in Melbourne (+10) should be 9
-    const melbH = (firstStart.getUTCHours() + 10) % 24;
+    const melbH = melbHour(firstStart.getTime());
     expect(melbH).toBe(9);
   });
 });

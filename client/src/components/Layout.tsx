@@ -22,6 +22,7 @@ export const NAV: NavItem[] = [
   { divider: true },
   { href: "/", label: "Today" },
   { href: "/calendar-planner", label: "Calendar" },
+  { href: "/on-time", label: "On Time" },
   { href: "/templates", label: "Templates" },
   { divider: true },
   { href: "/morning", label: "Morning" },

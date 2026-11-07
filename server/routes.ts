@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
-import { storage, legacyStatusForPmtStatus, pmtStatusForLegacyStatus } from "./storage";
+import { storage, rawSqlite, legacyStatusForPmtStatus, pmtStatusForLegacyStatus } from "./storage";
 import {
   insertTaskSchema,
   insertHabitSchema,
@@ -15,6 +15,7 @@ import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { listBuoyEvents as _listBuoyEventsForMerge } from "./buoy-events-storage";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
+import { registerOnTimeRoutes } from "./ontime/routes";
 import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
 // can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
@@ -527,6 +528,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     return feedEvents;
   }
+
+  // ---- Stage 25: On Time (leave-by cues, ntfy alerts, email triage) ----
+  registerOnTimeRoutes(app, {
+    db: rawSqlite as any,
+    guard: requireUserOrOrchestrator,
+    getEvents: () => getMergedPlannerEvents(),
+    listTravelLocations: () => storage.listTravelLocations(),
+    getTravelOverride: (uid) => storage.getTravelOverride(uid) ?? null,
+    homeAddress: () => storage.getSettings().home_address ?? null,
+    resolveTravel: (o) => resolveTravel(o),
+    getTop3Titles: (date) => {
+      const t = storage.getTopThree(date);
+      if (!t) return [];
+      return [t.taskId1, t.taskId2, t.taskId3]
+        .filter((id): id is number => typeof id === "number")
+        .map((id) => storage.getTask(id)?.title)
+        .filter((x): x is string => Boolean(x));
+    },
+    createTask: ({ title, dueAt, notes }) => {
+      try {
+        return storage.createTask({ title, priority: "deadline", domain: "work", dueAt, notes } as any).id;
+      } catch (e) {
+        console.warn("[ontime] createTask failed:", (e as Error).message);
+        return null;
+      }
+    },
+    startEngine: !process.env.VITEST && process.env.NODE_ENV !== "test",
+  });
 
   app.get("/api/today-events", async (_req, res) => {
     const events = await getMergedPlannerEvents();

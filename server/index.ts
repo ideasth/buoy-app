@@ -18,12 +18,16 @@ declare module "http" {
   }
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
+// Stage 25: the On Time email upload carries base64 .eml/.msg files, so it
+// gets a larger JSON limit; everything else keeps the 100 kb default.
+const jsonDefault = express.json({
+  verify: (req, _res, buf) => {
+    req.rawBody = buf;
+  },
+});
+const jsonUpload = express.json({ limit: "20mb" });
+app.use((req, res, next) =>
+  req.path === "/api/ontime/email-upload" ? jsonUpload(req, res, next) : jsonDefault(req, res, next),
 );
 
 app.use(express.urlencoded({ extended: false }));
@@ -55,7 +59,8 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      // Stage 25: never write On Time bodies (email subjects/snippets) to logs.
+      if (capturedJsonResponse && !path.startsWith("/api/ontime/")) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
