@@ -106,6 +106,8 @@ export interface Classification {
   deadlineText: string | null;
   deadlineDate: string | null;
   model: string | null;
+  /** Stage 25.3 — true when the model was skipped by design (bulk mail), not because it failed. */
+  skippedModel?: boolean;
 }
 
 export function buildPrompt(inp: TriageInput, rules: RuleResult): string {
@@ -155,7 +157,7 @@ export async function classify(
   const rules = applyRules(inp);
   // Obvious bulk mail never needs the model.
   if (rules.isBulk && !rules.isPriority) {
-    return { rules, category: "fyi", summary: "Newsletter or notification.", deadlineText: null, deadlineDate: null, model: null };
+    return { rules, category: "fyi", summary: "Newsletter or notification.", deadlineText: null, deadlineDate: null, model: null, skippedModel: true };
   }
   let category: TriageCategory = rules.hintCategory ?? (rules.isPriority ? "reply_week" : "fyi");
   let summary = inp.subject.slice(0, 140) || "(no subject)";

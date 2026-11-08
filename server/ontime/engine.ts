@@ -289,7 +289,11 @@ export class OnTimeEngine {
           deadlineDate: c.deadlineDate, isPriority: c.rules.isPriority, ruleHits: c.rules.hits, model: c.model,
         });
         this.status.lastClassifyMs = this.now() - t0;
-        this.status.lastClassifyError = c.model || !llm ? null : "model unavailable - rules only";
+        // Stage 25.3 — newsletters skip the model by design; don't report that as
+        // a model failure. Only a real model attempt updates the status.
+        if (!c.skippedModel) {
+          this.status.lastClassifyError = c.model || !llm ? null : "model unavailable - rules only";
+        }
         this.afterClassified(cfg, row.id);
         n++;
       }

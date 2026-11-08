@@ -175,3 +175,22 @@ describe("upload parsing", () => {
     expect(store.insertTriage(row).inserted).toBe(false);
   });
 });
+
+describe("Stage 25.3: classify status message", () => {
+  const add = (s: ReturnType<typeof setup>, id: string, sender: string, subject: string) =>
+    s.store.insertTriage({ source: "upload", externalId: id, receivedAt: melbToUtcMs("2026-11-10", "09:30"), sender,
+      senderName: "", subject, snippet: "", webLink: null, bodyForLlm: "Hello." });
+  it("newsletter skipping the model does not report the model as unavailable", async () => {
+    const s = setup({ llm: async () => JSON.stringify({ category: "fyi", summary: "Note.", deadline: null }) });
+    add(s, "a", "colleague@hospital.org", "Hello");
+    add(s, "b", "noreply@news.example", "Weekly digest");
+    await s.engine.drainTriage();
+    expect(s.engine.status.lastClassifyError).toBeNull();
+  });
+  it("a real model failure is still reported", async () => {
+    const s = setup({ llm: async () => { throw new Error("connection refused"); } });
+    add(s, "c", "colleague@hospital.org", "Hello");
+    await s.engine.drainTriage();
+    expect(s.engine.status.lastClassifyError).toBe("model unavailable - rules only");
+  });
+});
