@@ -54,12 +54,29 @@ export function leaveAtFor(ev: PlanEvent, cfg: OnTimeConfig): number | null {
   return ev.startMs - (ev.travelAllowMinutes + cfg.bufferMinutes) * 60_000;
 }
 
-export function planEventCues(ev: PlanEvent, cfg: OnTimeConfig): PlannedCue[] {
+/**
+ * Stage 25.2 — true when an earlier, non-ignored event at the same travel
+ * location ends shortly before this one starts (e.g. Elgin AM 08:00-12:00 then
+ * PM 13:00). "Shortly" = less than a return trip plus buffer, so going home
+ * in between would not make sense. Such events get no leave-by cues.
+ */
+export function alreadyThere(ev: PlanEvent, events: PlanEvent[], cfg: OnTimeConfig): boolean {
+  if (!ev.travelLocationName || !ev.travelAllowMinutes) return false;
+  const maxGap = (2 * ev.travelAllowMinutes + cfg.bufferMinutes) * 60_000;
+  return events.some((p) =>
+    p !== ev && p.uid !== ev.uid &&
+    !isIgnoredEvent(p, cfg) &&
+    p.travelLocationName === ev.travelLocationName &&
+    p.endMs <= ev.startMs && ev.startMs - p.endMs <= maxGap,
+  );
+}
+
+export function planEventCues(ev: PlanEvent, cfg: OnTimeConfig, events: PlanEvent[] = []): PlannedCue[] {
   if (isIgnoredEvent(ev, cfg)) return [];
   const label = eventLabel(ev, cfg);
   const startHH = melbHHMM(ev.startMs);
   const base = `ev:${ev.uid}:${ev.startMs}`;
-  const leaveAt = leaveAtFor(ev, cfg);
+  const leaveAt = alreadyThere(ev, events, cfg) ? null : leaveAtFor(ev, cfg);
   if (leaveAt == null) {
     if (cfg.noTravelLeadMinutes <= 0) return [];
     return [{
@@ -151,7 +168,7 @@ export function planCues(
   const cues: PlannedCue[] = [];
   for (const ev of events) {
     if (ev.endMs < fromMs - 86_400_000 || ev.startMs > toMs + 86_400_000) continue;
-    cues.push(...planEventCues(ev, cfg));
+    cues.push(...planEventCues(ev, cfg, events));
   }
   let day = melbDateKey(fromMs);
   const lastDay = melbDateKey(toMs);

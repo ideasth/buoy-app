@@ -67,7 +67,7 @@ export const DEFAULT_CONFIG: OnTimeConfig = {
   digestEnabled: true,
   privacyLabels: true,
   lateMessage: "Sorry, I'm running about {mins} minutes late. On my way.",
-  ignoreKeywords: ["available", "tentative", "hold", "kids with us", "public holiday", "birthday"],
+  ignoreKeywords: ["available", "tentative", "hold", "kids with us", "public holiday", "birthday", "focus time"],
   ntfyBaseUrl: "",
   ntfyTopic: "",
   publicBaseUrl: "https://buoy.thinhalo.com",

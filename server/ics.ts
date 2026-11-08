@@ -75,12 +75,11 @@ function parseProperty(line: string): { name: string; params: Record<string, str
   return { name, params, value };
 }
 
-// Returns the offset, in minutes, of Australia/Melbourne from UTC at the
-// given UTC instant. AEST = +600, AEDT = +660. Works regardless of the
-// host's system timezone (Perplexity sandboxes run UTC).
-function melbourneOffsetMinutes(utcMs: number): number {
+// Offset (minutes) of an IANA zone from UTC at a UTC instant.
+function zoneOffsetMinutes(utcMs: number, timeZone: string): number {
+  if (timeZone === "UTC") return 0;
   const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Australia/Melbourne",
+    timeZone,
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: false,
@@ -88,20 +87,78 @@ function melbourneOffsetMinutes(utcMs: number): number {
   const parts = dtf.formatToParts(new Date(utcMs));
   const get = (t: string) => parseInt(parts.find((p) => p.type === t)?.value ?? "0", 10);
   let hh = get("hour");
-  if (hh === 24) hh = 0; // Intl quirk for midnight in some locales
+  if (hh === 24) hh = 0;
   const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), hh, get("minute"), get("second"));
   return Math.round((asUtc - utcMs) / 60000);
 }
 
-// Convert a wall-clock time (assumed to be in Australia/Melbourne) to the
-// true UTC instant. Iterates twice to settle correctly across DST cutovers.
-function melbourneWallClockToUtc(y: number, m: number, d: number, hh: number, mm: number, ss: number): Date {
+// Convert a wall-clock time in `timeZone` to the true UTC instant. Iterates
+// twice to settle correctly across DST cutovers.
+function zonedWallClockToUtc(
+  timeZone: string, y: number, m: number, d: number, hh: number, mm: number, ss: number,
+): Date {
   let guess = Date.UTC(y, m - 1, d, hh, mm, ss);
   for (let i = 0; i < 2; i++) {
-    const offset = melbourneOffsetMinutes(guess);
+    const offset = zoneOffsetMinutes(guess, timeZone);
     guess = Date.UTC(y, m - 1, d, hh, mm, ss) - offset * 60000;
   }
   return new Date(guess);
+}
+
+// Stage 25.2 — Outlook publishes TZIDs as Windows zone names. Map the common
+// ones to IANA. Unknown TZIDs fall back to Australia/Melbourne (the previous
+// behaviour, and correct for rules-generated feeds).
+const WINDOWS_TZ: Record<string, string> = {
+  "utc": "UTC", "coordinated universal time": "UTC", "gmt": "UTC", "z": "UTC",
+  "aus eastern standard time": "Australia/Sydney",
+  "e. australia standard time": "Australia/Brisbane",
+  "cen. australia standard time": "Australia/Adelaide",
+  "aus central standard time": "Australia/Darwin",
+  "w. australia standard time": "Australia/Perth",
+  "tasmania standard time": "Australia/Hobart",
+  "new zealand standard time": "Pacific/Auckland",
+  "sri lanka standard time": "Asia/Colombo",
+  "india standard time": "Asia/Kolkata",
+  "se asia standard time": "Asia/Bangkok",
+  "singapore standard time": "Asia/Singapore",
+  "china standard time": "Asia/Shanghai",
+  "taipei standard time": "Asia/Taipei",
+  "tokyo standard time": "Asia/Tokyo",
+  "korea standard time": "Asia/Seoul",
+  "arabian standard time": "Asia/Dubai",
+  "gmt standard time": "Europe/London",
+  "greenwich standard time": "Atlantic/Reykjavik",
+  "w. europe standard time": "Europe/Berlin",
+  "romance standard time": "Europe/Paris",
+  "central europe standard time": "Europe/Budapest",
+  "central european standard time": "Europe/Warsaw",
+  "gtb standard time": "Europe/Bucharest",
+  "fle standard time": "Europe/Kiev",
+  "e. south america standard time": "America/Sao_Paulo",
+  "pacific sa standard time": "America/Santiago",
+  "eastern standard time": "America/New_York",
+  "central standard time": "America/Chicago",
+  "mountain standard time": "America/Denver",
+  "pacific standard time": "America/Los_Angeles",
+  "hawaiian standard time": "Pacific/Honolulu",
+};
+
+const validZoneCache = new Map<string, boolean>();
+function isValidZone(tz: string): boolean {
+  if (validZoneCache.has(tz)) return validZoneCache.get(tz)!;
+  let ok = false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); ok = true; } catch { ok = false; }
+  validZoneCache.set(tz, ok);
+  return ok;
+}
+
+export function resolveTzid(tzid: string | undefined): string {
+  if (!tzid) return "Australia/Melbourne";
+  const t = tzid.replace(/^"|"$/g, "").trim();
+  const mapped = WINDOWS_TZ[t.toLowerCase()];
+  if (mapped) return mapped;
+  if (t.includes("/") && isValidZone(t)) return t;
+  return "Australia/Melbourne";
 }
 
 function parseDt(value: string, params: Record<string, string>): { dt: Date; allDay: boolean } {
@@ -120,14 +177,11 @@ function parseDt(value: string, params: Record<string, string>): { dt: Date; all
   const hh = parseInt(raw.slice(9, 11), 10);
   const mm = parseInt(raw.slice(11, 13), 10);
   const ss = raw.length >= 15 ? parseInt(raw.slice(13, 15), 10) : 0;
-  // Z-suffixed values are already true UTC instants (foreign-timezone travel legs
-  // emitted by build_calendars.py). Anything else from our upstream feed is a
-  // wall-clock time in Australia/Melbourne (DTSTART;TZID=Australia/Melbourne:...).
-  // Convert it to the actual UTC instant so the frontend's `new Date(iso).getHours()`
-  // (which renders in the browser's local zone) shows the original AEST/AEDT wall-clock.
+  // Z-suffixed values are true UTC instants. Otherwise honour TZID (Windows or
+  // IANA name); no TZID / unknown TZID = Australia/Melbourne wall-clock.
   const dt = value.endsWith("Z")
     ? new Date(Date.UTC(y, m - 1, d, hh, mm, ss))
-    : melbourneWallClockToUtc(y, m, d, hh, mm, ss);
+    : zonedWallClockToUtc(resolveTzid(params.TZID), y, m, d, hh, mm, ss);
   return { dt, allDay: false };
 }
 
