@@ -372,9 +372,21 @@ export class OnTimeStore {
   }
   /** Retention: drop snippets of closed items older than 30 days. */
   pruneTriage(olderThanMs: number): number {
+    // Stage 30.1 — keep rows whose Buoy flag/label is still on an Inbox
+    // message, so the Outlook clean-up can be retried next hour.
     return this.db.prepare(
-      `DELETE FROM email_triage WHERE status IN ('done','dismissed','new') AND received_at < ?`,
+      `DELETE FROM email_triage WHERE status IN ('done','dismissed','new') AND received_at < ?
+         AND NOT (source = 'graph' AND filed_folder IS NULL
+                  AND (COALESCE(flag_state, '') = 'flagged' OR buoy_label IS NOT NULL))`,
     ).run(olderThanMs).changes;
+  }
+  /** Stage 30.1 — rows about to be pruned that still carry a Buoy flag/label in Outlook. */
+  pruneCandidatesWithOutlookMarks(olderThanMs: number): TriageRow[] {
+    return this.db.prepare(
+      `SELECT * FROM email_triage WHERE status IN ('done','dismissed','new') AND received_at < ?
+         AND source = 'graph' AND filed_folder IS NULL
+         AND (flag_state = 'flagged' OR buoy_label IS NOT NULL) LIMIT 50`,
+    ).all(olderThanMs) as TriageRow[];
   }
   /** Open (not done/dismissed) emails by category; optionally only those received since `sinceMs`. */
   triageCounts(sinceMs?: number): Record<string, number> {

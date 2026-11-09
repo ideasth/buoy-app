@@ -31,6 +31,8 @@ export interface EngineDeps {
   pollInboxFn?: typeof pollInbox;
   /** Stage 26d — capture/project lines for the morning digest. */
   getCaptureDigest?: (opts: { checkOlderThanMs: number; updatesSinceMs: number }) => { needsLook: number; projectUpdates: number };
+  /** Stage 30.1 — remove Buoy flags/labels in Outlook before old rows are pruned. */
+  beforeTriagePrune?: (olderThanMs: number) => Promise<void>;
 }
 
 /** Stage 26d — a capture "needs a look" once it has sat for 12 hours. */
@@ -111,7 +113,11 @@ export class OnTimeEngine {
       if (now - this.lastPruneAt > 3_600_000) {
         this.lastPruneAt = now;
         this.d.store.pruneAlerts(now - 14 * 86_400_000);
-        this.d.store.pruneTriage(now - 30 * 86_400_000);
+        const cutoff = now - 30 * 86_400_000;
+        if (this.d.beforeTriagePrune) {
+          try { await this.d.beforeTriagePrune(cutoff); } catch { /* retried next hour */ }
+        }
+        this.d.store.pruneTriage(cutoff);
       }
     } catch (e) {
       this.status.lastPlanError = (e as Error).message;

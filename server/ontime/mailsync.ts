@@ -106,6 +106,15 @@ export async function runMailSync(
   }
 }
 
+/** Stage 30.1 — plan to strip Buoy's own Outlook marks before a row is pruned. */
+export function planPruneCleanup(row: Pick<TriageRow, "source" | "flag_state" | "buoy_label" | "filed_folder">): MailPlan {
+  const plan: MailPlan = { flag: null, label: undefined, move: null };
+  if (row.source !== "graph" || row.filed_folder) return plan;
+  if (row.flag_state === "flagged") plan.flag = "clear";
+  if (row.buoy_label) plan.label = null;
+  return plan;
+}
+
 /** One sync at a time per email, so rapid re-sorts apply in order. */
 export class PerRowQueue {
   private tails = new Map<number, Promise<unknown>>();

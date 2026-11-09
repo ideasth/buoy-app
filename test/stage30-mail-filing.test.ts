@@ -128,3 +128,30 @@ describe("Stage 30 — Graph calls", () => {
     expect(JSON.parse(moves[1].b)).toEqual({ destinationId: "FOLDER" });
   });
 });
+
+describe("Stage 30.1 — 30-day cleanup", () => {
+  it("plans removal of Buoy flag and label only", async () => {
+    const { planPruneCleanup } = await import("../server/ontime/mailsync");
+    expect(planPruneCleanup({ source: "graph", flag_state: "flagged", buoy_label: "Buoy: Act today", filed_folder: null } as any))
+      .toEqual({ flag: "clear", label: null, move: null });
+    expect(planPruneCleanup({ source: "graph", flag_state: "cleared", buoy_label: null, filed_folder: null } as any))
+      .toEqual({ flag: null, label: undefined, move: null });
+    expect(planPruneCleanup({ source: "graph", flag_state: "flagged", buoy_label: "x", filed_folder: FILED_DONE } as any))
+      .toEqual({ flag: null, label: undefined, move: null });
+  });
+  it("prune keeps rows still marked in Outlook, drops them once cleared", () => {
+    const db = new Database(":memory:");
+    const s = new OnTimeStore(db as any);
+    const old = Date.now() - 40 * 86_400_000;
+    const mk = (ext: string) => s.insertTriage({ source: "graph", externalId: ext, receivedAt: old, sender: "a", senderName: "a", subject: "s", snippet: "", webLink: null, bodyForLlm: "" }).id;
+    const marked = mk("M"); const plain = mk("P");
+    s.updateTriage(marked, { status: "new" }); s.updateTriage(plain, { status: "done" });
+    s.setMailSyncResult(marked, { flagState: "flagged", buoyLabel: "Buoy: Act today", error: null });
+    expect(s.pruneCandidatesWithOutlookMarks(Date.now() - 30 * 86_400_000).map((r) => r.id)).toEqual([marked]);
+    expect(s.pruneTriage(Date.now() - 30 * 86_400_000)).toBe(1);
+    expect(s.getTriage(plain)).toBeUndefined();
+    expect(s.getTriage(marked)).toBeDefined();
+    s.setMailSyncResult(marked, { flagState: "cleared", buoyLabel: null, error: null });
+    expect(s.pruneTriage(Date.now() - 30 * 86_400_000)).toBe(1);
+  });
+});

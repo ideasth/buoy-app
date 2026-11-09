@@ -14,7 +14,7 @@ import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
 import { readGraphCreds, setMessageFlag, getMessageCategories, patchMessage, moveMessage } from "./graph";
-import { planMailSync, runMailSync, isEmptyPlan, PerRowQueue, type MailOps } from "./mailsync";
+import { planMailSync, planPruneCleanup, runMailSync, isEmptyPlan, PerRowQueue, type MailOps } from "./mailsync";
 import { applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
 import express from "express";
@@ -74,6 +74,17 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     store, getPlanEvents, getTop3Titles: deps.getTop3Titles,
     createDeadlineTask: deps.createTask, send: sendNtfy,
     getCaptureDigest: deps.getCaptureDigest,
+    beforeTriagePrune: async (olderThanMs) => {
+      if (!readGraphCreds()) return;
+      for (const r of store.pruneCandidatesWithOutlookMarks(olderThanMs)) {
+        await mailQueue.run(r.id, async () => {
+          const row = store.getTriage(r.id);
+          if (!row) return;
+          const plan = planPruneCleanup(row);
+          if (!isEmptyPlan(plan)) await runMailSync(mailOps, (rid, rec) => store.setMailSyncResult(rid, rec), row, plan);
+        });
+      }
+    },
   });
   engineSingleton = engine;
 
