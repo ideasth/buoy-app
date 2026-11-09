@@ -396,6 +396,7 @@ export function registerAdminDbRoutes(
       const feedDefs: Array<{ label: string; url: string }> = [
         { label: "Personal calendar", url: s.calendar_ics_url || "" },
         { label: "AUPFHS (Outlook publish)", url: s.aupfhs_ics_url || "" },
+        { label: "Daisy & Oliver shared (iCloud)", url: s.shared_ics_url || "" },
       ];
       const FRESH_MS = 30 * 60 * 1000; // 30 min — cache TTL is 15 min, give headroom
       icsFeeds = feedDefs.map(({ label, url }) => {

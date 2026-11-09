@@ -20,6 +20,16 @@ export interface CalEvent {
   adhocId?: number;
   // Only present for adhoc events — which category was chosen at creation.
   adhocCategory?: "oliver_work" | "oliver_personal" | "family";
+  // Stage 28 — shared D&O calendar: whose event it is, and whether it is
+  // information only (never busy, never gets leave-by cues).
+  owner?: "oliver" | "both" | "daisy" | "unprefixed";
+  infoOnly?: boolean;
+  // Parser-internal recurrence data. Only consumed when a feed opts in to
+  // expandRecurrence; stripped from getCachedEventsForFeeds output.
+  rrule?: string;
+  exdates?: number[];
+  recurrenceId?: number;
+  tzid?: string;
 }
 
 // UID conventions used by build_calendars.py + upstream_feeds.py.
@@ -205,6 +215,10 @@ export function parseIcs(text: string): CalEvent[] {
           allDay: cur.allDay ?? false,
           description: cur.description,
           location: cur.location,
+          ...(cur.rrule ? { rrule: cur.rrule } : {}),
+          ...(cur.exdates?.length ? { exdates: cur.exdates } : {}),
+          ...(cur.recurrenceId != null ? { recurrenceId: cur.recurrenceId } : {}),
+          ...(cur.tzid ? { tzid: cur.tzid } : {}),
         });
       }
       cur = null;
@@ -218,6 +232,17 @@ export function parseIcs(text: string): CalEvent[] {
         const { dt, allDay } = parseDt(value, params);
         cur.start = dt.toISOString();
         cur.allDay = allDay;
+        if (!allDay && !value.endsWith("Z")) cur.tzid = resolveTzid(params.TZID);
+        else if (!allDay) cur.tzid = "UTC";
+      } else if (name === "RRULE") {
+        cur.rrule = value;
+      } else if (name === "EXDATE") {
+        for (const v of value.split(",")) {
+          if (!v) continue;
+          try { (cur.exdates ??= []).push(parseDt(v, params).dt.getTime()); } catch { /* skip */ }
+        }
+      } else if (name === "RECURRENCE-ID") {
+        try { cur.recurrenceId = parseDt(value, params).dt.getTime(); } catch { /* skip */ }
       } else if (name === "DTEND") {
         const { dt } = parseDt(value, params);
         cur.end = dt.toISOString();
@@ -300,14 +325,34 @@ export function getIcsCacheStatus(
 // downstream column classifiers (e.g. "[Personal] \u2026" \u2192 Oliver-All) work.
 // Events with no summary or that can't be fetched are skipped silently.
 export async function getCachedEventsForFeeds(
-  feeds: Array<{ url: string; summaryPrefix?: string; forceSource?: CalEventSource }>,
+  feeds: Array<{
+    url: string;
+    summaryPrefix?: string;
+    forceSource?: CalEventSource;
+    // Stage 28 — expand RRULE series into occurrences (opt-in per feed).
+    expandRecurrence?: boolean;
+    // Stage 28 — tag owner/infoOnly from D:/O:/D&O: title prefixes.
+    sharedOwnerPrefixes?: boolean;
+  }>,
   force = false,
 ): Promise<CalEvent[]> {
   const all: CalEvent[] = [];
   for (const feed of feeds) {
     if (!feed.url) continue;
-    const events = await getCachedEvents(feed.url, force);
-    for (const e of events) {
+    let events = await getCachedEvents(feed.url, force);
+    if (feed.expandRecurrence) {
+      const now = Date.now();
+      events = expandRecurringEvents(events, now - 90 * 86400000, now + 400 * 86400000);
+    }
+    if (feed.sharedOwnerPrefixes) {
+      const { classifySharedOwner, isInfoOnlyOwner } = await import("./shared-calendar");
+      events = events.map((e) => {
+        const owner = classifySharedOwner(e.summary);
+        return { ...e, owner, infoOnly: isInfoOnlyOwner(owner) };
+      });
+    }
+    for (const raw of events) {
+      const { rrule: _r, exdates: _x, recurrenceId: _rid, tzid: _tz, ...e } = raw;
       const sum = (e.summary || "").trim();
       // Determine source: explicit feed override wins; else UID classification.
       const source: CalEventSource = feed.forceSource ?? classifyEventSource(e.uid);
@@ -352,4 +397,150 @@ export function eventsForDate(events: CalEvent[], date: Date): CalEvent[] {
       return startKey <= target && endKey >= target;
     })
     .sort((a, b) => +new Date(a.start) - +new Date(b.start));
+}
+
+// ---- Stage 28: recurrence expansion ----
+// Supports the RRULE subset that phone calendars actually publish:
+// FREQ=DAILY|WEEKLY|MONTHLY|YEARLY, INTERVAL, COUNT, UNTIL, and BYDAY for
+// WEEKLY (plain day codes). EXDATE and RECURRENCE-ID overrides are honoured.
+// Anything more exotic falls back to the single base occurrence.
+
+const DAY_CODES = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const MAX_OCCURRENCES = 1000;
+
+type Wall = { y: number; m: number; d: number; hh: number; mm: number; ss: number };
+
+function wallInZone(ms: number, tz: string): Wall {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(new Date(ms));
+  const g = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? "0");
+  return { y: g("year"), m: g("month"), d: g("day"), hh: g("hour") % 24, mm: g("minute"), ss: g("second") };
+}
+
+function parseUntil(v: string, allDay: boolean): number {
+  const raw = v.endsWith("Z") ? v.slice(0, -1) : v;
+  const y = +raw.slice(0, 4), m = +raw.slice(4, 6), d = +raw.slice(6, 8);
+  if (raw.length === 8) {
+    // Date-only UNTIL is inclusive of that whole day.
+    return allDay
+      ? new Date(y, m - 1, d, 23, 59, 59).getTime()
+      : zonedWallClockToUtc("Australia/Melbourne", y, m, d, 23, 59, 59).getTime();
+  }
+  const hh = +raw.slice(9, 11), mm = +raw.slice(11, 13), ss = +(raw.slice(13, 15) || 0);
+  return Date.UTC(y, m - 1, d, hh, mm, ss);
+}
+
+export function expandRecurringEvents(events: CalEvent[], fromMs: number, toMs: number): CalEvent[] {
+  // Overrides (RECURRENCE-ID) replace the matching generated occurrence.
+  const overrides = new Map<string, Set<number>>();
+  for (const e of events) {
+    if (e.recurrenceId != null) {
+      if (!overrides.has(e.uid)) overrides.set(e.uid, new Set());
+      overrides.get(e.uid)!.add(e.recurrenceId);
+    }
+  }
+  const out: CalEvent[] = [];
+  for (const e of events) {
+    if (!e.rrule || e.recurrenceId != null) { out.push(e); continue; }
+    const occ = expandOne(e, fromMs, toMs, overrides.get(e.uid));
+    out.push(...occ);
+  }
+  return out;
+}
+
+function expandOne(e: CalEvent, fromMs: number, toMs: number, overridden?: Set<number>): CalEvent[] {
+  const rule: Record<string, string> = {};
+  for (const part of (e.rrule ?? "").split(";")) {
+    const [k, v] = part.split("=");
+    if (k && v != null) rule[k.toUpperCase()] = v.toUpperCase();
+  }
+  const freq = rule.FREQ;
+  const supportedKeys = new Set(["FREQ", "INTERVAL", "COUNT", "UNTIL", "WKST", "BYDAY"]);
+  const unsupported = Object.keys(rule).some((k) => !supportedKeys.has(k)) ||
+    (rule.BYDAY && (freq !== "WEEKLY" || /[0-9+-]/.test(rule.BYDAY))) ||
+    !["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq);
+  if (unsupported) return [e];
+
+  const interval = Math.max(1, parseInt(rule.INTERVAL ?? "1", 10) || 1);
+  const count = rule.COUNT ? parseInt(rule.COUNT, 10) : Infinity;
+  const until = rule.UNTIL ? parseUntil(rule.UNTIL, e.allDay) : Infinity;
+  const startMs = Date.parse(e.start);
+  const endMs = Date.parse(e.end);
+  const tz = e.tzid ?? "Australia/Melbourne";
+  const base: Wall = e.allDay
+    ? (() => { const d = new Date(startMs); return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate(), hh: 0, mm: 0, ss: 0 }; })()
+    : wallInZone(startMs, tz);
+  const durDays = e.allDay ? Math.max(1, Math.round((endMs - startMs) / 86400000)) : 0;
+  const durMs = endMs - startMs;
+
+  const build = (y: number, m: number, d: number): { s: number; en: number; key: string } => {
+    if (e.allDay) {
+      const s = new Date(y, m - 1, d).getTime();
+      const en = new Date(y, m - 1, d + durDays).getTime();
+      const dt = new Date(s);
+      return { s, en, key: `${dt.getFullYear()}${String(dt.getMonth() + 1).padStart(2, "0")}${String(dt.getDate()).padStart(2, "0")}` };
+    }
+    const s = zonedWallClockToUtc(tz, y, m, d, base.hh, base.mm, base.ss).getTime();
+    const w = wallInZone(s, tz);
+    return { s, en: s + durMs, key: `${w.y}${String(w.m).padStart(2, "0")}${String(w.d).padStart(2, "0")}` };
+  };
+
+  // Normalise y/m/d with day overflow via Date.UTC.
+  const norm = (y: number, m: number, d: number): [number, number, number] => {
+    const t = new Date(Date.UTC(y, m - 1, d));
+    return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()];
+  };
+  const out: CalEvent[] = [];
+  let n = 0;
+  const exd = new Set(e.exdates ?? []);
+  const push = (y: number, m: number, d: number): boolean => {
+    const o = build(y, m, d);
+    if (o.s < startMs) return true;
+    if (o.s > until || n >= count || o.s > toMs || n >= MAX_OCCURRENCES) return false;
+    n++;
+    if (exd.has(o.s) || overridden?.has(o.s)) return true;
+    if (o.en < fromMs) return true;
+    out.push({
+      ...e,
+      uid: n === 1 && o.s === startMs ? e.uid : `${e.uid}::${o.key}`,
+      start: new Date(o.s).toISOString(),
+      end: new Date(o.en).toISOString(),
+    });
+    return true;
+  };
+
+  for (let k = 0; k < 5000; k++) {
+    if (freq === "DAILY") {
+      if (!push(...norm(base.y, base.m, base.d + k * interval))) break;
+    } else if (freq === "WEEKLY") {
+      const days = rule.BYDAY ? rule.BYDAY.split(",").map((c) => DAY_CODES.indexOf(c)).filter((i) => i >= 0) : [];
+      const baseDow = new Date(Date.UTC(base.y, base.m - 1, base.d)).getUTCDay();
+      if (!days.length) {
+        if (!push(...norm(base.y, base.m, base.d + k * 7 * interval))) break;
+        continue;
+      }
+      // Week starts Monday (WKST default).
+      const mondayOffset = (baseDow + 6) % 7;
+      const weekStart = base.d - mondayOffset + k * 7 * interval;
+      const ordered = days.map((i) => (i + 6) % 7).sort((a, b) => a - b);
+      let stop = false;
+      for (const off of ordered) {
+        if (!push(...norm(base.y, base.m, weekStart + off))) { stop = true; break; }
+      }
+      if (stop) break;
+    } else if (freq === "MONTHLY") {
+      const t = new Date(Date.UTC(base.y, base.m - 1 + k * interval, 1));
+      const y = t.getUTCFullYear(), m = t.getUTCMonth() + 1;
+      const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      if (base.d > dim) continue;
+      if (!push(y, m, base.d)) break;
+    } else {
+      const y = base.y + k * interval;
+      if (base.m === 2 && base.d === 29 && new Date(Date.UTC(y, 1, 29)).getUTCMonth() !== 1) continue;
+      if (!push(y, base.m, base.d)) break;
+    }
+  }
+  return out;
 }

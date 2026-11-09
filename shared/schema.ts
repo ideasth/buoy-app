@@ -384,6 +384,9 @@ export interface SettingsBlob {
   // Optional secondary public ICS feed (e.g. AUPFHS Outlook publish URL).
   // Events are merged into the planner with a configurable summary prefix.
   aupfhs_ics_url?: string;
+  // Stage 28 — Daisy & Oliver shared iCloud calendar. Never committed;
+  // set via PATCH /api/settings. Title prefixes D:/O:/D&O: mark the owner.
+  shared_ics_url?: string;
   timezone: string;
   theme: "light" | "dark" | "system";
   habits_seeded: boolean;

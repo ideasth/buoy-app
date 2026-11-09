@@ -37,6 +37,8 @@ export function toPlanEvents(deps: OnTimeRouteDeps, events: any[]): PlanEvent[] 
   const home = deps.homeAddress();
   const out: PlanEvent[] = [];
   for (const ev of events) {
+    // Stage 28 — Daisy's and unprefixed shared events are information only.
+    if (ev?.infoOnly) continue;
     const startMs = Date.parse(ev.start);
     const endMs = Date.parse(ev.end ?? ev.start);
     if (!Number.isFinite(startMs)) continue;

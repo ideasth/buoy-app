@@ -12,6 +12,7 @@ import {
 } from "@shared/schema";
 import { upsertDailyCheckIn } from "./storage";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
+import { sharedFeedSpec, normaliseFeedUrl, busyOnly } from "./shared-calendar";
 import { listBuoyEvents as _listBuoyEventsForMerge } from "./buoy-events-storage";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
@@ -396,7 +397,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/settings", (_req, res) => {
     const s = storage.getSettings();
     // Never leak the calendar URL (contains a PAT) or the passphrase hash
-    const { calendar_ics_url, passphrase_hash, ...safe } = s;
+    const { calendar_ics_url, passphrase_hash, shared_ics_url, ...safe } = s;
     const masked = calendar_ics_url
       ? calendar_ics_url.replace(/\/\/.*@/, "//[secret]@")
       : "";
@@ -406,6 +407,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({
       ...safe,
       calendar_ics_url_masked: masked,
+      shared_ics_url_set: Boolean(shared_ics_url),
       defaultLandingRoute,
     });
   });
@@ -425,6 +427,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "briefing_time",
       "calendar_ics_url",
       "aupfhs_ics_url",
+      "shared_ics_url",
       "timezone",
       "theme",
       "home_address",
@@ -432,6 +435,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       "coach_telemetry_enabled",
     ];
     for (const f of fields) if (f in req.body) allowed[f] = req.body[f];
+    if ("shared_ics_url" in allowed) allowed.shared_ics_url = normaliseFeedUrl(allowed.shared_ics_url);
     const merged = storage.updateSettings(allowed);
 
     // Stage 18 — persist the validated landing route to the KV table.
@@ -439,7 +443,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       setSetting(KEY.DEFAULT_LANDING_ROUTE, req.body.defaultLandingRoute);
     }
 
-    const { calendar_ics_url, passphrase_hash, ...safe } = merged;
+    const { calendar_ics_url, passphrase_hash, shared_ics_url, ...safe } = merged;
     const masked = calendar_ics_url
       ? calendar_ics_url.replace(/\/\/.*@/, "//[secret]@")
       : "";
@@ -447,6 +451,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({
       ...safe,
       calendar_ics_url_masked: masked,
+      shared_ics_url_set: Boolean(shared_ics_url),
       defaultLandingRoute,
     });
   });
@@ -492,6 +497,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const feedEvents = await getCachedEventsForFeeds([
       { url: s.calendar_ics_url },
       { url: s.aupfhs_ics_url || "", summaryPrefix: "[Personal]", forceSource: "external" },
+      sharedFeedSpec(s.shared_ics_url),
     ], force);
     // Merge SQLite adhoc events so newly-added items appear immediately, before
     // the next full ICS rebuild lands them in the master feed.
@@ -2578,16 +2584,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     const s = storage.getSettings();
-    const allFeeds: Array<{ url: string }> = [];
+    const allFeeds: Parameters<typeof getCachedEventsForFeeds>[0] = [];
     if (s.calendar_ics_url) allFeeds.push({ url: s.calendar_ics_url });
     if (s.aupfhs_ics_url) allFeeds.push({ url: s.aupfhs_ics_url });
+    if (s.shared_ics_url) allFeeds.push(sharedFeedSpec(s.shared_ics_url));
 
     const now = Date.now();
     const fromUtc = new Date(now - 90 * 86400000).toISOString();
     const toUtc = new Date(now + 12 * 7 * 86400000).toISOString();
 
     let calEvents: import("./ics").CalEvent[] = [];
-    try { calEvents = await getCachedEventsForFeeds(allFeeds); } catch {}
+    try { calEvents = busyOnly(await getCachedEventsForFeeds(allFeeds)); } catch {}
 
     const { emitPrivateIcs } = await import("./public-calendar");
     const ics = emitPrivateIcs(calEvents);

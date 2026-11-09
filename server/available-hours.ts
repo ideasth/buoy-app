@@ -267,6 +267,7 @@ export function computeAvailableHoursToday(
     const evEnd = new Date(ev.end);
     if (!(evEnd > dayStart && evStart < dayEnd)) continue;
 
+    if (ev.infoOnly) continue; // Stage 28 — shared-calendar info-only
     const klass = classifyEvent(ev.summary);
     const clipStart = evStart < dayStart ? dayStart : evStart;
     const clipEnd = evEnd > dayEnd ? dayEnd : evEnd;
@@ -354,6 +355,7 @@ export function computeAvailableHoursThisWeek(
     const evEnd = new Date(ev.end);
     if (!(evEnd > weekStart && evStart < weekEnd)) continue;
 
+    if (ev.infoOnly) continue; // Stage 28 — shared-calendar info-only
     const klass = classifyEvent(ev.summary);
 
     // Clip to week.

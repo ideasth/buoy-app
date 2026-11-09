@@ -20,6 +20,7 @@ import {
 import { listPublicCalendarBlocks } from "./calendar-blocks-storage";
 import { getSetting, KEY } from "./app-settings";
 import { getCachedEventsForFeeds } from "./ics";
+import { sharedFeedSpec, busyOnly } from "./shared-calendar";
 import { storage } from "./storage";
 import path from "node:path";
 import fs from "node:fs";
@@ -95,16 +96,17 @@ async function servePublicIcs(_req: Request, res: Response): Promise<void> {
   }
 
   const s = storage.getSettings();
-  const allFeeds: Array<{ url: string }> = [];
+  const allFeeds: Parameters<typeof getCachedEventsForFeeds>[0] = [];
   if (s.calendar_ics_url) allFeeds.push({ url: s.calendar_ics_url });
   if (s.aupfhs_ics_url) allFeeds.push({ url: s.aupfhs_ics_url });
+  if (s.shared_ics_url) allFeeds.push(sharedFeedSpec(s.shared_ics_url));
 
   const now = Date.now();
   const horizonMs = 12 * 7 * 24 * 60 * 60 * 1000;
 
   let calEvents: import("./ics").CalEvent[] = [];
   try {
-    calEvents = await getCachedEventsForFeeds(allFeeds);
+    calEvents = busyOnly(await getCachedEventsForFeeds(allFeeds));
   } catch {}
 
   const blocks = listPublicCalendarBlocks();
