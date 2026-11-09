@@ -37,6 +37,10 @@ export interface OnTimeConfig {
   emailNudges: boolean;          // push act-today emails with a near deadline
   flagSyncEnabled: boolean;      // Stage 29: flag-only Outlook sync (default OFF)
   mailFilingEnabled: boolean;    // Stage 30: Buoy labels + file Done/Dismissed (default OFF)
+  staleNudgeEnabled: boolean;    // Stage 32: weekly push about old Act today / Reply this week items
+  staleNudgeDay: number;         // ISO weekday 1=Mon..7=Sun (Melbourne)
+  staleNudgeTime: string;        // HH:MM
+  staleNudgeDays: number;        // an item is "stale" after this many days
   ollamaUrl: string;
   ollamaModel: string;
   routine: RoutineCue[];
@@ -80,6 +84,10 @@ export const DEFAULT_CONFIG: OnTimeConfig = {
   emailNudges: true,
   flagSyncEnabled: false,
   mailFilingEnabled: false,
+  staleNudgeEnabled: true,
+  staleNudgeDay: 5,
+  staleNudgeTime: "12:00",
+  staleNudgeDays: 5,
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen2.5:7b",
   routine: DEFAULT_ROUTINE,
@@ -122,6 +130,10 @@ export function mergeConfig(cur: OnTimeConfig, patch: Record<string, unknown>): 
   if (typeof p.emailNudges === "boolean") out.emailNudges = p.emailNudges;
   if (typeof p.flagSyncEnabled === "boolean") out.flagSyncEnabled = p.flagSyncEnabled;
   if (typeof p.mailFilingEnabled === "boolean") out.mailFilingEnabled = p.mailFilingEnabled;
+  if (typeof p.staleNudgeEnabled === "boolean") out.staleNudgeEnabled = p.staleNudgeEnabled;
+  if ("staleNudgeDay" in p) out.staleNudgeDay = clampInt(p.staleNudgeDay, 1, 7, cur.staleNudgeDay);
+  if (isHHMM(p.staleNudgeTime)) out.staleNudgeTime = p.staleNudgeTime;
+  if ("staleNudgeDays" in p) out.staleNudgeDays = clampInt(p.staleNudgeDays, 2, 14, cur.staleNudgeDays);
   if (typeof p.ollamaUrl === "string") out.ollamaUrl = p.ollamaUrl.trim().replace(/\/+$/, "");
   if (typeof p.ollamaModel === "string") out.ollamaModel = p.ollamaModel.trim().slice(0, 80);
   if (Array.isArray(p.routine)) {

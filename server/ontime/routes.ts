@@ -5,6 +5,7 @@
 // which is authorised by its single-use random token (ntfy action buttons
 // on the phone/watch cannot carry a session cookie).
 
+import { renderStatusRss } from "./statusfeed";
 import fs from "node:fs";
 import path from "node:path";
 import type { Express, Request, Response } from "express";
@@ -129,6 +130,23 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     const cfg = store.updateConfig((req.body ?? {}) as Record<string, unknown>);
     void engine.refreshPlan();
     res.json({ config: cfg });
+  });
+
+  // Stage 32 — public status feed for the Power Automate uptime flow. No
+  // auth (exact path allowlisted in auth.ts) and no personal data.
+  const bootAt = Date.now();
+  app.get("/api/status.rss", (_req, res) => {
+    let dbOk = true;
+    try { store.queuedCount(); } catch { dbOk = false; }
+    let cfg: ReturnType<typeof store.getConfig> | null = null;
+    try { cfg = store.getConfig(); } catch { dbOk = false; }
+    const xml = renderStatusRss({
+      now: Date.now(), dbOk, engineRunning: engine.status.running, lastPlanAt: engine.status.lastPlanAt,
+      emailEnabled: cfg?.emailEnabled ?? false, emailPollMinutes: cfg?.emailPollMinutes ?? 10,
+      lastMailPollAt: engine.status.lastMailPollAt, lastMailError: engine.status.lastMailError, bootAt,
+    }, cfg?.publicBaseUrl || "https://buoy.thinhalo.com");
+    res.set("Cache-Control", "no-store");
+    res.type("application/rss+xml").send(xml);
   });
 
   app.get("/api/ontime/status", (req, res) => {

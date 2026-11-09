@@ -7,7 +7,7 @@ import type { OnTimeConfig } from "./config";
 import { addDaysKey, inQuietHours, melbDateKey, melbHHMM, melbToUtcMs, melbWeekday } from "./time";
 
 export type CueKind =
-  | "get_ready" | "wrap_up" | "leave_now" | "starts_soon" | "routine" | "digest" | "email";
+  | "get_ready" | "wrap_up" | "leave_now" | "starts_soon" | "routine" | "digest" | "email" | "stale";
 
 export interface PlanEvent {
   uid: string;
@@ -158,6 +158,14 @@ export function planDigestCue(dateKey: string, cfg: OnTimeConfig): PlannedCue | 
   };
 }
 
+/** Stage 32 — the weekly stale-items nudge (body composed at fire time). */
+export function planStaleCue(dateKey: string, cfg: OnTimeConfig): PlannedCue | null {
+  if (!cfg.staleNudgeEnabled) return null;
+  const fireAt = melbToUtcMs(dateKey, cfg.staleNudgeTime);
+  if (melbWeekday(fireAt) !== cfg.staleNudgeDay) return null;
+  return { key: `stale:${dateKey}`, kind: "stale", fireAt, title: "Getting old", body: "", priority: 3 };
+}
+
 /**
  * Plan all cues whose fireAt falls inside [fromMs, toMs). Covers every
  * Melbourne date that intersects the window.
@@ -176,6 +184,8 @@ export function planCues(
     cues.push(...planRoutineCues(day, events, cfg));
     const d = planDigestCue(day, cfg);
     if (d) cues.push(d);
+    const st = planStaleCue(day, cfg);
+    if (st) cues.push(st);
     if (day === lastDay) break;
     day = addDaysKey(day, 1);
   }

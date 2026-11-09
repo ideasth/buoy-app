@@ -389,6 +389,16 @@ export class OnTimeStore {
     ).all(olderThanMs) as TriageRow[];
   }
   /** Open (not done/dismissed) emails by category; optionally only those received since `sinceMs`. */
+  /** Stage 32 — open Act today / Reply this week items received before `olderThanMs`. */
+  staleTriageCounts(olderThanMs: number): { act_today: number; reply_week: number } {
+    const rows = this.db.prepare(
+      `SELECT category AS c, COUNT(*) AS n FROM email_triage
+       WHERE status = 'new' AND category IN ('act_today','reply_week') AND received_at < ? GROUP BY category`,
+    ).all(olderThanMs) as Array<{ c: string; n: number }>;
+    const out = { act_today: 0, reply_week: 0 };
+    for (const r of rows) (out as Record<string, number>)[r.c] = r.n;
+    return out;
+  }
   triageCounts(sinceMs?: number): Record<string, number> {
     const since = typeof sinceMs === "number" ? sinceMs : 0;
     const rows = this.db.prepare(

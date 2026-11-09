@@ -159,6 +159,8 @@ export class OnTimeEngine {
       actions.push({ action: "view", label: "Running late", url: runningLateSmsUrl(cfg, Math.max(5, lateBy)) });
     } else if (a.kind === "digest") {
       actions.push({ action: "view", label: "Open Buoy", url: `${cfg.publicBaseUrl}/#/on-time` });
+    } else if (a.kind === "stale") {
+      actions.push({ action: "view", label: "Open Email Status", url: `${cfg.publicBaseUrl}/#/email-status` });
     } else if (a.kind === "email") {
       actions.push({ action: "view", label: "Open Email Status", url: `${cfg.publicBaseUrl}/#/email-status` });
       actions.push(http("Seen", "ok"));
@@ -168,7 +170,7 @@ export class OnTimeEngine {
     }
     const tags: Record<string, string[]> = {
       get_ready: ["hourglass_flowing_sand"], wrap_up: ["warning"], leave_now: ["rotating_light"],
-      starts_soon: ["alarm_clock"], routine: ["seedling"], digest: ["sunrise"], email: ["envelope"],
+      starts_soon: ["alarm_clock"], routine: ["seedling"], digest: ["sunrise"], email: ["envelope"], stale: ["hourglass"],
     };
     return {
       title: escalation ? `Still here? ${a.title}` : a.title,
@@ -215,6 +217,33 @@ export class OnTimeEngine {
     return lines.join("\n");
   }
 
+  /**
+   * Stage 32 — weekly "getting old" nudge. Returns null when nothing is
+   * stale, so the cue is skipped rather than sending an empty push.
+   */
+  composeStale(cfg: OnTimeConfig, fireAt: number): string | null {
+    const days = cfg.staleNudgeDays;
+    const cutoff = fireAt - days * 86400_000;
+    const c = this.d.store.staleTriageCounts(cutoff);
+    const parts: string[] = [];
+    if (c.act_today) parts.push(`${c.act_today} Act today`);
+    if (c.reply_week) parts.push(`${c.reply_week} Reply this week`);
+    const lines: string[] = [];
+    if (parts.length) {
+      const n = c.act_today + c.reply_week;
+      lines.push(`${parts.join(" and ")} item${n === 1 ? " is" : "s are"} over ${days} days old.`);
+    }
+    if (this.d.getCaptureDigest) {
+      try {
+        const cap = this.d.getCaptureDigest({ checkOlderThanMs: cutoff, updatesSinceMs: fireAt });
+        if (cap.needsLook > 0) lines.push(`${cap.needsLook} capture${cap.needsLook === 1 ? " has" : "s have"} waited over ${days} days for a look.`);
+      } catch { /* email lines still send */ }
+    }
+    if (!lines.length) return null;
+    lines.push("Pick one: do it, reply, or dismiss it.");
+    return lines.join("\n");
+  }
+
   async fireDue(cfg: OnTimeConfig): Promise<void> {
     const now = this.now();
     for (const a of this.d.store.dueAlerts(now)) {
@@ -228,6 +257,11 @@ export class OnTimeEngine {
       let row = a;
       if (a.kind === "digest") {
         body = this.composeDigest(cfg, melbDateKey(a.fire_at));
+        row = { ...a, body };
+      } else if (a.kind === "stale") {
+        const s = this.composeStale(cfg, a.fire_at);
+        if (s == null) { this.d.store.markStatus(a.id, "skipped"); continue; }
+        body = s;
         row = { ...a, body };
       }
       const r = await this.d.send(cfg, this.buildMessage(cfg, row));
