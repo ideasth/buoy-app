@@ -396,7 +396,7 @@ export default function Morning() {
                   <div className="text-xs tabular-nums text-muted-foreground w-24 shrink-0">
                     {fmtTime(it.event.start)}–{fmtTime(it.event.end)}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-[11rem]">
                     <div className="text-sm font-medium truncate">{it.event.summary}</div>
                     {it.event.location && (
                       <div className="text-xs text-muted-foreground truncate">{it.event.location}</div>
@@ -659,7 +659,7 @@ export default function Morning() {
               No eligible tasks yet. Try a braindump above.
             </div>
           ) : (
-            <div className="grid gap-2">
+            <div className="grid grid-cols-1 gap-2">
               {[...braindumpTasks, ...eligibleTasks.filter((t) => !braindumpTasks.find((b) => b.id === t.id))].map((t) => {
                 const inTop = topThree.includes(t.id);
                 return (

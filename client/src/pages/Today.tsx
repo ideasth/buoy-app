@@ -362,7 +362,7 @@ export default function Today() {
                   <div className="text-xs tabular-nums text-muted-foreground w-24 shrink-0">
                     {fmtTime(e.start)}–{fmtTime(e.end)}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-[11rem]">
                     <div className="text-sm font-medium truncate">{e.summary}</div>
                     {e.location && (
                       <div className="text-xs text-muted-foreground truncate">{e.location}</div>

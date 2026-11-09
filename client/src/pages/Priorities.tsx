@@ -615,7 +615,7 @@ export default function Priorities() {
                         </Button>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium leading-snug">{t.title}</div>
+                        <div className="font-medium leading-snug [overflow-wrap:anywhere]">{t.title}</div>
                         <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap items-center gap-2">
                           <span>
                             {domainLabel(t.domain)} · est {fmtDuration(t.estimateMinutes)}
@@ -824,7 +824,7 @@ export default function Priorities() {
                 <div className="flex-1 min-w-0">
                   <div
                     className={cn(
-                      "text-sm font-medium leading-snug",
+                      "text-sm font-medium leading-snug [overflow-wrap:anywhere]",
                       isDone && "line-through",
                     )}
                   >

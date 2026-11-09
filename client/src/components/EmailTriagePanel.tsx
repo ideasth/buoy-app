@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Check, ExternalLink, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
+import { groupByThread } from "@/lib/emailThreads";
 
 type Item = {
   id: number; source: "graph" | "upload"; received_at: number; sender: string; sender_name: string;
@@ -169,6 +170,47 @@ export function EmailTriagePanel() {
     }
   };
 
+  const renderRow = (i: Item, inThread: boolean) => (
+          <div key={i.id} className={inThread ? "py-2 pl-3 border-l-2 border-border space-y-1" : "p-3 space-y-1"} data-testid={`triage-row-${i.id}`}>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{fmt(i.received_at)}</span>
+              <span className="font-medium text-foreground">{i.sender_name || i.sender}</span>
+              {i.is_priority ? <Badge variant="outline" className="text-[10px] py-0 h-4">priority</Badge> : null}
+              {i.source === "upload" ? <Badge variant="outline" className="text-[10px] py-0 h-4">uploaded</Badge> : null}
+              {i.deadline_date ? <Badge className="text-[10px] py-0 h-4">due {i.deadline_date}</Badge> : null}
+              {i.task_id ? <Badge variant="outline" className="text-[10px] py-0 h-4">task added</Badge> : null}
+            </div>
+            {inThread ? null : <div className="text-sm font-medium [overflow-wrap:anywhere]">{i.subject || "(no subject)"}</div>}
+            {i.summary ? <div className="text-sm">{i.summary}</div> : null}
+            <div className="flex flex-wrap items-center gap-1 pt-1">
+              {tab === CLOSED_TAB ? (
+                <>
+                  <Badge variant="outline" className="text-[10px] py-0 h-5">{i.status === "done" ? "done" : "dismissed"}</Badge>
+                  <Button size="sm" variant="outline" onClick={() => reopen(i)} data-testid={`button-reopen-${i.id}`}>
+                    <RotateCcw className="h-3 w-3 mr-1" /> Reopen
+                  </Button>
+                </>
+              ) : (<>
+              <Button size="sm" variant="outline" onClick={() => patch(i.id, { status: "done" })}><Check className="h-3 w-3 mr-1" /> Done</Button>
+              <Button size="sm" variant="ghost" onClick={() => patch(i.id, { status: "dismissed" })}><X className="h-3 w-3 mr-1" /> Dismiss</Button>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                value={i.category ?? ""}
+                onChange={(e) => patch(i.id, { category: e.target.value })}
+                aria-label="Move to"
+              >
+                {TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+              </>)}
+              {i.web_link ? (
+                <a href={i.web_link} target="_blank" rel="noreferrer" className="text-xs inline-flex items-center gap-1 ml-2 underline">
+                  Open in Outlook <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+  );
+
   return (
     <section className="space-y-4" data-testid="email-triage-panel">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -219,44 +261,13 @@ export function EmailTriagePanel() {
       <div className="rounded-lg border border-border bg-card divide-y divide-border">
         {items.length === 0 ? (
           <div className="p-6 text-sm text-muted-foreground text-center">Nothing here.</div>
-        ) : items.map((i) => (
-          <div key={i.id} className="p-3 space-y-1" data-testid={`triage-row-${i.id}`}>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>{fmt(i.received_at)}</span>
-              <span className="font-medium text-foreground">{i.sender_name || i.sender}</span>
-              {i.is_priority ? <Badge variant="outline" className="text-[10px] py-0 h-4">priority</Badge> : null}
-              {i.source === "upload" ? <Badge variant="outline" className="text-[10px] py-0 h-4">uploaded</Badge> : null}
-              {i.deadline_date ? <Badge className="text-[10px] py-0 h-4">due {i.deadline_date}</Badge> : null}
-              {i.task_id ? <Badge variant="outline" className="text-[10px] py-0 h-4">task added</Badge> : null}
+        ) : groupByThread(items).map((g) => g.items.length === 1 ? renderRow(g.items[0], false) : (
+          <div key={`thread-${g.key}`} className="p-3 space-y-2" data-testid="triage-thread">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-sm font-medium [overflow-wrap:anywhere]">{g.items[0].subject || "(no subject)"}</div>
+              <div className="text-xs text-muted-foreground">{g.items.length} emails · latest {fmt(g.latest)}</div>
             </div>
-            <div className="text-sm font-medium">{i.subject || "(no subject)"}</div>
-            {i.summary ? <div className="text-sm">{i.summary}</div> : null}
-            <div className="flex flex-wrap items-center gap-1 pt-1">
-              {tab === CLOSED_TAB ? (
-                <>
-                  <Badge variant="outline" className="text-[10px] py-0 h-5">{i.status === "done" ? "done" : "dismissed"}</Badge>
-                  <Button size="sm" variant="outline" onClick={() => reopen(i)} data-testid={`button-reopen-${i.id}`}>
-                    <RotateCcw className="h-3 w-3 mr-1" /> Reopen
-                  </Button>
-                </>
-              ) : (<>
-              <Button size="sm" variant="outline" onClick={() => patch(i.id, { status: "done" })}><Check className="h-3 w-3 mr-1" /> Done</Button>
-              <Button size="sm" variant="ghost" onClick={() => patch(i.id, { status: "dismissed" })}><X className="h-3 w-3 mr-1" /> Dismiss</Button>
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                value={i.category ?? ""}
-                onChange={(e) => patch(i.id, { category: e.target.value })}
-                aria-label="Move to"
-              >
-                {TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </select>
-              </>)}
-              {i.web_link ? (
-                <a href={i.web_link} target="_blank" rel="noreferrer" className="text-xs inline-flex items-center gap-1 ml-2 underline">
-                  Open in Outlook <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : null}
-            </div>
+            {g.items.map((i) => renderRow(i, true))}
           </div>
         ))}
       </div>

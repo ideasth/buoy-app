@@ -356,6 +356,23 @@ export class OnTimeStore {
       `UPDATE email_triage SET flag_state = COALESCE(?, flag_state), flag_error = ?, flag_synced_at = ? WHERE id = ?`,
     ).run(state, error, this.clock(), id);
   }
+  /** Stage 34 — uploaded rows (eml:/msg:) with no Outlook link yet. */
+  uploadRowsMissingLink(): Array<{ id: number; external_id: string; status: string; task_id: number | null }> {
+    return this.db.prepare(
+      `SELECT id, external_id, status, task_id FROM email_triage
+       WHERE source = 'upload' AND (web_link IS NULL OR web_link = '') AND (external_id LIKE 'eml:%' OR external_id LIKE 'msg:%')`,
+    ).all() as any[];
+  }
+  hasTriage(source: "graph" | "upload", externalId: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM email_triage WHERE source = ? AND external_id = ?`).get(source, externalId);
+  }
+  setTriageWebLink(id: number, webLink: string): void {
+    this.db.prepare(`UPDATE email_triage SET web_link = ?, updated_at = ? WHERE id = ?`).run(webLink, this.clock(), id);
+  }
+  /** Stage 34 — remove an uploaded copy whose Outlook original is already a graph row. */
+  deleteUploadTriage(id: number): boolean {
+    return this.db.prepare(`DELETE FROM email_triage WHERE id = ? AND source = 'upload'`).run(id).changes > 0;
+  }
   /** Stage 30 — record one mail-sync step. flag_error holds the latest sync error. */
   setMailSyncResult(id: number, r: {
     externalId?: string; webLink?: string | null; flagState?: string; buoyLabel?: string | null;

@@ -277,7 +277,7 @@ export default function Relationships() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4">
+        <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
             <CardTitle>Relationships</CardTitle>
             <CardDescription>

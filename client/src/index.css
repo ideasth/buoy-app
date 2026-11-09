@@ -284,3 +284,11 @@
     inset: -1px;
   }
 }
+
+/* 2026-11-10 — never let one long line widen the whole page on phones
+   (iOS zooms the layout out to fit the widest element). Scroll containers
+   such as the nav bar and tables keep their own horizontal scrolling. */
+html, body, #root {
+  max-width: 100%;
+  overflow-x: clip;
+}

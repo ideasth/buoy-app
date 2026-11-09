@@ -231,3 +231,20 @@ export async function moveMessage(
   if (!j?.id) throw new Error("graph move: no id returned");
   return { id: String(j.id), webLink: j.webLink ?? null };
 }
+
+// ---------------------------------------------------------------- Stage 34
+/**
+ * Read-only lookup of one message in the same mailbox by its RFC 822
+ * Message-ID (e.g. "<abc@host>"). Used to give uploaded .eml/.msg rows an
+ * Outlook link. Returns null when the message isn't in this mailbox.
+ */
+export async function findMessageByInternetId(
+  c: GraphCreds, internetMessageId: string,
+): Promise<{ id: string; webLink: string | null } | null> {
+  const q = internetMessageId.replace(/'/g, "''");
+  const filter = encodeURIComponent(`internetMessageId eq '${q}'`);
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(c.mailbox)}/messages?$filter=${filter}&$select=id,webLink&$top=1`;
+  const j = await graphFetch(c, url, { method: "GET" }, "message lookup");
+  const m = j?.value?.[0];
+  return m?.id ? { id: String(m.id), webLink: m.webLink ?? null } : null;
+}

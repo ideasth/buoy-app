@@ -794,12 +794,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/travel/today", async (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const events = await getMergedPlannerEvents();
+    // Info-only events (Elgin House appointments, others' shared items) get
+    // no travel badge or leave-by — the Elgin AM/PM block carries that.
     const todayEvents = eventsForDate(events, new Date());
     const locations = storage.listTravelLocations();
     const homeAddress = storage.getSettings().home_address ?? null;
     const items = todayEvents.map((event) => {
       const override = storage.getTravelOverride(event.uid) ?? null;
-      const match = resolveTravel({ event, locations, override, homeAddress });
+      const match = (event as any).infoOnly
+        ? { matchedLocation: null, matchedKeyword: null, nominalMinutes: null, allowMinutes: null, outboundMapsUrl: null, returnMapsUrl: null, override: null }
+        : resolveTravel({ event, locations, override, homeAddress });
       return {
         event: { uid: event.uid, summary: event.summary, start: event.start, end: event.end, location: event.location, allDay: event.allDay },
         ...match,

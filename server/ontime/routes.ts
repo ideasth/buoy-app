@@ -14,7 +14,8 @@ import { OnTimeStore } from "./store";
 import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
-import { readGraphCreds, setMessageFlag, getMessageCategories, patchMessage, moveMessage } from "./graph";
+import { readGraphCreds, setMessageFlag, getMessageCategories, patchMessage, moveMessage, findMessageByInternetId } from "./graph";
+import { linkUploadedEmails } from "./upload-links";
 import { planMailSync, planPruneCleanup, runMailSync, isEmptyPlan, PerRowQueue, type MailOps } from "./mailsync";
 import { applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
@@ -272,6 +273,30 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     res.status(r.ok ? 200 : 502).json({ ...r, flag_state: after?.flag_state ?? null, flag_error: after?.flag_error ?? null });
   });
 
+  // Stage 34 — link uploaded emails to Outlook (read-only lookup) and drop
+  // uploaded duplicates of emails Buoy already read from Outlook.
+  const runUploadLinks = async () => {
+    const c = readGraphCreds();
+    if (!c) return null;
+    return linkUploadedEmails({
+      rows: () => store.uploadRowsMissingLink(),
+      hasGraphRow: (gid) => store.hasTriage("graph", gid),
+      setWebLink: (id, w) => store.setTriageWebLink(id, w),
+      deleteRow: (id) => store.deleteUploadTriage(id),
+      lookup: (mid) => findMessageByInternetId(c, mid),
+    });
+  };
+  app.post("/api/ontime/triage/link-uploads", async (req, res) => {
+    if (!deps.guard(req, res)) return;
+    try {
+      const r = await runUploadLinks();
+      if (!r) return res.status(409).json({ error: "graph not configured" });
+      res.json(r);
+    } catch (e) {
+      res.status(502).json({ error: (e as Error).message });
+    }
+  });
+
   // Manual upload (.eml / .msg as base64, or pasted text) — e.g. Safer Care Victoria.
   app.post("/api/ontime/email-upload", async (req, res) => {
     if (!deps.guard(req, res)) return;
@@ -283,6 +308,7 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
         senderName: p.senderName, subject: p.subject, snippet: p.body.slice(0, 400), webLink: null, bodyForLlm: p.body,
       });
       void engine.drainTriage();
+      void runUploadLinks().catch(() => undefined);
       res.json({ id: r.id, duplicate: !r.inserted, subject: p.subject, sender: p.sender });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -309,6 +335,7 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
           if (r.inserted) inserted++; else duplicates++;
         }
         void engine.drainTriage();
+        void runUploadLinks().catch(() => undefined);
         res.json({
           emails: z.emailEntries, added: inserted, duplicates, skippedOld: z.skippedOld,
           skippedLarge: z.skippedLarge, failed: z.failed, queued: store.queuedCount(),

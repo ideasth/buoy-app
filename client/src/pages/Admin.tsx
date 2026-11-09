@@ -85,7 +85,7 @@ export default function Admin() {
       </div>
 
       <Tabs value={tab} onValueChange={change}>
-        <TabsList>
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="health" data-testid="tab-health">
             Health
           </TabsTrigger>
