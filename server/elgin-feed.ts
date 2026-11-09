@@ -91,3 +91,79 @@ export function checkElginToken(kv: SettingsKv, provided: unknown): boolean {
   const b = Buffer.from(want);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+// ---- Stage 33b — fit the Elgin AM/PM blocks to the day's appointments ----
+//
+// The master feed carries fixed "Elgin House … (AM)" 08:00–12:00 and
+// "(PM)" 13:00–17:00 blocks. When the Xestro feed has appointments for that
+// Melbourne date, each block is reshaped to span its own appointments
+// (first start → last end), so leave-by cues follow the real first patient.
+// Split: appointments starting before the AM block's original end belong to
+// AM, the rest to PM (single-block days take all of that day's appointments).
+// A block with no appointments of its own keeps its template times.
+// No patient detail is copied onto the block.
+
+const BLOCK_RE = /^Elgin House\b.*\((AM|PM)\)\s*$/i;
+
+function melbDay(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso));
+}
+
+function melbHM(ms: number): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Australia/Melbourne", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(new Date(ms));
+}
+
+export function isElginBlock(e: CalEvent): boolean {
+  const s = (e.summary || "").trim();
+  return !e.allDay && !s.startsWith(ELGIN_SUMMARY_PREFIX) && BLOCK_RE.test(s);
+}
+
+export function fitElginBlocks(events: CalEvent[], appointments: CalEvent[]): CalEvent[] {
+  const apptsByDay = new Map<string, CalEvent[]>();
+  for (const a of appointments) {
+    if (a.allDay || !a.start || !a.end) continue;
+    const k = melbDay(a.start);
+    (apptsByDay.get(k) ?? apptsByDay.set(k, []).get(k)!).push(a);
+  }
+  if (!apptsByDay.size) return events;
+
+  const blocksByDay = new Map<string, { am?: number; pm?: number }>();
+  events.forEach((e, i) => {
+    if (!isElginBlock(e)) return;
+    const k = melbDay(e.start);
+    if (!apptsByDay.has(k)) return;
+    const half = BLOCK_RE.exec(e.summary.trim())![1].toUpperCase() === "AM" ? "am" : "pm";
+    const slot = blocksByDay.get(k) ?? {};
+    if (slot[half] === undefined) slot[half] = i;
+    blocksByDay.set(k, slot);
+  });
+
+  const out = events.slice();
+  for (const [day, { am, pm }] of blocksByDay) {
+    const appts = apptsByDay.get(day)!;
+    const split = am !== undefined ? Date.parse(events[am].end) : Number.POSITIVE_INFINITY;
+    const groups: Array<[number | undefined, CalEvent[]]> = [
+      [am, am !== undefined && pm !== undefined ? appts.filter((a) => Date.parse(a.start) < split) : am !== undefined ? appts : []],
+      [pm, am !== undefined && pm !== undefined ? appts.filter((a) => Date.parse(a.start) >= split) : pm !== undefined ? appts : []],
+    ];
+    for (const [idx, group] of groups) {
+      if (idx === undefined || !group.length) continue;
+      const b = events[idx];
+      const s = Math.min(...group.map((a) => Date.parse(a.start)));
+      const en = Math.max(...group.map((a) => Date.parse(a.end)));
+      const was = `${melbHM(Date.parse(b.start))}–${melbHM(Date.parse(b.end))}`;
+      const note = `Times set from ${group.length} Elgin House appointment${group.length === 1 ? "" : "s"} (template ${was}).`;
+      out[idx] = {
+        ...b,
+        start: new Date(s).toISOString(),
+        end: new Date(en).toISOString(),
+        description: b.description ? `${note}\n${b.description}` : note,
+      };
+    }
+  }
+  return out;
+}
