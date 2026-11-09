@@ -18,7 +18,7 @@ import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./ava
 import { resolveTravel } from "./travel";
 import { registerOnTimeRoutes } from "./ontime/routes";
 import { ProjectEventStore, PROJECT_EVENT_KINDS } from "./project-events";
-import { validateCapture, saveCapture, shouldClearCheck, type CaptureDeps } from "./capture";
+import { validateCapture, saveCapture, shouldClearCheck, stripProjectCheck, fileTaskToProject, type CaptureDeps } from "./capture";
 import { CaptureTokenStore, shareCaptureHandler } from "./capture-tokens";
 import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
@@ -569,6 +569,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(400).json({ error: "invalid_kind" });
     }
     res.json({ ok: true });
+  });
+
+  // Stage 31 — "File to project" from Needs a look: general task -> project task.
+  app.post("/api/capture/item/task/:id/file-to-project", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid_id" });
+    const r = fileTaskToProject({
+      getTask: (tid) => storage.getTask(tid) as any,
+      getProject: (pid) => storage.getProject(pid) as any,
+      createProjectTask: (t) => storage.createProjectTask(t as any),
+      deleteTask: (tid) => storage.deleteTask(tid),
+      recordEvent: (pid, summary, detail) => projectEvents.record(pid, "capture", summary, detail),
+    }, id, (req.body ?? {}).projectId);
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    res.json(r);
   });
 
   // ---- Stage 26c: Share to Buoy (per-device capture token) ----
@@ -1926,6 +1942,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const updates: any = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
     const beforeTask = projectEvents.getProjectTask(id);
+    // Stage 31 — engaging with a project capture clears its "[check]" marker.
+    const checkRow = rawSqlite
+      .prepare(`SELECT title, notes, deadline, component_id AS componentId, completed FROM project_tasks WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    const cleared = stripProjectCheck(checkRow, updates);
+    if (cleared !== undefined) updates.notes = cleared;
     storage.updateProjectTask(id, updates);
     const afterTask = projectEvents.getProjectTask(id);
     if (beforeTask && afterTask && !beforeTask.completed && afterTask.completed) {

@@ -4,6 +4,7 @@ import { fmtDuration } from "@/lib/anchor";
 import { AvailableHoursCard } from "@/components/AvailableHoursCard";
 import { WeeklyFactorsStrip } from "@/components/WeeklyFactorsStrip";
 import { IssuesThisWeek } from "@/components/IssuesThisWeek";
+import { WeekUpdatesCard } from "@/components/WeekUpdatesCard";
 
 interface WeeklyReview {
   from: string;
@@ -82,6 +83,11 @@ export default function Review() {
           </div>
         </section>
       )}
+
+      <section>
+        <h2 className="text-sm font-medium mb-3">Projects</h2>
+        <WeekUpdatesCard />
+      </section>
 
       <section>
         <h2 className="text-sm font-medium mb-3">Available project time</h2>

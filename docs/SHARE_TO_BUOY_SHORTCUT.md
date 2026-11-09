@@ -24,6 +24,12 @@ kept on the server. One token per device.
    - Request Body: JSON, key `text` = Shortcut Input (or Provided Input)
 5. **Show Notification**: "Sent to Buoy".
 
+Page titles (Stage 31): if only a link arrives, Buoy fetches the page title
+itself, so the task reads as the page name and the link goes into the notes.
+To send the title from the phone instead (useful for pages behind a login),
+add **Get Details of Safari Web Page → Name** before step 4 and add the JSON
+key `title` = Name.
+
 Optional JSON keys: `url`, `title`, `dueDate` (YYYY-MM-DD), `domain`
 (family | work | medicolegal | personal | health). Shared captures never file
 straight into a project; sort them from "Needs a look".

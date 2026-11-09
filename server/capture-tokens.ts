@@ -10,7 +10,8 @@
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
-import { validateCapture, saveCapture, type CaptureDeps } from "./capture";
+import { validateCapture, saveCapture, type CaptureDeps, type CaptureInput } from "./capture";
+import { fetchThreadTitle } from "./thread-title";
 
 export const TOKEN_PREFIX = "bcap_";
 export const RATE_LIMIT_PER_MIN = 30;
@@ -116,8 +117,42 @@ CREATE TABLE IF NOT EXISTS capture_tokens (
 }
 
 /** POST /api/capture handler. The token is checked only here. */
-export function shareCaptureHandler(tokens: CaptureTokenStore, deps: CaptureDeps) {
-  return (req: Request, res: Response) => {
+/** Stage 31 — literal private / loopback hosts are never fetched for a title. */
+export function isPrivateHost(url: string): boolean {
+  let h = "";
+  try { h = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, ""); } catch { return true; }
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  if (h.includes(":")) return h === "::1" || /^(fc|fd|fe8|fe9|fea|feb)/.test(h) || h.startsWith("::ffff:");
+  const m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+
+/**
+ * Stage 31 — Share to Buoy sends the page title. The Shortcut usually sends
+ * only the link (as `text` or `url`). When no title came with it, fetch the
+ * page title (best effort, 8 s timeout) so the task reads as the page name
+ * rather than a bare URL. The link always stays in the notes.
+ */
+export async function withSharedTitle(
+  v: CaptureInput, fetcher: (url: string) => Promise<string | null>,
+): Promise<CaptureInput> {
+  if (v.title) return v;
+  const textIsUrl = /^https?:\/\/\S+$/i.test(v.text);
+  const url = v.url ?? (textIsUrl ? v.text : null);
+  if (!url) return v;
+  const next: CaptureInput = { ...v, url, text: textIsUrl ? "" : v.text };
+  if (isPrivateHost(url)) return next;
+  const title = await fetcher(url).catch(() => null);
+  return title ? { ...next, title } : next;
+}
+
+export function shareCaptureHandler(
+  tokens: CaptureTokenStore, deps: CaptureDeps,
+  fetcher: (url: string) => Promise<string | null> = fetchThreadTitle,
+) {
+  return async (req: Request, res: Response) => {
     const tokenId = tokens.verify(readBearer(req.header("authorization")));
     if (tokenId == null) return res.status(401).json({ error: "invalid_token" });
     if (!tokens.allow(tokenId)) return res.status(429).json({ error: "rate_limited" });
@@ -125,7 +160,7 @@ export function shareCaptureHandler(tokens: CaptureTokenStore, deps: CaptureDeps
     delete body.projectId; // share captures always land as "check" tasks
     const v = validateCapture(body);
     if (!v.ok) return res.status(v.status).json({ error: v.error });
-    const r = saveCapture(deps, v.value);
+    const r = saveCapture(deps, await withSharedTitle(v.value, fetcher));
     if (!r.ok) return res.status(r.status).json({ error: r.error });
     tokens.markUsed(tokenId);
     res.json({ ok: true, id: r.id, title: r.title });

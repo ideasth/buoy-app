@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Task, TopThree } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { FileToProjectCard } from "@/components/FileToProjectCard";
 import {
   domainLabel,
   todayDateStr,
@@ -241,6 +242,9 @@ function TaskDetailsDrawer({
           <SheetDescription>Update any field. Saves immediately.</SheetDescription>
         </SheetHeader>
         <div className="mt-6 space-y-4">
+          {(task.tag ?? "").toLowerCase() === "check" && (task.status === "todo" || task.status === "doing") && (
+            <FileToProjectCard taskId={task.id} onFiled={onClose} />
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="task-title">Title</Label>
             <Input

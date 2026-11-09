@@ -11,12 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Check, ExternalLink, RefreshCw, Upload, X } from "lucide-react";
+import { Check, ExternalLink, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
 
 type Item = {
   id: number; source: "graph" | "upload"; received_at: number; sender: string; sender_name: string;
   subject: string; snippet: string; web_link: string | null; category: string | null; summary: string | null;
   deadline_text: string | null; deadline_date: string | null; is_priority: number; status: string; task_id: number | null;
+  filed_folder?: string | null;
 };
 
 const TABS: Array<{ key: string; label: string }> = [
@@ -25,6 +26,8 @@ const TABS: Array<{ key: string; label: string }> = [
   { key: "waiting", label: "Waiting" },
   { key: "fyi", label: "FYI" },
 ];
+// Stage 31 — closed items (done / dismissed, kept for 30 days) with Reopen.
+const CLOSED_TAB = "closed";
 
 const fmt = (ms: number) =>
   new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Melbourne", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
@@ -50,13 +53,31 @@ export function EmailTriagePanel() {
     queryFn: async () => (await apiRequest("GET", "/api/ontime/triage")).json(),
     refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 10_000 : 60_000),
   });
-  const items = (q.data?.items ?? []).filter((i) => i.category === tab);
+  const closedQ = useQuery<{ items: Item[] }>({
+    queryKey: ["/api/ontime/triage", "closed"],
+    queryFn: async () => (await apiRequest("GET", "/api/ontime/triage?all=1")).json(),
+    enabled: tab === CLOSED_TAB,
+  });
+  const closedItems = (closedQ.data?.items ?? []).filter((i) => i.status === "done" || i.status === "dismissed");
+  const items = tab === CLOSED_TAB ? closedItems : (q.data?.items ?? []).filter((i) => i.category === tab);
   const counts = q.data?.counts ?? {};
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/ontime/triage"] });
 
   const patch = async (id: number, body: Record<string, string>) => {
     await apiRequest("PATCH", `/api/ontime/triage/${id}`, body);
     refresh();
+  };
+
+  // Reopen: back to the open list; if Buoy filed it, Outlook moves it back to Inbox.
+  const reopen = async (i: Item) => {
+    try {
+      await apiRequest("PATCH", `/api/ontime/triage/${i.id}`, { status: "new" });
+      toast({ title: "Reopened", description: i.filed_folder ? "Moving it back to your Inbox." : (i.subject || undefined) });
+    } catch (e) {
+      toast({ title: "Reopen failed", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      refresh();
+    }
   };
 
   const upload = async (body: Record<string, string>) => {
@@ -182,6 +203,17 @@ export function EmailTriagePanel() {
             {t.label} <span className="opacity-70">{counts[t.key] ?? 0}</span>
           </button>
         ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === CLOSED_TAB}
+          onClick={() => setTab(CLOSED_TAB)}
+          className={`px-3 py-1.5 rounded-md text-sm border ${tab === CLOSED_TAB ? "bg-primary text-primary-foreground border-primary" : "border-border"}`}
+          data-testid="tab-closed"
+          title="Done and dismissed in the last 30 days"
+        >
+          Done
+        </button>
       </div>
 
       <div className="rounded-lg border border-border bg-card divide-y divide-border">
@@ -200,6 +232,14 @@ export function EmailTriagePanel() {
             <div className="text-sm font-medium">{i.subject || "(no subject)"}</div>
             {i.summary ? <div className="text-sm">{i.summary}</div> : null}
             <div className="flex flex-wrap items-center gap-1 pt-1">
+              {tab === CLOSED_TAB ? (
+                <>
+                  <Badge variant="outline" className="text-[10px] py-0 h-5">{i.status === "done" ? "done" : "dismissed"}</Badge>
+                  <Button size="sm" variant="outline" onClick={() => reopen(i)} data-testid={`button-reopen-${i.id}`}>
+                    <RotateCcw className="h-3 w-3 mr-1" /> Reopen
+                  </Button>
+                </>
+              ) : (<>
               <Button size="sm" variant="outline" onClick={() => patch(i.id, { status: "done" })}><Check className="h-3 w-3 mr-1" /> Done</Button>
               <Button size="sm" variant="ghost" onClick={() => patch(i.id, { status: "dismissed" })}><X className="h-3 w-3 mr-1" /> Dismiss</Button>
               <select
@@ -210,6 +250,7 @@ export function EmailTriagePanel() {
               >
                 {TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </select>
+              </>)}
               {i.web_link ? (
                 <a href={i.web_link} target="_blank" rel="noreferrer" className="text-xs inline-flex items-center gap-1 ml-2 underline">
                   Open in Outlook <ExternalLink className="h-3 w-3" />

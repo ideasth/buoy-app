@@ -11,6 +11,7 @@ import { todayDateStr } from "@/lib/anchor";
 import { useToast } from "@/hooks/use-toast";
 import { IssueQuickAdd } from "@/components/IssueQuickAdd";
 import { IssueList } from "@/components/IssueList";
+import { WeekUpdatesCard } from "@/components/WeekUpdatesCard";
 import {
   AROUSAL_STATE_OPTIONS,
   MOOD_OPTIONS,
@@ -456,6 +457,7 @@ export default function Evening() {
             {isSunday() ? "It's Sunday — perfect time." : "Anytime, but Sundays are best."}
           </h2>
         </header>
+        <WeekUpdatesCard />
         {(
           [
             ["Wins", wins, setWins, "What's worth keeping?"],

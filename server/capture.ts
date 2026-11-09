@@ -127,3 +127,59 @@ export function shouldClearCheck(cur: Record<string, unknown> | undefined, patch
   if (changed("priority") && patch.priority !== "iftime") return true;
   return false;
 }
+
+/**
+ * Stage 31 — the project-capture equivalent of shouldClearCheck. A project
+ * capture's notes start with "[check]". When Oliver engages with it (edits
+ * the title, notes or deadline, assigns it to a component, or ticks it
+ * done) the marker is stripped. Returns the new notes value to write, or
+ * undefined to leave notes alone.
+ */
+export function stripProjectCheck(cur: Record<string, unknown> | undefined, updates: Record<string, unknown>): string | undefined {
+  if (!cur) return undefined;
+  const base = "notes" in updates ? updates.notes : cur.notes;
+  if (typeof base !== "string" || !base.startsWith(CHECK_NOTE_PREFIX)) return undefined;
+  const changed = (k: string) => k in updates && (updates[k] ?? null) !== (cur[k] ?? null);
+  const engaged = ["title", "notes", "deadline", "componentId"].some(changed)
+    || (changed("completed") && Boolean(updates.completed));
+  if (!engaged) return undefined;
+  return base.slice(CHECK_NOTE_PREFIX.length).replace(/^\s+/, "");
+}
+
+/** Stage 31 — turn a "Needs a look" general task into a project task. */
+export interface FileToProjectDeps {
+  getTask: (id: number) => Record<string, any> | undefined;
+  getProject: (id: number) => { id: number; name: string } | undefined;
+  createProjectTask: (t: Record<string, unknown>) => { id: number };
+  deleteTask: (id: number) => void;
+  recordEvent: (projectId: number, summary: string, detail: Record<string, unknown>) => void;
+  now?: () => number;
+}
+
+export type FileToProjectResult =
+  | { ok: true; projectTaskId: number; projectId: number; projectName: string; title: string }
+  | { ok: false; status: number; error: string };
+
+const melbDate = (ms: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+
+export function fileTaskToProject(deps: FileToProjectDeps, taskId: number, projectId: unknown): FileToProjectResult {
+  const pid = Number(projectId);
+  if (!Number.isInteger(pid) || pid <= 0) return { ok: false, status: 400, error: "invalid_project" };
+  const task = deps.getTask(taskId);
+  if (!task) return { ok: false, status: 404, error: "task_not_found" };
+  if (task.status === "done" || task.status === "dropped") return { ok: false, status: 409, error: "task_closed" };
+  const p = deps.getProject(pid);
+  if (!p) return { ok: false, status: 404, error: "project_not_found" };
+  const now = (deps.now ?? Date.now)();
+  const title = String(task.title ?? "(capture)").slice(0, 200);
+  // Filing it is the "look", so no [check] marker on the project task.
+  const row = deps.createProjectTask({
+    projectId: p.id, componentId: null, title, notes: String(task.notes ?? ""),
+    deadline: typeof task.dueAt === "number" ? melbDate(task.dueAt) : null,
+    msTodoTaskId: null, completed: 0, orderIndex: 0, createdAt: now, updatedAt: now,
+  });
+  deps.recordEvent(p.id, `Filed from Needs a look: ${title.slice(0, 140)}`, { projectTaskId: row.id, fromTaskId: taskId });
+  deps.deleteTask(taskId);
+  return { ok: true, projectTaskId: row.id, projectId: p.id, projectName: p.name, title };
+}
