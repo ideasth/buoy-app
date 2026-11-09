@@ -26,8 +26,9 @@ import { RefreshCw } from "lucide-react";
 import Usage from "@/pages/Usage";
 import SettingsPage from "@/pages/Settings";
 import Relationships from "@/pages/Relationships";
+import { ShareDevicesCard } from "@/components/ShareDevicesCard";
 
-type AdminTab = "health" | "usage" | "relationships" | "settings";
+type AdminTab = "health" | "usage" | "relationships" | "settings" | "devices";
 
 function readTabFromHash(): AdminTab {
   if (typeof window === "undefined") return "health";
@@ -40,6 +41,7 @@ function readTabFromHash(): AdminTab {
     t === "usage" ||
     t === "settings" ||
     t === "relationships" ||
+    t === "devices" ||
     t === "health"
   )
     return t;
@@ -96,6 +98,9 @@ export default function Admin() {
           <TabsTrigger value="settings" data-testid="tab-settings">
             Settings
           </TabsTrigger>
+          <TabsTrigger value="devices" data-testid="tab-devices">
+            Share devices
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="health" className="mt-4">
@@ -115,6 +120,11 @@ export default function Admin() {
         <TabsContent value="settings" className="mt-4">
           {/* Re-uses the standalone Settings page component verbatim. */}
           <SettingsPage />
+        </TabsContent>
+
+        <TabsContent value="devices" className="mt-4">
+          {/* Stage 26c — Share to Buoy tokens. */}
+          <ShareDevicesCard />
         </TabsContent>
       </Tabs>
     </div>

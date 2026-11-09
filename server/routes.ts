@@ -18,6 +18,7 @@ import { resolveTravel } from "./travel";
 import { registerOnTimeRoutes } from "./ontime/routes";
 import { ProjectEventStore, PROJECT_EVENT_KINDS } from "./project-events";
 import { validateCapture, saveCapture, shouldClearCheck, type CaptureDeps } from "./capture";
+import { CaptureTokenStore, shareCaptureHandler } from "./capture-tokens";
 import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
 // can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
@@ -574,6 +575,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } else {
       return res.status(400).json({ error: "invalid_kind" });
     }
+    res.json({ ok: true });
+  });
+
+  // ---- Stage 26c: Share to Buoy (per-device capture token) ----
+  // The token is checked only here, so it opens nothing else.
+  const captureTokens = new CaptureTokenStore(rawSqlite as any);
+  app.post("/api/capture", shareCaptureHandler(captureTokens, captureDeps));
+  app.all("/api/capture", (_req, res) => res.status(405).json({ error: "method_not_allowed" }));
+
+  app.get("/api/capture-tokens", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json({ tokens: captureTokens.list() });
+  });
+  app.post("/api/capture-tokens", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const label = typeof req.body?.label === "string" ? req.body.label : "";
+    if (!label.trim()) return res.status(400).json({ error: "label required" });
+    const { row, token } = captureTokens.create(label);
+    res.json({ token: row, secret: token }); // shown once; never logged
+  });
+  app.delete("/api/capture-tokens/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid_id" });
+    if (!captureTokens.revoke(id)) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
   });
 

@@ -27,8 +27,14 @@ const jsonDefault = express.json({
 });
 // 25 MB per email (MAX_EMAIL_MB) is ~33.4 MB once base64-encoded.
 const jsonUpload = express.json({ limit: "36mb" });
+// Stage 26c — Share to Buoy bodies are small; anything bigger is a 413.
+const jsonCapture = express.json({ limit: "20kb" });
 app.use((req, res, next) =>
-  req.path === "/api/ontime/email-upload" ? jsonUpload(req, res, next) : jsonDefault(req, res, next),
+  req.path === "/api/ontime/email-upload"
+    ? jsonUpload(req, res, next)
+    : req.path === "/api/capture"
+      ? jsonCapture(req, res, next)
+      : jsonDefault(req, res, next),
 );
 
 app.use(express.urlencoded({ extended: false }));
@@ -61,7 +67,8 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       // Stage 25: never write On Time bodies (email subjects/snippets) to logs.
-      if (capturedJsonResponse && !path.startsWith("/api/ontime/")) {
+      // Stage 26b/c: nor capture bodies or capture-token responses (raw token).
+      if (capturedJsonResponse && !path.startsWith("/api/ontime/") && !path.startsWith("/api/capture")) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 

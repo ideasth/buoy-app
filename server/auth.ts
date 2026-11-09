@@ -182,6 +182,9 @@ const SYNC_SECRET = resolveSyncSecret(process.env, BAKED_SYNC_SECRET);
 
 // Routes that don't need a session (auth bootstrap + health + public ICS).
 const ALLOWLIST_EXACT = new Set<string>([
+  // Stage 26c — Share to Buoy. Exact path only; the route checks its own
+  // per-device capture token (see server/capture-tokens.ts).
+  "/api/capture",
   "/api/auth/status",
   "/api/auth/setup",
   "/api/auth/login",
