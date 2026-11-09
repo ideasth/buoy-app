@@ -13,7 +13,8 @@ import { OnTimeStore } from "./store";
 import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
-import { readGraphCreds } from "./graph";
+import { readGraphCreds, setMessageFlag } from "./graph";
+import { decideFlag, applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
 import express from "express";
 import { addDaysKey, melbDateKey, melbToUtcMs } from "./time";
@@ -74,6 +75,15 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     getCaptureDigest: deps.getCaptureDigest,
   });
   engineSingleton = engine;
+
+  const flagDeps: FlagSyncDeps = {
+    setFlag: async (externalId, status) => {
+      const c = readGraphCreds();
+      if (!c) throw new Error("Graph credentials not installed");
+      await setMessageFlag(c, externalId, status);
+    },
+    record: (id, state, error) => store.setFlagResult(id, state, error),
+  };
 
   app.get("/api/ontime/config", (req, res) => {
     if (!deps.guard(req, res)) return;
@@ -177,8 +187,25 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     const b = (req.body ?? {}) as { status?: string; category?: string };
     const row = store.updateTriage(id, { status: b.status, category: b.category });
     if (!row) return res.status(404).json({ error: "not found" });
+    // Stage 29 — flag-only Outlook sync, only when switched on.
+    const action = store.getConfig().flagSyncEnabled ? decideFlag(row) : null;
+    if (action) void applyFlag(flagDeps, row, action);
     const { body_for_llm, ...rest } = row;
-    res.json(rest);
+    res.json({ ...rest, flagAction: action });
+  });
+
+  // Stage 29 — manual one-email test. Works even with the switch off so the
+  // write can be checked on a single message before switching it on.
+  app.post("/api/ontime/triage/:id/flag", async (req, res) => {
+    if (!deps.guard(req, res)) return;
+    const row = store.getTriage(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: "not found" });
+    const a = (req.body ?? {}).action;
+    if (a !== "flag" && a !== "clear") return res.status(400).json({ error: "action must be flag or clear" });
+    if (!readGraphCreds()) return res.status(409).json({ error: "Graph credentials not installed" });
+    const r = await applyFlag(flagDeps, row, a);
+    const after = store.getTriage(row.id);
+    res.status(r.ok ? 200 : 502).json({ ...r, flag_state: after?.flag_state ?? null, flag_error: after?.flag_error ?? null });
   });
 
   // Manual upload (.eml / .msg as base64, or pasted text) — e.g. Safer Care Victoria.

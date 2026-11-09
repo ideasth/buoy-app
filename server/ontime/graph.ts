@@ -4,8 +4,12 @@
 // Auth: OAuth2 client-credentials against the AUPFHS tenant. The app
 // registration holds ONLY the Mail.Read application permission, and an
 // Exchange Online application access policy (or RBAC for Applications)
-// restricts it to drjoliverdaly@aupfhs.com.au. Nothing here can send,
-// move, flag or delete mail: only GET requests are issued.
+// restricts it to drjoliverdaly@aupfhs.com.au.
+//
+// Stage 29 — the ONLY write is setMessageFlag(): a PATCH of the message's
+// `flag` property (flagged / notFlagged) via Application Mail.ReadWrite,
+// scoped by Exchange RBAC for Applications ("Buoy Mail Scope RBAC") to the
+// same single mailbox. Nothing here sends, moves, deletes or marks mail read.
 //
 // Credentials: <secrets>/graph_mail.json
 //   { "tenantId": "...", "clientId": "...", "clientSecret": "...", "mailbox": "drjoliverdaly@aupfhs.com.au" }
@@ -140,4 +144,25 @@ export async function pollInbox(
     if (j["@odata.deltaLink"]) finalDelta = j["@odata.deltaLink"];
   }
   return { messages: out, deltaLink: finalDelta ?? deltaLink };
+}
+
+/**
+ * Stage 29 — set or clear the Outlook follow-up flag on one message.
+ * Sends ONLY {"flag":{"flagStatus":...}}; no other property is touched.
+ */
+export async function setMessageFlag(
+  c: GraphCreds, messageId: string, flagStatus: "flagged" | "notFlagged",
+): Promise<void> {
+  const token = await getToken(c);
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(c.mailbox)}/messages/${encodeURIComponent(messageId)}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ flag: { flagStatus } }),
+  });
+  if (!res.ok) {
+    let msg = "";
+    try { msg = String(((await res.json()) as any)?.error?.code ?? ""); } catch { /* ignore */ }
+    throw new Error(`graph flag HTTP ${res.status}${msg ? ` ${msg}` : ""}`);
+  }
 }

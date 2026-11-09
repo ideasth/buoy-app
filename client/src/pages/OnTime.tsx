@@ -20,7 +20,7 @@ type Config = {
   noTravelLeadMinutes: number; escalateAfterMinutes: number; snoozeMinutes: number; maxSnoozes: number;
   quietStart: string; quietEnd: string; digestTime: string; digestEnabled: boolean; privacyLabels: boolean;
   lateMessage: string; ignoreKeywords: string[]; ntfyBaseUrl: string; ntfyTopic: string; publicBaseUrl: string;
-  emailEnabled: boolean; emailPollMinutes: number; emailNudges: boolean; ollamaUrl: string; ollamaModel: string;
+  emailEnabled: boolean; emailPollMinutes: number; emailNudges: boolean; flagSyncEnabled: boolean; ollamaUrl: string; ollamaModel: string;
   routine: RoutineCue[];
 };
 type Cue = { key: string; kind: string; fireAt: number; title: string; body: string; priority: number };
@@ -244,6 +244,7 @@ export default function OnTime() {
           {toggle("privacyLabels", "Privacy labels on watch", "Shows the place or 'Appointment', never the event title")}
           {toggle("emailNudges", "Nudge for urgent emails", "Act-today emails with a deadline today or tomorrow, max 4 a day")}
           {toggle("emailEnabled", "Read AUPFHS inbox", "Needs the Microsoft 365 permission set up first")}
+          {toggle("flagSyncEnabled", "Flag in Outlook", "Act today / Reply this week flags the email; done clears flags Buoy set. Nothing else changes")}
         </div>
         <label className="text-sm space-y-1 block">
           <div className="font-medium">Running late message</div>

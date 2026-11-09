@@ -56,6 +56,11 @@ export interface TriageRow {
   classified_at: number | null;
   created_at: number;
   updated_at: number;
+  // Stage 29 — flag-only Outlook sync. flag_state is only ever 'flagged'
+  // when Buoy itself set the flag, so Buoy never clears flags you set.
+  flag_state?: "flagged" | "cleared" | null;
+  flag_error?: string | null;
+  flag_synced_at?: number | null;
 }
 
 export function initOnTimeSchema(db: Db): void {
@@ -121,6 +126,11 @@ CREATE TABLE IF NOT EXISTS ontime_kv (
   updated_at INTEGER NOT NULL
 );
 `);
+  // Stage 29 — additive columns for flag-only sync (idempotent).
+  const cols = new Set((db.prepare(`PRAGMA table_info(email_triage)`).all() as Array<{ name: string }>).map((c) => c.name));
+  if (!cols.has("flag_state")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_state TEXT`);
+  if (!cols.has("flag_error")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_error TEXT`);
+  if (!cols.has("flag_synced_at")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_synced_at INTEGER`);
 }
 
 export class OnTimeStore {
@@ -319,7 +329,7 @@ export class OnTimeStore {
     return this.db.prepare(
       `SELECT id, source, external_id, received_at, sender, sender_name, subject, snippet, web_link, category, summary,
               deadline_text, deadline_date, is_priority, rule_hits, model, status, task_id, nudged_at, NULL AS body_for_llm,
-              classified_at, created_at, updated_at
+              classified_at, created_at, updated_at, flag_state, flag_error, flag_synced_at
        FROM email_triage ${where} ORDER BY received_at DESC LIMIT ?`,
     ).all(opts.limit ?? 300) as TriageRow[];
   }
@@ -334,6 +344,11 @@ export class OnTimeStore {
       `UPDATE email_triage SET status = ?, category = ?, task_id = ?, nudged_at = ?, updated_at = ? WHERE id = ?`,
     ).run(status, category, taskId, nudgedAt, this.clock(), id);
     return this.getTriage(id);
+  }
+  setFlagResult(id: number, state: "flagged" | "cleared" | null, error: string | null): void {
+    this.db.prepare(
+      `UPDATE email_triage SET flag_state = COALESCE(?, flag_state), flag_error = ?, flag_synced_at = ? WHERE id = ?`,
+    ).run(state, error, this.clock(), id);
   }
   /** Retention: drop snippets of closed items older than 30 days. */
   pruneTriage(olderThanMs: number): number {
