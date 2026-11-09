@@ -8,12 +8,16 @@ import { LateModal } from "./LateModal";
 import { QuickCaptureModal } from "./QuickCaptureModal";
 import { cn } from "@/lib/utils";
 
-// Sidebar nav. `divider: true` rows render a separator instead of a link.
+// Sidebar nav. `divider: true` rows render a separator instead of a link;
+// `heading` rows render a small section label (Stage 26a).
 // Stage 18 (2026-05-16) order: regulation tools (Check-in / Calm / Capture /
 // Coach) sit at the top, followed by daily planning surfaces (Today /
 // Calendar), then the existing groups. Admin is the consolidated
 // Health + Usage + Settings page (see /pages/Admin.tsx).
-export type NavItem = { href: string; label: string } | { divider: true };
+// Stage 26a (2026-11-09): On Time, Tasks/Priorities, Email Status, PMT,
+// Projects, Updates and Habits are grouped under "Time-Task Management".
+// Navigation only - every URL is unchanged.
+export type NavItem = { href: string; label: string } | { divider: true } | { heading: string };
 export const NAV: NavItem[] = [
   { href: "/checkin", label: "Check-in" },
   { href: "/calm", label: "Calm" },
@@ -22,30 +26,33 @@ export const NAV: NavItem[] = [
   { divider: true },
   { href: "/", label: "Today" },
   { href: "/calendar-planner", label: "Calendar" },
-  { href: "/on-time", label: "On Time" },
   { href: "/templates", label: "Templates" },
   { divider: true },
   { href: "/morning", label: "Morning" },
   { href: "/evening", label: "Evening" },
   { href: "/review", label: "Review" },
-  { divider: true },
+  { heading: "Time-Task Management" },
+  { href: "/on-time", label: "On Time" },
   { href: "/tasks", label: "Tasks/Priorities" },
   { href: "/email-status", label: "Email Status" },
   { href: "/pmt", label: "PMT" },
   { href: "/projects", label: "Projects" },
+  { href: "/updates", label: "Updates" },
+  { href: "/habits", label: "Habits" },
+  { divider: true },
   { href: "/issues", label: "Issues" },
   { href: "/relationships", label: "Relationships" },
-  { href: "/habits", label: "Habits" },
   { divider: true },
   { href: "/admin", label: "Admin" },
 ];
 
-// Stage 18 — flattened list of selectable landing pages (dividers excluded).
-// Consumed by the Admin settings dropdown and by tests that need to know
-// which routes the user is allowed to pick as their default. Kept in sync
-// with the server-side ALLOWED_LANDING_ROUTES allow-list in app-settings.ts.
+// Stage 18 — flattened list of selectable landing pages (dividers and
+// headings excluded). Consumed by the Admin settings dropdown and by tests
+// that need to know which routes the user is allowed to pick as their
+// default. Kept in sync with the server-side ALLOWED_LANDING_ROUTES
+// allow-list in app-settings.ts.
 export const NAV_ROUTES: ReadonlyArray<{ href: string; label: string }> =
-  NAV.filter((item): item is { href: string; label: string } => !("divider" in item));
+  NAV.filter((item): item is { href: string; label: string } => "href" in item);
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();
@@ -94,6 +101,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="px-2 pb-2 md:pb-0 flex md:flex-col gap-1 overflow-x-auto">
           {NAV.map((item, idx) => {
+            if ("heading" in item) {
+              // Stage 26a — section label on md+; a thin divider on mobile.
+              return (
+                <div key={`head-${idx}`} className="contents">
+                  <div
+                    role="separator"
+                    aria-orientation="horizontal"
+                    className="md:hidden mx-1 my-2 w-px h-6 bg-sidebar-border self-center shrink-0"
+                  />
+                  <div
+                    className="hidden md:block md:mt-3 md:mb-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/60"
+                    data-testid="nav-heading-time-task"
+                  >
+                    {item.heading}
+                  </div>
+                </div>
+              );
+            }
             if ("divider" in item) {
               // On md+ a horizontal rule; on mobile (horizontal-scroll nav) a thin
               // vertical divider so groups still feel separated.

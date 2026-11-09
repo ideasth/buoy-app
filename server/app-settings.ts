@@ -89,6 +89,9 @@ export const ALLOWED_LANDING_ROUTES: readonly string[] = [
   "/habits",
   "/admin",
   "/pmt",
+  // Stage 26a
+  "/on-time",
+  "/updates",
 ] as const;
 
 export function isAllowedLandingRoute(value: unknown): value is string {

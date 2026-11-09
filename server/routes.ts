@@ -16,6 +16,7 @@ import { listBuoyEvents as _listBuoyEventsForMerge } from "./buoy-events-storage
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
 import { registerOnTimeRoutes } from "./ontime/routes";
+import { ProjectEventStore, PROJECT_EVENT_KINDS } from "./project-events";
 import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
 // can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
@@ -528,6 +529,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     return feedEvents;
   }
+
+  // ---- Stage 26a: project change feed ----
+  const projectEvents = new ProjectEventStore(rawSqlite as any);
+  app.get("/api/updates", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const days = Math.min(Math.max(parseInt(String(req.query.days ?? "7"), 10) || 7, 1), 90);
+    const pid = req.query.projectId != null && req.query.projectId !== "" ? parseInt(String(req.query.projectId), 10) : null;
+    const kind = typeof req.query.kind === "string" && (PROJECT_EVENT_KINDS as readonly string[]).includes(req.query.kind)
+      ? req.query.kind : null;
+    const sinceMs = Date.now() - days * 86_400_000;
+    res.json({ days, events: projectEvents.list({ sinceMs, projectId: Number.isFinite(pid as number) ? pid : null, kind }) });
+  });
 
   // ---- Stage 25: On Time (leave-by cues, ntfy alerts, email triage) ----
   registerOnTimeRoutes(app, {
@@ -1445,7 +1458,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!requireUserOrOrchestrator(req, res)) return;
     const { name, status, priority, description } = req.body || {};
     if (!name) return res.status(400).json({ error: "name required" });
-    res.json(storage.createProject({ name, status, priority, description }));
+    const created = storage.createProject({ name, status, priority, description });
+    if (created?.id != null) projectEvents.record(created.id, "created", "Project created");
+    res.json(created);
   });
 
   // Aggregate summary of project values — must be registered before /api/projects/:id
@@ -1620,6 +1635,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/projects/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const id = parseInt(req.params.id, 10);
+    const beforeProject = storage.getProject(id);
     const allowed = [
       "name",
       "status",
@@ -1756,6 +1772,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     const updated = storage.updateProject(id, updates);
+    projectEvents.recordDiff(id, beforeProject as any, storage.getProject(id) as any);
     res.json(updated);
   });
 
@@ -1772,10 +1789,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const projectId = parseInt(req.params.id, 10);
     const { name, orderIndex } = req.body || {};
     if (!name) return res.status(400).json({ error: "name required" });
-    res.json(storage.createProjectPhase({
+    const phase = storage.createProjectPhase({
       projectId, name, orderIndex: Number(orderIndex) || 0, completed: 0,
       createdAt: Date.now(),
-    }));
+    });
+    projectEvents.record(projectId, "phase", `Phase added: ${String(name).slice(0, 120)}`);
+    res.json(phase);
   });
   app.patch("/api/phases/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
@@ -1798,10 +1817,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const projectId = parseInt(req.params.id, 10);
     const { name, phaseId, orderIndex } = req.body || {};
     if (!name) return res.status(400).json({ error: "name required" });
-    res.json(storage.createProjectComponent({
+    const component = storage.createProjectComponent({
       projectId, name, phaseId: phaseId ?? null, orderIndex: Number(orderIndex) || 0,
       createdAt: Date.now(),
-    }));
+    });
+    projectEvents.record(projectId, "component", `Component added: ${String(name).slice(0, 120)}`);
+    res.json(component);
   });
   app.patch("/api/components/:id", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
@@ -1843,7 +1864,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allowed = ["title", "componentId", "deadline", "notes", "completed", "orderIndex"];
     const updates: any = {};
     for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+    const beforeTask = projectEvents.getProjectTask(id);
     storage.updateProjectTask(id, updates);
+    const afterTask = projectEvents.getProjectTask(id);
+    if (beforeTask && afterTask && !beforeTask.completed && afterTask.completed) {
+      projectEvents.record(afterTask.projectId, "task_done", `Task done: ${afterTask.title.slice(0, 160)}`, { taskId: id });
+    }
     res.json({ ok: true });
   });
   app.delete("/api/tasks/project/:id", (req, res) => {
@@ -1954,7 +1980,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // whose title cannot be fetched still stores the URL with a null label.
     const source = await resolveNoteSource(sourceUrl);
     if (!source.ok) return res.status(400).json({ error: source.error });
-    res.json(storage.createComponentNote({
+    const note = storage.createComponentNote({
       componentType: "project",
       componentId: id,
       noteDate,
@@ -1962,7 +1988,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       body,
       sourceUrl: source.sourceUrl,
       sourceLabel: source.sourceLabel,
-    }));
+    });
+    projectEvents.record(id, "note", `Note: ${String(title || body).replace(/\s+/g, " ").slice(0, 140)}`);
+    res.json(note);
   });
   app.patch("/api/component-notes/:noteId", async (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
