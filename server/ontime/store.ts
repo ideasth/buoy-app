@@ -341,10 +341,12 @@ export class OnTimeStore {
       `DELETE FROM email_triage WHERE status IN ('done','dismissed','new') AND received_at < ?`,
     ).run(olderThanMs).changes;
   }
-  triageCounts(): Record<string, number> {
+  /** Open (not done/dismissed) emails by category; optionally only those received since `sinceMs`. */
+  triageCounts(sinceMs?: number): Record<string, number> {
+    const since = typeof sinceMs === "number" ? sinceMs : 0;
     const rows = this.db.prepare(
-      `SELECT COALESCE(category,'queued') AS c, COUNT(*) AS n FROM email_triage WHERE status IN ('new','queued') GROUP BY c`,
-    ).all() as Array<{ c: string; n: number }>;
+      `SELECT COALESCE(category,'queued') AS c, COUNT(*) AS n FROM email_triage WHERE status IN ('new','queued') AND received_at >= ? GROUP BY c`,
+    ).all(since) as Array<{ c: string; n: number }>;
     const out: Record<string, number> = {};
     for (const r of rows) out[r.c] = r.n;
     return out;

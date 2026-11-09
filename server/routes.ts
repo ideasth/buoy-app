@@ -607,6 +607,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerOnTimeRoutes(app, {
     db: rawSqlite as any,
     guard: requireUserOrOrchestrator,
+    // Stage 26d — digest lines: stale "check" captures and project updates.
+    getCaptureDigest: ({ checkOlderThanMs, updatesSinceMs }) => {
+      const r = (rawSqlite as any)
+        .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE tag = 'check' AND status IN ('todo','doing') AND created_at < ?`)
+        .get(checkOlderThanMs) as { n: number };
+      return { needsLook: r.n, projectUpdates: projectEvents.countSince(updatesSinceMs) };
+    },
     getEvents: () => getMergedPlannerEvents(),
     listTravelLocations: () => storage.listTravelLocations(),
     getTravelOverride: (uid) => storage.getTravelOverride(uid) ?? null,

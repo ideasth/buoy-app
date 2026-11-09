@@ -29,7 +29,14 @@ export interface EngineDeps {
   noAutoContinue?: boolean;
   graphCreds?: () => GraphCreds | null;
   pollInboxFn?: typeof pollInbox;
+  /** Stage 26d — capture/project lines for the morning digest. */
+  getCaptureDigest?: (opts: { checkOlderThanMs: number; updatesSinceMs: number }) => { needsLook: number; projectUpdates: number };
 }
+
+/** Stage 26d — a capture "needs a look" once it has sat for 12 hours. */
+export const CHECK_STALE_MS = 12 * 3600_000;
+/** Stage 26d — the digest's act-today count covers the last 7 days. */
+export const DIGEST_EMAIL_WINDOW_MS = 7 * 86400_000;
 
 export interface EngineStatus {
   running: boolean;
@@ -183,9 +190,22 @@ export class OnTimeEngine {
     }
     const top3 = this.d.getTop3Titles(dateKey);
     lines.push(top3.length ? `Top 3: ${top3.join("; ")}` : "Top 3 not locked yet - do it at 07:30.");
-    const counts = store.triageCounts();
-    const act = counts.act_today ?? 0;
-    if (cfg.emailEnabled) lines.push(act ? `${act} email${act === 1 ? "" : "s"} to act on today.` : "No act-today emails.");
+    // Stage 26d — anchor to the digest's own fire time so a late send gives the same numbers.
+    const fireAt = melbToUtcMs(dateKey, cfg.digestTime);
+    if (cfg.emailEnabled) {
+      const counts = store.triageCounts(fireAt - DIGEST_EMAIL_WINDOW_MS);
+      const act = counts.act_today ?? 0;
+      lines.push(act ? `${act} email${act === 1 ? "" : "s"} to act on (last 7 days).` : "No act-today emails.");
+    }
+    if (this.d.getCaptureDigest) {
+      try {
+        const c = this.d.getCaptureDigest({ checkOlderThanMs: fireAt - CHECK_STALE_MS, updatesSinceMs: fireAt - 86400_000 });
+        if (c.needsLook > 0) lines.push(`${c.needsLook} capture${c.needsLook === 1 ? "" : "s"} need${c.needsLook === 1 ? "s" : ""} a look.`);
+        if (c.projectUpdates > 0) lines.push(`${c.projectUpdates} project update${c.projectUpdates === 1 ? "" : "s"} since yesterday.`);
+      } catch {
+        /* the digest must still send */
+      }
+    }
     return lines.join("\n");
   }
 

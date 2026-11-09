@@ -10,7 +10,7 @@ import path from "node:path";
 import type { Express, Request, Response } from "express";
 import type { Database as Db } from "better-sqlite3";
 import { OnTimeStore } from "./store";
-import { OnTimeEngine } from "./engine";
+import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
 import { readGraphCreds } from "./graph";
@@ -29,6 +29,7 @@ export interface OnTimeRouteDeps {
   getTop3Titles: (dateKey: string) => string[];
   createTask: (t: { title: string; dueAt: number; notes: string }) => number | null;
   startEngine?: boolean;
+  getCaptureDigest?: EngineDeps["getCaptureDigest"];
 }
 
 export function toPlanEvents(deps: OnTimeRouteDeps, events: any[]): PlanEvent[] {
@@ -68,6 +69,7 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
   const engine = new OnTimeEngine({
     store, getPlanEvents, getTop3Titles: deps.getTop3Titles,
     createDeadlineTask: deps.createTask, send: sendNtfy,
+    getCaptureDigest: deps.getCaptureDigest,
   });
   engineSingleton = engine;
 
