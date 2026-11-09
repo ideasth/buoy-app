@@ -8,7 +8,7 @@
 //   * Merged into the existing subscribed ICS bundles by build_calendars.py
 //     fetching /api/adhoc-events/<category>.ics, so no new client subscriptions.
 //
-// This file follows the same lightweight pattern as server/family-storage.ts:
+// This file follows the same lightweight pattern as server/calendar-blocks-storage.ts:
 // CREATE TABLE IF NOT EXISTS on first getBuoyEventsDb() call, no separate
 // migration runner. Reuses the same data.db so it lives alongside other Buoy
 // tables and is included in the existing backup path.

@@ -58,10 +58,6 @@ export const KEY = {
   PRIVATE_CALENDAR_USER: "private_calendar_user",
   PRIVATE_CALENDAR_PASSWORD_HASH: "private_calendar_password_hash",
   PRIVATE_CALENDAR_TOKEN: "private_calendar_token",
-  FAMILY_CALENDAR_ENABLED: "family_calendar_enabled",
-  FAMILY_CALENDAR_USER: "family_calendar_user",
-  FAMILY_CALENDAR_PASSWORD_HASH: "family_calendar_password_hash",
-  FAMILY_CALENDAR_TOKEN: "family_calendar_token",
   // Stage 18 — user-selected default landing route. Must be one of
   // ALLOWED_LANDING_ROUTES below. Stored as a plain string in the KV table.
   DEFAULT_LANDING_ROUTE: "default_landing_route",
@@ -120,10 +116,6 @@ function seedDefaults(db: Database.Database): void {
     { key: KEY.PRIVATE_CALENDAR_USER, value: "" },
     { key: KEY.PRIVATE_CALENDAR_PASSWORD_HASH, value: "" },
     { key: KEY.PRIVATE_CALENDAR_TOKEN, value: randomBytes(32).toString("base64url") },
-    { key: KEY.FAMILY_CALENDAR_ENABLED, value: "0" },
-    { key: KEY.FAMILY_CALENDAR_USER, value: "" },
-    { key: KEY.FAMILY_CALENDAR_PASSWORD_HASH, value: "" },
-    { key: KEY.FAMILY_CALENDAR_TOKEN, value: randomBytes(32).toString("base64url") },
     // Stage 18 — default landing route. "/" maps to Today; existing installs
     // get this seeded on first boot so the server response always carries a
     // value the client can read without a null-coalesce.

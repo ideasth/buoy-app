@@ -1,3 +1,8 @@
+// OBSOLETE as of 9 Nov 2026: every Perplexity automation schedule now uses
+// tzid Australia/Melbourne with local times, so no DST retune is ever needed
+// again and the cutover reminder was deleted. This file is kept only for its
+// historical record and test; do not use it to drive retunes.
+//
 // Canonical inventory of Anchor's recurring Perplexity crons that need retuning
 // at the AEDT cutover (Sun 5 Oct 2026 03:00 AEST -> 03:00 AEDT, clocks jump +1h).
 //

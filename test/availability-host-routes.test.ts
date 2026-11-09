@@ -4,8 +4,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { _setTestDb, _resetDbForTest } from "../server/app-settings";
-import { _setFamilyTestDb, _resetFamilyDbForTest } from "../server/family-storage";
-import { checkAvailabilityToken } from "../server/family-auth";
+import { _setCalendarBlocksTestDb, _resetCalendarBlocksDbForTest } from "../server/calendar-blocks-storage";
+import { checkAvailabilityToken } from "../server/availability-auth";
 import { classifyHost } from "../server/hostname-router";
 import { computeAvailability, emitPublicIcs } from "../server/public-calendar";
 
@@ -54,12 +54,12 @@ describe("availability ICS generation", () => {
     const db = new Database(":memory:");
     const fdb = new Database(":memory:");
     _setTestDb(db);
-    _setFamilyTestDb(fdb);
+    _setCalendarBlocksTestDb(fdb);
   });
 
   afterEach(() => {
     _resetDbForTest();
-    _resetFamilyDbForTest();
+    _resetCalendarBlocksDbForTest();
   });
 
   it("emits VCALENDAR with correct PRODID", () => {
@@ -73,7 +73,6 @@ describe("availability ICS generation", () => {
     const now = new Date("2026-05-31T21:00:00Z").getTime();
     const blocks = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [],
       bookableWindow: {
         mon: ["07:00", "19:00"],

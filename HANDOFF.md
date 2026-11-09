@@ -1,5 +1,7 @@
 # Handoff notes — Buoy (formerly Anchor)
 
+> **9 Nov 2026 — family calendar retired.** `server/family-routes.ts`, `server/family-auth.ts`, `server/family-storage.ts` and `client/family/` were removed. Availability auth now lives in `server/availability-auth.ts`; `public_calendar_blocks` CRUD in `server/calendar-blocks-storage.ts`. `buoy-family.thinhalo.com` returns 404 in-app (`isRetiredHost`). The `family_events`, `family_day_notes` and `family_week_notes` tables remain in data.db untouched. `/cal/private.ics` now carries calendar events only (`emitPrivateIcs`). Stage 17 notes below are historical.
+
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
 ## 2026-11-08 (AEDT) — Stage 25: On Time (leave-by cues, phone/watch alerts, email triage)

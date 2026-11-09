@@ -7,7 +7,7 @@ import {
   type AvailableBlock,
 } from "../server/public-calendar";
 import type { CalEvent } from "../server/ics";
-import type { FamilyEvent, PublicCalendarBlock } from "../server/family-storage";
+import type { PublicCalendarBlock } from "../server/calendar-blocks-storage";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,27 +39,6 @@ function makeCalEvent(uid: string, start: string, end: string): CalEvent {
   return { uid, summary: "Test Event", start, end, allDay: false };
 }
 
-function makeFamilyEvent(
-  id: number,
-  start: string,
-  end: string,
-  countAsBusy = 1,
-): FamilyEvent {
-  return {
-    id,
-    user_id: null,
-    title: "Family Event",
-    start_utc: start,
-    end_utc: end,
-    all_day: 0,
-    location: null,
-    notes: null,
-    added_by: "password",
-    count_as_busy_for_public: countAsBusy,
-    created_at: start,
-    updated_at: start,
-  };
-}
 
 function makeBlock(
   id: number,
@@ -90,7 +69,6 @@ describe("computeAvailability", () => {
     const now = utcMs("2026-05-31T21:00:00Z"); // 07:00 AEST on Mon 2026-06-01
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -113,7 +91,6 @@ describe("computeAvailability", () => {
     const ev = makeCalEvent("ev1", "2026-05-31T23:00:00Z", "2026-06-01T00:00:00Z");
     const result = computeAvailability({
       calEvents: [ev],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -136,7 +113,6 @@ describe("computeAvailability", () => {
     const ev2 = makeCalEvent("ev2", "2026-06-01T00:15:00Z", "2026-06-01T01:15:00Z");
     const result = computeAvailability({
       calEvents: [ev1, ev2],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -170,7 +146,6 @@ describe("computeAvailability", () => {
     });
     const result = computeAvailability({
       calEvents: [ev],
-      familyEvents: [],
       blocks: [block],
       bookableWindow: BOOKABLE,
       now,
@@ -189,7 +164,6 @@ describe("computeAvailability", () => {
     });
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [block],
       bookableWindow: BOOKABLE,
       now,
@@ -204,7 +178,6 @@ describe("computeAvailability", () => {
     const block = makeBlock(1, "rule_off_day", { weekday: 3 });
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [block],
       bookableWindow: BOOKABLE,
       now,
@@ -223,7 +196,6 @@ describe("computeAvailability", () => {
     const now = utcMs("2026-05-31T21:00:00Z");
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -241,7 +213,6 @@ describe("computeAvailability", () => {
     const now = utcMs("2026-05-31T21:00:00Z");
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -260,7 +231,6 @@ describe("computeAvailability", () => {
     const now = Date.now();
     const result = computeAvailability({
       calEvents: [],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -269,23 +239,6 @@ describe("computeAvailability", () => {
     const horizon = now + 12 * 7 * 24 * 60 * 60 * 1000;
     const beyond = result.filter((b) => b.startUtcMs >= horizon);
     expect(beyond.length).toBe(0);
-  });
-
-  it("family event with count_as_busy_for_public=0 does NOT contribute to busy", () => {
-    const now = utcMs("2026-05-31T21:00:00Z");
-    // Family event occupies all morning — but count_as_busy=0
-    const fev = makeFamilyEvent(1, "2026-05-31T21:00:00Z", "2026-06-01T03:00:00Z", 0);
-    const result = computeAvailability({
-      calEvents: [],
-      familyEvents: [fev],
-      blocks: [],
-      bookableWindow: BOOKABLE,
-      now,
-      horizonMs: 24 * 60 * 60 * 1000,
-    });
-    // Without busy contribution, the whole morning should be Available
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[0].durationMin).toBeGreaterThan(60);
   });
 
   // Regression — Stage 17 hotfix. The upstream Outlook feed contains many
@@ -306,7 +259,6 @@ describe("computeAvailability", () => {
     };
     const result = computeAvailability({
       calEvents: [allDayEv],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -329,7 +281,6 @@ describe("computeAvailability", () => {
     const timedEv = makeCalEvent("ev1", "2026-05-31T23:00:00Z", "2026-06-01T00:00:00Z");
     const result = computeAvailability({
       calEvents: [allDayEv, timedEv],
-      familyEvents: [],
       blocks: [],
       bookableWindow: BOOKABLE,
       now,
@@ -340,21 +291,6 @@ describe("computeAvailability", () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it("family event with count_as_busy_for_public=1 contributes to busy", () => {
-    const now = utcMs("2026-05-31T21:00:00Z");
-    // Family event occupies all day
-    const fev = makeFamilyEvent(1, "2026-05-31T21:00:00Z", "2026-06-01T09:00:00Z", 1);
-    const result = computeAvailability({
-      calEvents: [],
-      familyEvents: [fev],
-      blocks: [],
-      bookableWindow: BOOKABLE,
-      now,
-      horizonMs: 24 * 60 * 60 * 1000,
-    });
-    // The whole bookable day is occupied by the family event (+ buffer)
-    expect(result.length).toBe(0);
-  });
 });
 
 describe("emitPublicIcs", () => {

@@ -11,17 +11,13 @@
 
 import { Router as makeRouter } from "express";
 import type { Request, Response, Router } from "express";
-import { requireAvailabilityAuth, checkAvailabilityToken } from "./family-auth";
+import { requireAvailabilityAuth, checkAvailabilityToken } from "./availability-auth";
 import {
   computeAvailability,
   emitPublicIcs,
   type BookableWindow,
 } from "./public-calendar";
-import {
-  listFamilyEvents,
-  listPublicCalendarBlocks,
-  getFamilyDb,
-} from "./family-storage";
+import { listPublicCalendarBlocks } from "./calendar-blocks-storage";
 import { getSetting, KEY } from "./app-settings";
 import { getCachedEventsForFeeds } from "./ics";
 import { storage } from "./storage";
@@ -105,20 +101,16 @@ async function servePublicIcs(_req: Request, res: Response): Promise<void> {
 
   const now = Date.now();
   const horizonMs = 12 * 7 * 24 * 60 * 60 * 1000;
-  const fromUtc = new Date(now).toISOString();
-  const toUtc = new Date(now + horizonMs).toISOString();
 
   let calEvents: import("./ics").CalEvent[] = [];
   try {
     calEvents = await getCachedEventsForFeeds(allFeeds);
   } catch {}
 
-  const familyEvents = listFamilyEvents(fromUtc, toUtc);
   const blocks = listPublicCalendarBlocks();
 
   const available = computeAvailability({
     calEvents,
-    familyEvents,
     blocks,
     bookableWindow,
     now,

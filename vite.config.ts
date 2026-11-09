@@ -16,15 +16,13 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
-    // Stage 17: multi-entry build for apex + family + availability SPAs.
+    // Stage 17: multi-entry build for apex + availability SPAs (family retired 9 Nov 2026).
     rollupOptions: {
-      // Stage 17: three entry points.
-      // family/index.html  → dist/public/family/index.html
+      // Two entry points.
       // availability/index.html → dist/public/availability/index.html
       // index.html → dist/public/index.html (apex)
       input: {
         main: path.resolve(import.meta.dirname, "client", "index.html"),
-        family: path.resolve(import.meta.dirname, "client", "family", "index.html"),
         availability: path.resolve(import.meta.dirname, "client", "availability", "index.html"),
       },
     },

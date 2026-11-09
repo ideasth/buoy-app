@@ -149,7 +149,6 @@ function render(contextData, projectData) {
     '',
     '- buoy.thinhalo.com — Apex Buoy app.',
     '- anchor.thinhalo.com — Back-compat apex hostname served from the same backend.',
-    '- buoy-family.thinhalo.com — Family calendar surface.',
     '- oliver-availability.thinhalo.com — Sanitised availability surface.',
     '',
     '## Deploy workflow',

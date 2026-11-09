@@ -1,6 +1,6 @@
 // Stage 17 — classifyHost() tests
 import { describe, it, expect } from "vitest";
-import { classifyHost } from "../server/hostname-router";
+import { classifyHost, isRetiredHost } from "../server/hostname-router";
 
 describe("classifyHost", () => {
   it("returns apex for buoy.thinhalo.com", () => {
@@ -11,8 +11,10 @@ describe("classifyHost", () => {
     expect(classifyHost("anchor.thinhalo.com")).toBe("apex");
   });
 
-  it("returns family for buoy-family.thinhalo.com", () => {
-    expect(classifyHost("buoy-family.thinhalo.com")).toBe("family");
+  it("returns null for the retired buoy-family.thinhalo.com, flagged as retired", () => {
+    expect(classifyHost("buoy-family.thinhalo.com")).toBeNull();
+    expect(isRetiredHost("Buoy-Family.thinhalo.com:443")).toBe(true);
+    expect(isRetiredHost("buoy.thinhalo.com")).toBe(false);
   });
 
   it("returns availability for oliver-availability.thinhalo.com", () => {
@@ -40,12 +42,12 @@ describe("classifyHost", () => {
   });
 
   it("strips port before classifying", () => {
-    expect(classifyHost("buoy-family.thinhalo.com:5000")).toBe("family");
+    expect(classifyHost("buoy.thinhalo.com:5000")).toBe("apex");
     expect(classifyHost("oliver-availability.thinhalo.com:443")).toBe("availability");
   });
 
   it("is case-insensitive", () => {
     expect(classifyHost("BUOY.THINHALO.COM")).toBe("apex");
-    expect(classifyHost("Buoy-Family.thinhalo.com")).toBe("family");
+    expect(classifyHost("Oliver-Availability.thinhalo.com")).toBe("availability");
   });
 });

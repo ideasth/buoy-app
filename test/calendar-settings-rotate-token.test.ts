@@ -43,11 +43,6 @@ describe("calendar settings — getSetting / setSetting", () => {
     setSetting(KEY.PRIVATE_CALENDAR_ENABLED, "1");
     expect(getSetting(KEY.PRIVATE_CALENDAR_ENABLED)).toBe("1");
   });
-
-  it("setSetting works for family_calendar_enabled", () => {
-    setSetting(KEY.FAMILY_CALENDAR_ENABLED, "1");
-    expect(getSetting(KEY.FAMILY_CALENDAR_ENABLED)).toBe("1");
-  });
 });
 
 describe("calendar settings — rotateToken", () => {
@@ -82,21 +77,15 @@ describe("calendar settings — rotateToken", () => {
     expect(getSetting(KEY.PRIVATE_CALENDAR_TOKEN)).toBe(token);
   });
 
-  it("rotateToken works for family token key", () => {
-    const token = rotateToken(KEY.FAMILY_CALENDAR_TOKEN);
-    expect(getSetting(KEY.FAMILY_CALENDAR_TOKEN)).toBe(token);
-  });
-
   it("old token no longer equals new token after rotate", () => {
-    const before = getSetting(KEY.FAMILY_CALENDAR_TOKEN);
-    const after = rotateToken(KEY.FAMILY_CALENDAR_TOKEN);
+    const before = getSetting(KEY.PRIVATE_CALENDAR_TOKEN);
+    const after = rotateToken(KEY.PRIVATE_CALENDAR_TOKEN);
     expect(after).not.toBe(before);
-    expect(getSetting(KEY.FAMILY_CALENDAR_TOKEN)).toBe(after);
+    expect(getSetting(KEY.PRIVATE_CALENDAR_TOKEN)).toBe(after);
   });
 
-  it("KEY constants include all three token keys", () => {
+  it("KEY constants include both token keys", () => {
     expect(KEY.PUBLIC_CALENDAR_TOKEN).toBeTruthy();
     expect(KEY.PRIVATE_CALENDAR_TOKEN).toBeTruthy();
-    expect(KEY.FAMILY_CALENDAR_TOKEN).toBeTruthy();
   });
 });

@@ -6,7 +6,6 @@
 //
 // Source of busy time:
 //   1. CalEvent[] passed in (Outlook + synced ICS feeds — already merged by caller)
-//   2. family_events with count_as_busy_for_public = 1
 //   3. public_calendar_blocks with kind = 'force_busy'
 //   4. public_calendar_blocks with kind = 'rule_off_day' suppress whole weekday
 //
@@ -18,7 +17,7 @@
 //   horizonMs  — how far ahead to look (default 12 weeks in ms)
 
 import type { CalEvent } from "./ics";
-import type { FamilyEvent, PublicCalendarBlock } from "./family-storage";
+import type { PublicCalendarBlock } from "./calendar-blocks-storage";
 
 // ---------------------------------------------------------------------------
 // Melbourne TZ helpers (copied from ics.ts pattern — no shared dep)
@@ -140,7 +139,6 @@ export interface AvailableBlock {
 
 export interface ComputeAvailabilityArgs {
   calEvents: CalEvent[];
-  familyEvents: FamilyEvent[];
   blocks: PublicCalendarBlock[];
   bookableWindow: BookableWindow;
   now?: number;
@@ -159,7 +157,7 @@ export function computeAvailability(args: ComputeAvailabilityArgs): AvailableBlo
     }
   }
 
-  // Step 2: build list of busy intervals from cal events + family events
+  // Step 2: build list of busy intervals from cal events
   // Each interval is [startMs, endMs] after applying BUFFER_MS
   type Interval = [number, number];
   const busyIntervals: Interval[] = [];
@@ -174,14 +172,6 @@ export function computeAvailability(args: ComputeAvailabilityArgs): AvailableBlo
     if (ev.allDay) continue;
     const s = new Date(ev.start).getTime();
     const e = new Date(ev.end).getTime();
-    if (isNaN(s) || isNaN(e)) continue;
-    busyIntervals.push([s - BUFFER_MS, e + BUFFER_MS]);
-  }
-
-  for (const ev of args.familyEvents) {
-    if (!ev.count_as_busy_for_public) continue;
-    const s = new Date(ev.start_utc).getTime();
-    const e = new Date(ev.end_utc).getTime();
     if (isNaN(s) || isNaN(e)) continue;
     busyIntervals.push([s - BUFFER_MS, e + BUFFER_MS]);
   }
@@ -353,20 +343,15 @@ export function emitPublicIcs(
 }
 
 // ---------------------------------------------------------------------------
-// Family ICS emit (merged feed for buoy-family.thinhalo.com)
+// Private ICS emit (apex /cal/private.ics — Outlook + synced ICS events)
 // ---------------------------------------------------------------------------
 
-export function emitFamilyIcs(
-  calEvents: CalEvent[],
-  familyEvents: FamilyEvent[],
-  dayNotes: Array<{ date_local: string; body: string }>,
-  weekNotes: Array<{ iso_week: string; body: string }>,
-): string {
+export function emitPrivateIcs(calEvents: CalEvent[]): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Buoy//Family Calendar//EN",
-    "X-WR-CALNAME:Family",
+    "PRODID:-//Buoy//Private Calendar//EN",
+    "X-WR-CALNAME:Buoy private",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
   ];
@@ -391,53 +376,6 @@ export function emitFamilyIcs(
     lines.push("END:VEVENT");
   }
 
-  // Family-added events
-  for (const ev of familyEvents) {
-    const start = new Date(ev.start_utc).getTime();
-    const end = new Date(ev.end_utc).getTime();
-    if (isNaN(start) || isNaN(end)) continue;
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:buoy-family-${ev.id}@buoy`);
-    if (ev.all_day) {
-      const ymd = melbourneDateStr(start).replace(/-/g, "");
-      lines.push(`DTSTART;VALUE=DATE:${ymd}`);
-      lines.push(`DTEND;VALUE=DATE:${ymd}`);
-    } else {
-      lines.push(`DTSTART:${fmtUtcIcs(start)}`);
-      lines.push(`DTEND:${fmtUtcIcs(end)}`);
-    }
-    lines.push(`SUMMARY:${icsEscape(ev.title)}`);
-    if (ev.location) lines.push(`LOCATION:${icsEscape(ev.location)}`);
-    if (ev.notes) lines.push(`DESCRIPTION:${icsEscape(ev.notes)}`);
-    lines.push("END:VEVENT");
-  }
-
-  // Day notes as all-day events
-  for (const dn of dayNotes) {
-    const ymd = dn.date_local.replace(/-/g, "");
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:buoy-family-day-${dn.date_local}@buoy`);
-    lines.push(`DTSTART;VALUE=DATE:${ymd}`);
-    lines.push(`DTEND;VALUE=DATE:${ymd}`);
-    lines.push("SUMMARY:Family note");
-    lines.push(`DESCRIPTION:${icsEscape(dn.body)}`);
-    lines.push("END:VEVENT");
-  }
-
-  // Week notes as all-day events on Monday of that week
-  for (const wn of weekNotes) {
-    const mondayYmd = isoWeekToMondayYmd(wn.iso_week);
-    if (!mondayYmd) continue;
-    const ymd = mondayYmd.replace(/-/g, "");
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:buoy-family-week-${wn.iso_week}@buoy`);
-    lines.push(`DTSTART;VALUE=DATE:${ymd}`);
-    lines.push(`DTEND;VALUE=DATE:${ymd}`);
-    lines.push("SUMMARY:Family note (week)");
-    lines.push(`DESCRIPTION:${icsEscape(wn.body)}`);
-    lines.push("END:VEVENT");
-  }
-
   lines.push("END:VCALENDAR");
   return lines.join("\r\n") + "\r\n";
 }
@@ -450,19 +388,3 @@ function icsEscape(s: string): string {
     .replace(/\n/g, "\\n");
 }
 
-// "2026-W20" → "2026-05-11" (Monday of that ISO week)
-function isoWeekToMondayYmd(isoWeek: string): string | null {
-  const m = /^(\d{4})-W(\d{2})$/.exec(isoWeek);
-  if (!m) return null;
-  const year = parseInt(m[1], 10);
-  const week = parseInt(m[2], 10);
-  // Jan 4 is always in ISO week 1.
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  const jan4Dow = jan4.getUTCDay() || 7; // 1=Mon..7=Sun
-  const mondayOfWeek1 = new Date(jan4.getTime() - (jan4Dow - 1) * 86400000);
-  const target = new Date(mondayOfWeek1.getTime() + (week - 1) * 7 * 86400000);
-  const y = target.getUTCFullYear();
-  const mo = String(target.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(target.getUTCDate()).padStart(2, "0");
-  return `${y}-${mo}-${d}`;
-}

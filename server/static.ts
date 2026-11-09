@@ -12,18 +12,13 @@ export function serveStatic(app: Express) {
     );
   }
 
-  // Stage 17: serve sub-SPAs for family and availability hostnames.
-  // These directories are also served as static assets within the hostname-
-  // specific routers; this middleware handles the catch-all SPA fallback here.
-  const familyDist = path.join(distPath, "family");
+  // Stage 17: serve the availability sub-SPA on its hostname. (The family
+  // sub-SPA was retired on 9 Nov 2026.)
   const availDist = path.join(distPath, "availability");
 
-  // Static assets for family hostname
   app.use((req: Request, res: Response, next: NextFunction) => {
     const kind = classifyHost(req.hostname);
-    if (kind === "family" && fs.existsSync(familyDist)) {
-      express.static(familyDist)(req, res, next);
-    } else if (kind === "availability" && fs.existsSync(availDist)) {
+    if (kind === "availability" && fs.existsSync(availDist)) {
       express.static(availDist)(req, res, next);
     } else {
       next();

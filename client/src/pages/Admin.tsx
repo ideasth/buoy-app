@@ -338,26 +338,9 @@ const PUBLISHED_FEEDS: Array<{
     description: "Personal (non-work): GP, dental, gym, errands, etc.",
   },
   {
-    label: "Family",
-    url: "https://raw.githubusercontent.com/ideasth/cal-07ec8bc0/main/Family-Group.ics",
-    description:
-      "Kids rotation, school terms, holidays, kids' activities, couple time.",
-  },
-  {
-    label: "Marieke — Art",
-    url: "https://raw.githubusercontent.com/ideasth/cal-07ec8bc0/main/Marieke-Art.ics",
-    description:
-      "Art class, studio time, and Wallan artist-in-residence dates.",
-  },
-  {
-    label: "Marieke — Personal",
-    url: "https://raw.githubusercontent.com/ideasth/cal-07ec8bc0/main/Marieke-Personal.ics",
-    description: "Events from Marieke's iCloud calendar feed.",
-  },
-  {
     label: "Master (everything in one)",
     url: "https://raw.githubusercontent.com/ideasth/cal-07ec8bc0/main/Oliver-Daly-MASTER.ics",
-    description: "All of the above merged into a single subscribable feed.",
+    description: "Work and personal merged into a single subscribable feed.",
   },
 ];
 

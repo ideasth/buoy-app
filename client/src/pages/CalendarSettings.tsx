@@ -1,8 +1,7 @@
 // Stage 17 — Calendar settings page (/settings/calendars).
-// Served on apex (buoy.thinhalo.com) only. Three cards:
+// Served on apex (buoy.thinhalo.com) only. Two cards (family card retired 9 Nov 2026):
 //   1. Public availability calendar (oliver-availability.thinhalo.com)
 //   2. Private calendar subscription (apex /cal/private.ics)
-//   3. Family calendar (buoy-family.thinhalo.com)
 // Plus a link to /settings/calendars/blocks.
 
 import { useState, useEffect } from "react";
@@ -18,9 +17,6 @@ interface CalendarSettings {
   private_calendar_enabled: boolean;
   private_calendar_user: string | null;
   private_calendar_token: string | null;
-  family_calendar_enabled: boolean;
-  family_calendar_user: string | null;
-  family_calendar_token: string | null;
 }
 
 const BOOKABLE_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -64,10 +60,6 @@ export default function CalendarSettings() {
   const [privUser, setPrivUser] = useState("");
   const [privPassword, setPrivPassword] = useState("");
 
-  // Family calendar state
-  const [famEnabled, setFamEnabled] = useState(false);
-  const [famUser, setFamUser] = useState("");
-  const [famPassword, setFamPassword] = useState("");
 
   useEffect(() => {
     if (!data) return;
@@ -80,8 +72,6 @@ export default function CalendarSettings() {
     }
     setPrivEnabled(data.private_calendar_enabled);
     setPrivUser(data.private_calendar_user ?? "");
-    setFamEnabled(data.family_calendar_enabled);
-    setFamUser(data.family_calendar_user ?? "");
   }, [data]);
 
   const saveMutation = useMutation({
@@ -96,7 +86,7 @@ export default function CalendarSettings() {
   });
 
   const rotateMutation = useMutation({
-    mutationFn: async (which: "public" | "private" | "family") => {
+    mutationFn: async (which: "public" | "private") => {
       const r = await apiRequest("POST", "/api/settings/calendars/rotate-token", { which });
       return r.json() as Promise<{ token: string }>;
     },
@@ -125,31 +115,16 @@ export default function CalendarSettings() {
     setPrivPassword("");
   }
 
-  function saveFamily() {
-    const patch: Record<string, unknown> = {
-      family_calendar_enabled: famEnabled,
-      family_calendar_user: famUser,
-    };
-    if (famPassword) patch.family_calendar_password = famPassword;
-    saveMutation.mutate(patch);
-    setFamPassword("");
-  }
-
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading...</div>;
 
   const pubToken = data?.public_calendar_token ?? "";
   const privToken = data?.private_calendar_token ?? "";
-  const famToken = data?.family_calendar_token ?? "";
   const privUser_ = data?.private_calendar_user ?? "";
-  const famUser_ = data?.family_calendar_user ?? "";
 
   const pubIcsUrl = `https://oliver-availability.thinhalo.com/elgin.ics?t=${pubToken}`;
   const pubHtmlUrl = `https://oliver-availability.thinhalo.com/?t=${pubToken}`;
   const privBasicUrl = `https://${privUser_}@buoy.thinhalo.com/cal/private.ics`;
   const privTokenUrl = `https://buoy.thinhalo.com/cal/private/${privToken}.ics`;
-  const famBasicUrl = `https://buoy-family.thinhalo.com/cal/private.ics`;
-  const famTokenUrl = `https://buoy-family.thinhalo.com/?t=${famToken}`;
-  const famIcsTokenUrl = `https://buoy-family.thinhalo.com/cal/${famToken}.ics`;
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-8">
@@ -368,106 +343,6 @@ export default function CalendarSettings() {
           className="px-4 py-1 text-sm bg-primary text-primary-foreground rounded"
         >
           Save private calendar settings
-        </button>
-      </section>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Card 3 — Family calendar */}
-      {/* ------------------------------------------------------------------ */}
-      <section className="border rounded-lg p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Family calendar</h2>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={famEnabled}
-              onChange={(e) => setFamEnabled(e.target.checked)}
-            />
-            Enabled
-          </label>
-        </div>
-
-        <div>
-          <label className="text-sm text-muted-foreground">Family username</label>
-          <input
-            className="w-full border rounded px-2 py-1 text-sm mt-0.5"
-            value={famUser}
-            onChange={(e) => setFamUser(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-muted-foreground">Shared family password (write-only)</label>
-          <input
-            type="password"
-            className="w-full border rounded px-2 py-1 text-sm mt-0.5"
-            value={famPassword}
-            onChange={(e) => setFamPassword(e.target.value)}
-            placeholder="Set new password..."
-          />
-        </div>
-
-        <div>
-          <div className="text-sm text-muted-foreground mb-1">Family page URL (token link)</div>
-          <div className="flex gap-2">
-            <code className="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
-              {famTokenUrl}
-            </code>
-            <button
-              onClick={() => copyToClipboard(famTokenUrl)}
-              className="text-xs px-3 py-1 border rounded shrink-0"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <div className="text-sm text-muted-foreground mb-1">Family ICS token URL</div>
-          <div className="flex gap-2">
-            <code className="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
-              {famIcsTokenUrl}
-            </code>
-            <button
-              onClick={() => copyToClipboard(famIcsTokenUrl)}
-              className="text-xs px-3 py-1 border rounded shrink-0"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <div className="text-sm text-muted-foreground mb-1">Family ICS basic-auth URL</div>
-          <div className="flex gap-2">
-            <code className="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
-              {famBasicUrl}
-            </code>
-            <button
-              onClick={() => copyToClipboard(famBasicUrl)}
-              className="text-xs px-3 py-1 border rounded shrink-0"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-
-        <button
-          onClick={() => {
-            if (confirm("Rotate family token? Anyone using the token link must update it.")) {
-              rotateMutation.mutate("family");
-            }
-          }}
-          className="text-sm px-3 py-1 border rounded"
-        >
-          Rotate token
-        </button>
-
-        <button
-          onClick={saveFamily}
-          className="px-4 py-1 text-sm bg-primary text-primary-foreground rounded"
-        >
-          Save family calendar settings
         </button>
       </section>
     </div>
