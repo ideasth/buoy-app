@@ -72,6 +72,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
         if (location === "/capture") return;
         e.preventDefault();
         setQuickCaptureOpen(true);
+        return;
+      }
+      // Stage 26b — plain `c` opens capture, unless the user is typing.
+      if ((e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        const ae = document.activeElement as HTMLElement | null;
+        const tag = ae?.tagName;
+        if (ae?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (document.querySelector('[role="dialog"]')) return;
+        if (location === "/capture") return;
+        e.preventDefault();
+        setQuickCaptureOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -192,6 +203,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
         className="md:hidden fixed bottom-5 right-5 z-30 rounded-full px-4 py-3 text-sm font-medium shadow-lg bg-destructive text-destructive-foreground hover:opacity-90"
       >
         I'm late
+      </button>
+
+      {/* Stage 26b — floating capture button on every page. Sits above the
+          mobile "I'm late" button; bottom-right on desktop. */}
+      <button
+        type="button"
+        onClick={() => setQuickCaptureOpen(true)}
+        data-testid="button-capture-fab"
+        aria-label="Capture (c)"
+        title="Capture (c)"
+        className="fixed bottom-20 right-5 md:bottom-6 md:right-6 z-30 h-12 w-12 rounded-full shadow-lg bg-primary text-primary-foreground hover:opacity-90 flex items-center justify-center text-2xl leading-none"
+      >
+        +
       </button>
 
       <LateModal open={lateOpen} onOpenChange={setLateOpen} />

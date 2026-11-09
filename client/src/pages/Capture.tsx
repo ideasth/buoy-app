@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { saveCaptureItem, capturedToast } from "@/lib/capture";
 import { classifyTask, ESTIMATE_PRESETS, domainLabel, DOMAIN_OPTIONS } from "@/lib/anchor";
 import { Mic, MicOff, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -32,24 +32,20 @@ export default function Capture() {
     setDomain(cls.domain);
   }, [title, domainTouched]);
 
+  // Stage 26b — same save path as the capture button (tag "check", Undo toast).
   const submit = async () => {
     const t = title.trim();
     if (!t) return;
-    const cls = classifyTask(t);
     try {
-      const payload: any = {
-        title: t,
-        domain,
-        priority: cls.priority ?? "iftime",
+      const item = await saveCaptureItem({
+        text: t,
+        domain: domainTouched ? domain : null,
         estimateMinutes: estimate,
-        status: "todo",
-      };
-      await apiRequest("POST", "/api/tasks", payload);
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      });
       setTitle("");
       setEstimate(30);
       setDomainTouched(false);
-      toast({ title: "Captured", description: t.slice(0, 60) });
+      capturedToast(toast as any, item);
       ref.current?.focus();
     } catch (err) {
       toast({ title: "Save failed", description: String(err), variant: "destructive" });

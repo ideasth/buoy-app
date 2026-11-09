@@ -17,6 +17,7 @@ import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./ava
 import { resolveTravel } from "./travel";
 import { registerOnTimeRoutes } from "./ontime/routes";
 import { ProjectEventStore, PROJECT_EVENT_KINDS } from "./project-events";
+import { validateCapture, saveCapture, shouldClearCheck, type CaptureDeps } from "./capture";
 import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
 // can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
@@ -232,7 +233,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.patch("/api/tasks/:id", (req, res) => {
     const id = Number(req.params.id);
-    const updated = storage.updateTask(id, req.body);
+    // Stage 26b — engaging with a captured item clears its "check" tag.
+    const body = { ...(req.body ?? {}) };
+    if (shouldClearCheck(storage.getTask(id) as any, body)) body.tag = null;
+    const updated = storage.updateTask(id, body);
     if (!updated) return res.status(404).json({ message: "not found" });
     res.json(updated);
   });
@@ -540,6 +544,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ? req.query.kind : null;
     const sinceMs = Date.now() - days * 86_400_000;
     res.json({ days, events: projectEvents.list({ sinceMs, projectId: Number.isFinite(pid as number) ? pid : null, kind }) });
+  });
+
+  // ---- Stage 26b: capture (shared save rules) ----
+  const captureDeps: CaptureDeps = {
+    getProject: (id) => storage.getProject(id) as any,
+    createTask: (t) => storage.createTask(t as any),
+    createProjectTask: (t) => storage.createProjectTask(t as any),
+    recordEvent: (projectId, summary, detail) => projectEvents.record(projectId, "capture", summary, detail),
+  };
+  app.post("/api/capture/item", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const v = validateCapture(req.body);
+    if (!v.ok) return res.status(v.status).json({ error: v.error });
+    const r = saveCapture(captureDeps, v.value);
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    res.json(r);
+  });
+  // Undo within the toast window: remove the item (and a project capture's event).
+  app.delete("/api/capture/item/:kind/:id", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid_id" });
+    if (req.params.kind === "task") {
+      storage.deleteTask(id);
+    } else if (req.params.kind === "project_task") {
+      storage.deleteProjectTask(id);
+      projectEvents.deleteCaptureEvent(id);
+    } else {
+      return res.status(400).json({ error: "invalid_kind" });
+    }
+    res.json({ ok: true });
   });
 
   // ---- Stage 25: On Time (leave-by cues, ntfy alerts, email triage) ----

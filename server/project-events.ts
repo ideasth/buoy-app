@@ -140,6 +140,15 @@ CREATE INDEX IF NOT EXISTS idx_project_events_project_at ON project_events(proje
     });
   }
 
+  /** Stage 26b — undo of a project capture removes its "capture" event too. */
+  deleteCaptureEvent(projectTaskId: number): void {
+    try {
+      this.db.prepare(`DELETE FROM project_events WHERE kind = 'capture' AND json_extract(detail_json, '$.projectTaskId') = ?`).run(projectTaskId);
+    } catch (e) {
+      console.warn("[project-events] deleteCaptureEvent failed:", (e as Error).message);
+    }
+  }
+
   countSince(sinceMs: number): number {
     const r = this.db.prepare(`SELECT COUNT(*) AS n FROM project_events WHERE at >= ?`).get(sinceMs) as { n: number };
     return r.n;

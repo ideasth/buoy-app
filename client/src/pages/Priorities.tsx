@@ -518,6 +518,10 @@ export default function Priorities() {
       return true;
     });
   }, [allTasks, searchText, filterDomain, filterStatus, filterPriority, filterTag]);
+  const needsALookCount = useMemo(
+    () => allTasks.filter((t) => (t.tag ?? "").toLowerCase() === "check" && (t.status === "todo" || t.status === "doing")).length,
+    [allTasks],
+  );
 
   const drawerTask = drawerTaskId != null ? tasksById.get(drawerTaskId) ?? null : null;
 
@@ -697,6 +701,19 @@ export default function Priorities() {
             />
           </div>
           <div className="flex flex-wrap gap-2">
+            {/* Stage 26b — captured items waiting to be sorted (tag "check"). */}
+            <Button
+              variant={filterTag.toLowerCase() === "check" ? "default" : "outline"}
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => setFilterTag(filterTag.toLowerCase() === "check" ? "all" : "check")}
+              data-testid="filter-needs-a-look"
+            >
+              Needs a look
+              {needsALookCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-muted px-1.5 text-[10px] text-foreground">{needsALookCount}</span>
+              )}
+            </Button>
             <Select value={filterDomain} onValueChange={setFilterDomain}>
               <SelectTrigger className="h-8 w-auto" data-testid="filter-domain">
                 <SelectValue placeholder="Domain" />
