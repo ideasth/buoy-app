@@ -216,8 +216,11 @@ describe("searchSlots — source filtering via events passed", () => {
 
     const resultOutlookOnly = searchSlots(parsedWeekday, []);
 
-    // Block the first Tuesday's morning (exact date).
-    const tue = nextWeekday(2);
+    // Block the morning of the first candidate's own date (on a Tuesday
+    // morning that is today, not next week — the old nextWeekday(2) choice
+    // made this test fail every Tuesday before noon).
+    const firstMs = new Date(resultOutlookOnly.candidates[0].meetingStart).getTime();
+    const tue = new Date(firstMs + melbOffsetHours(firstMs) * 3600 * 1000).toISOString().slice(0, 10);
     const icsBusy: CalEvent[] = [busyEvent("ics-1", tue, 7, 12)];
     const resultWithIcs = searchSlots(parsedWeekday, icsBusy);
 

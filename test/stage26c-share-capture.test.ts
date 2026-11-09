@@ -131,7 +131,9 @@ describe("wiring", () => {
     expect(r).toMatch(/app\.delete\("\/api\/capture-tokens\/:id"[\s\S]{0,80}requireUserOrOrchestrator/);
     const i = read("server/index.ts");
     expect(i).toContain('express.json({ limit: "20kb" })');
-    expect(i).toContain('!path.startsWith("/api/capture")');
+    // Stage 33 moved the redaction list into server/log-paths.ts.
+    expect(i).toContain("!isQuietLogPath(path)");
+    expect(read("server/log-paths.ts")).toContain('path.startsWith("/api/capture")');
     expect(read("client/src/pages/Admin.tsx")).toContain("<ShareDevicesCard />");
   });
 });

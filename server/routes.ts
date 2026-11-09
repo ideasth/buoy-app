@@ -1,3 +1,4 @@
+import { elginEvents, elginStatus, storeElginIcs, validateElginIcs, rotateElginToken, checkElginToken, ELGIN_KEY } from "./elgin-feed";
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import { storage, rawSqlite, legacyStatusForPmtStatus, pmtStatusForLegacyStatus } from "./storage";
@@ -491,6 +492,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.status(result.status).json(result.body);
   });
 
+  // ---- Stage 33: private Elgin House (Xestro) feed ----
+  const elginKv = { get: getSetting, set: setSetting };
+  app.post("/api/calendar/elgin-feed", (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    const v = validateElginIcs(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    storeElginIcs(elginKv, v.ics);
+    res.json({ ok: true, eventCount: v.count });
+  });
+  app.get("/api/calendar/elgin-feed/status", (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json(elginStatus(elginKv));
+  });
+  // Rotating invalidates the old subscription link. Returns the token once.
+  app.post("/api/calendar/elgin-feed/token", (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    res.json({ token: rotateElginToken(elginKv) });
+  });
+  // Token-only subscription feed for Oliver's own calendar apps.
+  app.get("/api/calendar/elgin.ics", (req, res) => {
+    const ics = elginKv.get(ELGIN_KEY.ICS);
+    if (!ics || !checkElginToken(elginKv, req.query.t)) return res.status(404).send("Not Found");
+    res.set("Cache-Control", "private, no-store");
+    res.set("X-Robots-Tag", "noindex");
+    res.type("text/calendar; charset=utf-8").send(ics);
+  });
+
   // ---- Calendar events ----
   async function getMergedPlannerEvents(force = false) {
     const s = storage.getSettings();
@@ -499,6 +527,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       { url: s.aupfhs_ics_url || "", summaryPrefix: "[Personal]", forceSource: "external" },
       sharedFeedSpec(s.shared_ics_url),
     ], force);
+    // Stage 33 — private Elgin House (Xestro) appointments, info-only.
+    try {
+      const seen = new Set(feedEvents.map((e) => e.uid));
+      for (const e of elginEvents(elginKv)) if (!seen.has(e.uid)) feedEvents.push(e);
+    } catch (e) {
+      console.warn("[planner] failed to merge Elgin House feed");
+    }
     // Merge SQLite adhoc events so newly-added items appear immediately, before
     // the next full ICS rebuild lands them in the master feed.
     // De-dupe: skip any adhoc row whose UID already exists in the ICS feed

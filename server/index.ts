@@ -1,3 +1,4 @@
+import { isQuietLogPath } from "./log-paths";
 import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
@@ -29,12 +30,16 @@ const jsonDefault = express.json({
 const jsonUpload = express.json({ limit: "36mb" });
 // Stage 26c — Share to Buoy bodies are small; anything bigger is a 413.
 const jsonCapture = express.json({ limit: "20kb" });
+// Stage 33 — Elgin House ICS upload from the Xestro import.
+const jsonElgin = express.json({ limit: "3mb" });
 app.use((req, res, next) =>
   req.path === "/api/ontime/email-upload"
     ? jsonUpload(req, res, next)
     : req.path === "/api/capture"
       ? jsonCapture(req, res, next)
-      : jsonDefault(req, res, next),
+      : req.path === "/api/calendar/elgin-feed"
+        ? jsonElgin(req, res, next)
+        : jsonDefault(req, res, next),
 );
 
 app.use(express.urlencoded({ extended: false }));
@@ -68,7 +73,8 @@ app.use((req, res, next) => {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       // Stage 25: never write On Time bodies (email subjects/snippets) to logs.
       // Stage 26b/c: nor capture bodies or capture-token responses (raw token).
-      if (capturedJsonResponse && !path.startsWith("/api/ontime/") && !path.startsWith("/api/capture")) {
+      // Stage 33: nor calendar/planner bodies (Elgin House appointments carry patient names).
+      if (capturedJsonResponse && !isQuietLogPath(path)) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 

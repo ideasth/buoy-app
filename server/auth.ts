@@ -191,6 +191,8 @@ const ALLOWLIST_EXACT = new Set<string>([
   "/api/health",
   // Stage 32 — status feed for the Power Automate uptime flow (no personal data).
   "/api/status.rss",
+  // Stage 33 — private Elgin House feed; the route checks its own token (404 otherwise).
+  "/api/calendar/elgin.ics",
   // Public Family Notes ICS feed — subscription clients can't pass auth
   // headers, and the contents are intentionally shareable with family.
   "/api/planner/notes.ics",
