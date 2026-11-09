@@ -13,8 +13,9 @@ import { OnTimeStore } from "./store";
 import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
-import { readGraphCreds, setMessageFlag } from "./graph";
-import { decideFlag, applyFlag, type FlagSyncDeps } from "./flagsync";
+import { readGraphCreds, setMessageFlag, getMessageCategories, patchMessage, moveMessage } from "./graph";
+import { planMailSync, runMailSync, isEmptyPlan, PerRowQueue, type MailOps } from "./mailsync";
+import { applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
 import express from "express";
 import { addDaysKey, melbDateKey, melbToUtcMs } from "./time";
@@ -84,6 +85,24 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     },
     record: (id, state, error) => store.setFlagResult(id, state, error),
   };
+
+  // Stage 30 — labels + filing. Ops resolve credentials per call.
+  const creds = () => { const c = readGraphCreds(); if (!c) throw new Error("Graph credentials not installed"); return c; };
+  const mailOps: MailOps = {
+    getCategories: (id) => getMessageCategories(creds(), id),
+    patchMessage: (id, body) => patchMessage(creds(), id, body),
+    move: (id, dest) => moveMessage(creds(), id, dest),
+  };
+  const mailQueue = new PerRowQueue();
+  const syncRow = (id: number, opts: { flags: boolean; filing: boolean }) =>
+    mailQueue.run(id, async () => {
+      const row = store.getTriage(id); // re-read inside the queue: latest id + state
+      if (!row) return { ok: false, error: "not found", plan: null };
+      const plan = planMailSync(row, opts);
+      if (isEmptyPlan(plan)) return { ok: true, plan };
+      const r = await runMailSync(mailOps, (rid, rec) => store.setMailSyncResult(rid, rec), row, plan);
+      return { ...r, plan };
+    });
 
   app.get("/api/ontime/config", (req, res) => {
     if (!deps.guard(req, res)) return;
@@ -187,15 +206,31 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     const b = (req.body ?? {}) as { status?: string; category?: string };
     const row = store.updateTriage(id, { status: b.status, category: b.category });
     if (!row) return res.status(404).json({ error: "not found" });
-    // Stage 29 — flag-only Outlook sync, only when switched on.
-    const action = store.getConfig().flagSyncEnabled ? decideFlag(row) : null;
-    if (action) void applyFlag(flagDeps, row, action);
+    // Stage 29/30 — Outlook flags, labels and filing, each behind its switch.
+    const cfg = store.getConfig();
+    const opts = { flags: cfg.flagSyncEnabled, filing: cfg.mailFilingEnabled };
+    const plan = planMailSync(row, opts);
+    if (!isEmptyPlan(plan)) void syncRow(row.id, opts).catch(() => undefined);
     const { body_for_llm, ...rest } = row;
-    res.json({ ...rest, flagAction: action });
+    res.json({ ...rest, mailPlan: plan });
   });
 
   // Stage 29 — manual one-email test. Works even with the switch off so the
   // write can be checked on a single message before switching it on.
+  // Stage 30 — one-email test of labels + filing (and flags), switches ignored.
+  app.post("/api/ontime/triage/:id/mail-sync", async (req, res) => {
+    if (!deps.guard(req, res)) return;
+    const id = Number(req.params.id);
+    if (!store.getTriage(id)) return res.status(404).json({ error: "not found" });
+    if (!readGraphCreds()) return res.status(409).json({ error: "Graph credentials not installed" });
+    const r = await syncRow(id, { flags: true, filing: true });
+    const after = store.getTriage(id);
+    res.status(r.ok ? 200 : 502).json({
+      ...r, flag_state: after?.flag_state ?? null, buoy_label: after?.buoy_label ?? null,
+      filed_folder: after?.filed_folder ?? null, flag_error: after?.flag_error ?? null,
+    });
+  });
+
   app.post("/api/ontime/triage/:id/flag", async (req, res) => {
     if (!deps.guard(req, res)) return;
     const row = store.getTriage(Number(req.params.id));

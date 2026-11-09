@@ -61,6 +61,10 @@ export interface TriageRow {
   flag_state?: "flagged" | "cleared" | null;
   flag_error?: string | null;
   flag_synced_at?: number | null;
+  // Stage 30 — Outlook labels + filing. buoy_label is the Buoy category
+  // currently on the message; filed_folder = 'buoy_done' once Buoy moved it.
+  buoy_label?: string | null;
+  filed_folder?: string | null;
 }
 
 export function initOnTimeSchema(db: Db): void {
@@ -131,6 +135,8 @@ CREATE TABLE IF NOT EXISTS ontime_kv (
   if (!cols.has("flag_state")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_state TEXT`);
   if (!cols.has("flag_error")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_error TEXT`);
   if (!cols.has("flag_synced_at")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_synced_at INTEGER`);
+  if (!cols.has("buoy_label")) db.exec(`ALTER TABLE email_triage ADD COLUMN buoy_label TEXT`);
+  if (!cols.has("filed_folder")) db.exec(`ALTER TABLE email_triage ADD COLUMN filed_folder TEXT`);
 }
 
 export class OnTimeStore {
@@ -329,7 +335,7 @@ export class OnTimeStore {
     return this.db.prepare(
       `SELECT id, source, external_id, received_at, sender, sender_name, subject, snippet, web_link, category, summary,
               deadline_text, deadline_date, is_priority, rule_hits, model, status, task_id, nudged_at, NULL AS body_for_llm,
-              classified_at, created_at, updated_at, flag_state, flag_error, flag_synced_at
+              classified_at, created_at, updated_at, flag_state, flag_error, flag_synced_at, buoy_label, filed_folder
        FROM email_triage ${where} ORDER BY received_at DESC LIMIT ?`,
     ).all(opts.limit ?? 300) as TriageRow[];
   }
@@ -349,6 +355,20 @@ export class OnTimeStore {
     this.db.prepare(
       `UPDATE email_triage SET flag_state = COALESCE(?, flag_state), flag_error = ?, flag_synced_at = ? WHERE id = ?`,
     ).run(state, error, this.clock(), id);
+  }
+  /** Stage 30 — record one mail-sync step. flag_error holds the latest sync error. */
+  setMailSyncResult(id: number, r: {
+    externalId?: string; webLink?: string | null; flagState?: string; buoyLabel?: string | null;
+    filedFolder?: string | null; error: string | null;
+  }): void {
+    const sets: string[] = ["flag_error = ?", "flag_synced_at = ?"];
+    const vals: unknown[] = [r.error, this.clock()];
+    if (r.externalId !== undefined) { sets.push("external_id = ?"); vals.push(r.externalId); }
+    if (r.webLink !== undefined) { sets.push("web_link = ?"); vals.push(r.webLink); }
+    if (r.flagState !== undefined) { sets.push("flag_state = ?"); vals.push(r.flagState); }
+    if (r.buoyLabel !== undefined) { sets.push("buoy_label = ?"); vals.push(r.buoyLabel); }
+    if (r.filedFolder !== undefined) { sets.push("filed_folder = ?"); vals.push(r.filedFolder); }
+    this.db.prepare(`UPDATE email_triage SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
   }
   /** Retention: drop snippets of closed items older than 30 days. */
   pruneTriage(olderThanMs: number): number {

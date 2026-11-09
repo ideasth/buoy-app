@@ -36,6 +36,7 @@ export interface OnTimeConfig {
   emailBackfillDays: number;     // first sync / re-backfill window (days)
   emailNudges: boolean;          // push act-today emails with a near deadline
   flagSyncEnabled: boolean;      // Stage 29: flag-only Outlook sync (default OFF)
+  mailFilingEnabled: boolean;    // Stage 30: Buoy labels + file Done/Dismissed (default OFF)
   ollamaUrl: string;
   ollamaModel: string;
   routine: RoutineCue[];
@@ -78,6 +79,7 @@ export const DEFAULT_CONFIG: OnTimeConfig = {
   emailBackfillDays: 30,
   emailNudges: true,
   flagSyncEnabled: false,
+  mailFilingEnabled: false,
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen2.5:7b",
   routine: DEFAULT_ROUTINE,
@@ -119,6 +121,7 @@ export function mergeConfig(cur: OnTimeConfig, patch: Record<string, unknown>): 
   if ("emailBackfillDays" in p) out.emailBackfillDays = clampInt(p.emailBackfillDays, 1, 60, cur.emailBackfillDays);
   if (typeof p.emailNudges === "boolean") out.emailNudges = p.emailNudges;
   if (typeof p.flagSyncEnabled === "boolean") out.flagSyncEnabled = p.flagSyncEnabled;
+  if (typeof p.mailFilingEnabled === "boolean") out.mailFilingEnabled = p.mailFilingEnabled;
   if (typeof p.ollamaUrl === "string") out.ollamaUrl = p.ollamaUrl.trim().replace(/\/+$/, "");
   if (typeof p.ollamaModel === "string") out.ollamaModel = p.ollamaModel.trim().slice(0, 80);
   if (Array.isArray(p.routine)) {
