@@ -33,6 +33,7 @@ export interface OnTimeConfig {
   publicBaseUrl: string;         // used for action-button callbacks
   emailEnabled: boolean;         // poll Microsoft Graph (needs secret file)
   emailPollMinutes: number;
+  emailBackfillDays: number;     // first sync / re-backfill window (days)
   emailNudges: boolean;          // push act-today emails with a near deadline
   ollamaUrl: string;
   ollamaModel: string;
@@ -73,6 +74,7 @@ export const DEFAULT_CONFIG: OnTimeConfig = {
   publicBaseUrl: "https://buoy.thinhalo.com",
   emailEnabled: false,
   emailPollMinutes: 10,
+  emailBackfillDays: 30,
   emailNudges: true,
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen2.5:7b",
@@ -112,6 +114,7 @@ export function mergeConfig(cur: OnTimeConfig, patch: Record<string, unknown>): 
   if (typeof p.publicBaseUrl === "string") out.publicBaseUrl = p.publicBaseUrl.trim().replace(/\/+$/, "");
   if (typeof p.emailEnabled === "boolean") out.emailEnabled = p.emailEnabled;
   if ("emailPollMinutes" in p) out.emailPollMinutes = clampInt(p.emailPollMinutes, 5, 120, cur.emailPollMinutes);
+  if ("emailBackfillDays" in p) out.emailBackfillDays = clampInt(p.emailBackfillDays, 1, 60, cur.emailBackfillDays);
   if (typeof p.emailNudges === "boolean") out.emailNudges = p.emailNudges;
   if (typeof p.ollamaUrl === "string") out.ollamaUrl = p.ollamaUrl.trim().replace(/\/+$/, "");
   if (typeof p.ollamaModel === "string") out.ollamaModel = p.ollamaModel.trim().slice(0, 80);

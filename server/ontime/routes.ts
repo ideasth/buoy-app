@@ -233,6 +233,19 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     res.json({ fetched: engine.status.lastMailFetched, error: engine.status.lastMailError, queued: store.queuedCount() });
   });
 
+  // Re-read the last N days (default: config emailBackfillDays, 30).
+  app.post("/api/ontime/email-backfill", async (req, res) => {
+    if (!deps.guard(req, res)) return;
+    const raw = (req.body ?? {}) as { days?: unknown };
+    const days = raw.days === undefined ? undefined : Number(raw.days);
+    if (days !== undefined && (!Number.isFinite(days) || days < 1 || days > 60)) {
+      return res.status(400).json({ error: "days must be 1-60" });
+    }
+    await engine.rebackfill(days);
+    void engine.drainTriage();
+    res.json({ fetched: engine.status.lastMailFetched, error: engine.status.lastMailError, queued: store.queuedCount() });
+  });
+
   if (deps.startEngine !== false) engine.start();
   return { store, engine };
 }

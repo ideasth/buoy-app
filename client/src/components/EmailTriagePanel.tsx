@@ -138,6 +138,16 @@ export function EmailTriagePanel() {
     }
   };
 
+  const backfill = async () => {
+    try {
+      const r = await (await apiRequest("POST", "/api/ontime/email-backfill", {})).json();
+      toast({ title: r.error ? "Email not connected" : `Re-read ${r.fetched} emails`, description: r.error ?? "New ones are sorted in the background." });
+      refresh();
+    } catch (e) {
+      toast({ title: "Re-read failed", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   return (
     <section className="space-y-4" data-testid="email-triage-panel">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -148,9 +158,14 @@ export function EmailTriagePanel() {
             {q.data?.queued ? ` Sorting: ${q.data.queued} left (about ${Math.max(1, Math.round((q.data.queued * 16) / 60))} min).` : ""}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={syncNow} data-testid="button-email-sync">
-          <RefreshCw className="h-4 w-4 mr-1" /> Check now
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={syncNow} data-testid="button-email-sync">
+            <RefreshCw className="h-4 w-4 mr-1" /> Check now
+          </Button>
+          <Button size="sm" variant="ghost" onClick={backfill} data-testid="button-email-backfill" title="Re-read the last 30 days of Inbox mail">
+            Re-read 30 days
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-1" role="tablist">

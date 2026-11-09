@@ -264,7 +264,7 @@ export class OnTimeEngine {
     return { status: 200, text: act === "omw" ? "Great - travel safe." : "Noted." };
   }
 
-  async pollMail(): Promise<void> {
+  async pollMail(backfillDaysOverride?: number): Promise<void> {
     const now = this.now();
     this.status.lastMailPollAt = now;
     const creds = (this.d.graphCreds ?? readGraphCreds)();
@@ -272,7 +272,8 @@ export class OnTimeEngine {
     try {
       const prev = this.d.store.kvGet("graph_delta_link");
       const fn = this.d.pollInboxFn ?? pollInbox;
-      const { messages, deltaLink } = await fn(creds, prev);
+      const days = backfillDaysOverride ?? this.cfg().emailBackfillDays ?? 30;
+      const { messages, deltaLink } = await fn(creds, prev || null, days);
       for (const m of messages) {
         this.d.store.insertTriage({
           source: "graph", externalId: m.id, receivedAt: m.receivedAt, sender: m.sender,
@@ -287,6 +288,16 @@ export class OnTimeEngine {
     } catch (e) {
       this.status.lastMailError = (e as Error).message;
     }
+  }
+
+  /**
+   * Re-read the last N days of Inbox mail: forget the stored delta link so the
+   * next poll does a fresh backfill. Existing triage rows are kept (inserts
+   * dedupe on message id); old mail never triggers phone nudges (12h rule).
+   */
+  async rebackfill(days?: number): Promise<void> {
+    this.d.store.kvSet("graph_delta_link", "");
+    await this.pollMail(days);
   }
 
   async drainTriage(maxItems = 50): Promise<number> {
