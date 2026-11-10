@@ -1,4 +1,4 @@
-import { elginEvents, fitElginBlocks, elginStatus, storeElginIcs, validateElginIcs, rotateElginToken, checkElginToken, ELGIN_KEY } from "./elgin-feed";
+import { elginEvents, fitElginBlocks, synthElginSessions, elginStatus, storeElginIcs, validateElginIcs, rotateElginToken, checkElginToken, ELGIN_KEY } from "./elgin-feed";
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import { storage, rawSqlite, legacyStatusForPmtStatus, pmtStatusForLegacyStatus } from "./storage";
@@ -534,6 +534,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Stage 33b — reshape the AM/PM Elgin blocks to the day's appointments.
       const fitted = fitElginBlocks(feedEvents, appts);
       feedEvents.splice(0, feedEvents.length, ...fitted);
+      // Stage 34b — session blocks for sessions the roster doesn't carry.
+      feedEvents.push(...synthElginSessions(fitted, appts));
       for (const e of appts) if (!seen.has(e.uid)) feedEvents.push(e);
     } catch (e) {
       console.warn("[planner] failed to merge Elgin House feed");
