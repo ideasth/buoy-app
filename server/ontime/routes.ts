@@ -20,6 +20,7 @@ import { planMailSync, planPruneCleanup, runMailSync, isEmptyPlan, PerRowQueue, 
 import { applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
 import express from "express";
+import { ELGIN_SUMMARY_PREFIX, isElginBlock } from "../elgin-feed";
 import { addDaysKey, melbDateKey, melbToUtcMs } from "./time";
 
 export interface OnTimeRouteDeps {
@@ -34,6 +35,28 @@ export interface OnTimeRouteDeps {
   createTask: (t: { title: string; dueAt: number; notes: string }) => number | null;
   startEngine?: boolean;
   getCaptureDigest?: EngineDeps["getCaptureDigest"];
+}
+
+export interface ScheduleItem { uid: string; kind: "session" | "appointment"; title: string; startMs: number; endMs: number; location: string | null }
+
+/** Elgin House sessions (roster or synthesised) and Xestro appointments in [from, to). */
+export function elginSchedule(events: any[], from: number, to: number): ScheduleItem[] {
+  const out: ScheduleItem[] = [];
+  for (const ev of events ?? []) {
+    if (!ev || ev.allDay) continue;
+    const summary = String(ev.summary ?? "").trim();
+    const uid = String(ev.uid ?? "");
+    const isAppt = summary.startsWith(ELGIN_SUMMARY_PREFIX);
+    const isSession = !isAppt && (uid.startsWith("elgin-session-") || isElginBlock(ev));
+    if (!isAppt && !isSession) continue;
+    const startMs = Date.parse(ev.start);
+    const endMs = Date.parse(ev.end ?? ev.start);
+    if (!Number.isFinite(startMs) || startMs < from || startMs >= to) continue;
+    const title = isAppt ? summary.slice(ELGIN_SUMMARY_PREFIX.length).trim().replace(/^EH:\s*/, "") : summary;
+    out.push({ uid, kind: isAppt ? "appointment" : "session", title, startMs, endMs: Number.isFinite(endMs) ? endMs : startMs, location: ev.location ?? null });
+  }
+  // Sessions before their appointments at the same start time.
+  return out.sort((a, b) => a.startMs - b.startMs || (a.kind === b.kind ? 0 : a.kind === "session" ? -1 : 1));
 }
 
 export function toPlanEvents(deps: OnTimeRouteDeps, events: any[]): PlanEvent[] {
@@ -177,7 +200,11 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     try {
       const evs = await getPlanEvents();
       const cues = planCues(evs, cfg, from, to);
-      res.json({ from, to, cues });
+      // Stage 34c — list Elgin House sessions + appointments under each day.
+      // Display only: never cued (appointments stay info-only).
+      let schedule: ReturnType<typeof elginSchedule> = [];
+      try { schedule = elginSchedule(await deps.getEvents(), from, to); } catch { schedule = []; }
+      res.json({ from, to, cues, schedule });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }

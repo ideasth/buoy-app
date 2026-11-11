@@ -37,6 +37,7 @@ const KIND_LABEL: Record<string, string> = {
   routine: "Routine", digest: "Today", email: "Email",
 };
 
+type SchedItem = { uid: string; kind: "session" | "appointment"; title: string; startMs: number; endMs: number; location: string | null };
 const fmtTime = (ms: number) =>
   new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Melbourne", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
 const fmtDay = (ms: number) =>
@@ -58,7 +59,7 @@ export default function OnTime() {
     queryFn: async () => (await apiRequest("GET", "/api/ontime/status")).json(),
     refetchInterval: 30_000,
   });
-  const previewQ = useQuery<{ cues: Cue[] }>({
+  const previewQ = useQuery<{ cues: Cue[]; schedule?: SchedItem[] }>({
     queryKey: ["/api/ontime/preview"],
     queryFn: async () => (await apiRequest("GET", "/api/ontime/preview?days=2")).json(),
   });
@@ -68,13 +69,15 @@ export default function OnTime() {
   useEffect(() => { if (cfgQ.data && !draft) setDraft(cfgQ.data.config); }, [cfgQ.data, draft]);
 
   const byDay = useMemo(() => {
-    const out: Array<{ day: string; cues: Cue[] }> = [];
-    for (const c of previewQ.data?.cues ?? []) {
-      const d = fmtDay(c.fireAt);
-      const last = out[out.length - 1];
-      if (last && last.day === d) last.cues.push(c); else out.push({ day: d, cues: [c] });
-    }
-    return out;
+    // Stage 34c — each day: cues, then that day's Elgin sessions/appointments.
+    const map = new Map<string, { day: string; sort: number; cues: Cue[]; sched: SchedItem[] }>();
+    const slot = (ms: number) => {
+      const d = fmtDay(ms);
+      return map.get(d) ?? map.set(d, { day: d, sort: ms, cues: [], sched: [] }).get(d)!;
+    };
+    for (const c of previewQ.data?.cues ?? []) slot(c.fireAt).cues.push(c);
+    for (const s of previewQ.data?.schedule ?? []) slot(s.startMs).sched.push(s);
+    return Array.from(map.values()).sort((a, b) => a.sort - b.sort);
   }, [previewQ.data]);
 
   const refreshAll = () => {
@@ -220,6 +223,22 @@ export default function OnTime() {
                 </div>
               ))}
             </div>
+            {g.sched.length ? (
+              <div className="border-t border-border" data-testid="ontime-elgin-schedule">
+                <div className="px-4 pt-2 pb-1 text-xs font-medium text-muted-foreground">Elgin House sessions and appointments</div>
+                <div className="divide-y divide-border">
+                  {g.sched.map((s) => (
+                    <div key={s.uid} className={`grid grid-cols-[110px_1fr] gap-3 px-4 py-1.5 text-sm items-start ${s.kind === "session" ? "bg-muted/20" : ""}`}>
+                      <div className="tabular-nums text-muted-foreground">{fmtTime(s.startMs)}–{fmtTime(s.endMs)}</div>
+                      <div className="min-w-0 [overflow-wrap:anywhere]">
+                        <div className={s.kind === "session" ? "font-medium" : ""}>{s.title}</div>
+                        {s.kind === "session" && s.location ? <div className="text-xs text-muted-foreground">{s.location}</div> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ))}
       </section>
