@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { DEFAULT_CONFIG, mergeConfig, type OnTimeConfig } from "./config";
 import type { PlannedCue } from "./plan";
 
-export const TRIAGE_CATEGORIES = ["act_today", "reply_week", "waiting", "fyi"] as const;
+export const TRIAGE_CATEGORIES = ["act_today", "reply_week", "waiting", "fyi", "spam"] as const;
 export type TriageCategory = (typeof TRIAGE_CATEGORIES)[number];
 
 export interface AlertRow {
@@ -137,7 +137,33 @@ CREATE TABLE IF NOT EXISTS ontime_kv (
   if (!cols.has("flag_synced_at")) db.exec(`ALTER TABLE email_triage ADD COLUMN flag_synced_at INTEGER`);
   if (!cols.has("buoy_label")) db.exec(`ALTER TABLE email_triage ADD COLUMN buoy_label TEXT`);
   if (!cols.has("filed_folder")) db.exec(`ALTER TABLE email_triage ADD COLUMN filed_folder TEXT`);
+  // Stage 35 — learning from Oliver's re-sorts (corrections + sender rules).
+  db.exec(`
+CREATE TABLE IF NOT EXISTS triage_corrections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  triage_id INTEGER,
+  sender TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  from_category TEXT,
+  to_category TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_triage_corrections_sender ON triage_corrections(sender, created_at);
+CREATE TABLE IF NOT EXISTS triage_sender_rules (
+  sender TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`);
 }
+
+export interface SenderRule { sender: string; category: TriageCategory; origin: "manual" | "learned"; hits: number; created_at: number; updated_at: number }
+export interface CorrectionExample { sender: string; subject: string; to_category: TriageCategory }
+/** Two re-sorts of the same sender to the same category (latest two agree) make a learned rule. */
+export const LEARN_AFTER = 2;
 
 export class OnTimeStore {
   constructor(public db: Db, private clock: () => number = Date.now) {
@@ -424,5 +450,59 @@ export class OnTimeStore {
     const out: Record<string, number> = {};
     for (const r of rows) out[r.c] = r.n;
     return out;
+  }
+
+  // ---- Stage 35 — learning ----
+  recordCorrection(row: Pick<TriageRow, "id" | "sender" | "subject" | "category">, to: TriageCategory): SenderRule | null {
+    const sender = (row.sender || "").trim().toLowerCase();
+    if (!sender) return null;
+    const now = this.clock();
+    this.db.prepare(
+      `INSERT INTO triage_corrections (triage_id, sender, subject, from_category, to_category, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(row.id, sender, (row.subject || "").slice(0, 200), row.category ?? null, to, now);
+    const existing = this.getSenderRule(sender);
+    if (existing?.origin === "manual") return existing; // Oliver's explicit choice wins
+    const last = this.db.prepare(
+      `SELECT to_category AS c FROM triage_corrections WHERE sender = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    ).all(sender, LEARN_AFTER) as Array<{ c: string }>;
+    if (last.length >= LEARN_AFTER && last.every((r) => r.c === to)) return this.setSenderRule(sender, to, "learned");
+    if (existing && existing.category !== to) { this.deleteSenderRule(sender); return null; }
+    return existing ?? null;
+  }
+  getSenderRule(sender: string): SenderRule | undefined {
+    return this.db.prepare(`SELECT * FROM triage_sender_rules WHERE sender = ?`).get((sender || "").trim().toLowerCase()) as SenderRule | undefined;
+  }
+  setSenderRule(sender: string, category: TriageCategory, origin: "manual" | "learned"): SenderRule {
+    const now = this.clock();
+    const key = (sender || "").trim().toLowerCase();
+    this.db.prepare(
+      `INSERT INTO triage_sender_rules (sender, category, origin, hits, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)
+       ON CONFLICT(sender) DO UPDATE SET category = excluded.category, origin = excluded.origin, updated_at = excluded.updated_at`,
+    ).run(key, category, origin, now, now);
+    return this.getSenderRule(key)!;
+  }
+  deleteSenderRule(sender: string): boolean {
+    return this.db.prepare(`DELETE FROM triage_sender_rules WHERE sender = ?`).run((sender || "").trim().toLowerCase()).changes > 0;
+  }
+  listSenderRules(): SenderRule[] {
+    return this.db.prepare(`SELECT * FROM triage_sender_rules ORDER BY updated_at DESC`).all() as SenderRule[];
+  }
+  bumpSenderRule(sender: string): void {
+    this.db.prepare(`UPDATE triage_sender_rules SET hits = hits + 1 WHERE sender = ?`).run((sender || "").trim().toLowerCase());
+  }
+  /** Few-shot examples for the model: same sender, then same domain, then most recent. */
+  correctionExamples(sender: string, limit = 8): CorrectionExample[] {
+    const key = (sender || "").trim().toLowerCase();
+    const domain = key.includes("@") ? key.split("@")[1] : "";
+    return this.db.prepare(
+      `SELECT sender, subject, to_category FROM (
+         SELECT sender, subject, to_category, created_at, id,
+                CASE WHEN sender = ? THEN 0 WHEN ? <> '' AND sender LIKE '%@' || ? THEN 1 ELSE 2 END AS rank
+         FROM triage_corrections ORDER BY created_at DESC LIMIT 500
+       ) ORDER BY rank, created_at DESC, id DESC LIMIT ?`,
+    ).all(key, domain, domain, limit) as CorrectionExample[];
+  }
+  correctionCount(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM triage_corrections`).get() as { n: number }).n;
   }
 }

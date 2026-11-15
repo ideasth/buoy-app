@@ -1,6 +1,6 @@
 // filepath: /home/user/workspace/anchor/client/src/components/EmailTriagePanel.tsx
 // Stage 25 — sorted inbox view inside Email Status (no separate Inbox page,
-// per standing rule). Tabs: Act today / This week / Waiting / FYI. Plus an
+// per standing rule). Tabs: Act today / This week / Waiting / FYI / Spam/Junk. Plus an
 // upload box for Safer Care Victoria (or any) emails: drop .eml/.msg files
 // or paste the text.
 
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { Check, ExternalLink, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
 import { groupByThread } from "@/lib/emailThreads";
 
@@ -26,7 +27,10 @@ const TABS: Array<{ key: string; label: string }> = [
   { key: "reply_week", label: "This week" },
   { key: "waiting", label: "Waiting" },
   { key: "fyi", label: "FYI" },
+  { key: "spam", label: "Spam/Junk" },
 ];
+const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map((t) => [t.key, t.label]));
+type SenderRule = { sender: string; category: string; origin: "manual" | "learned"; hits: number };
 // Stage 31 — closed items (done / dismissed, kept for 30 days) with Reopen.
 const CLOSED_TAB = "closed";
 
@@ -64,9 +68,44 @@ export function EmailTriagePanel() {
   const counts = q.data?.counts ?? {};
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/ontime/triage"] });
 
-  const patch = async (id: number, body: Record<string, string>) => {
-    await apiRequest("PATCH", `/api/ontime/triage/${id}`, body);
+  const patch = async (id: number, body: Record<string, string | boolean>) => {
+    const r = await (await apiRequest("PATCH", `/api/ontime/triage/${id}`, body)).json().catch(() => ({}));
     refresh();
+    return r as { senderRule?: SenderRule | null };
+  };
+
+  // Stage 35 — sender rules learned from re-sorts (or set explicitly).
+  const rulesQ = useQuery<{ rules: SenderRule[]; corrections: number }>({
+    queryKey: ["/api/ontime/triage-rules"],
+    queryFn: async () => (await apiRequest("GET", "/api/ontime/triage-rules")).json(),
+  });
+  const [showRules, setShowRules] = useState(false);
+  const refreshRules = () => queryClient.invalidateQueries({ queryKey: ["/api/ontime/triage-rules"] });
+  const removeRule = async (sender: string) => {
+    await apiRequest("DELETE", `/api/ontime/triage-rules?sender=${encodeURIComponent(sender)}`);
+    refreshRules();
+  };
+
+  // Move one email; Buoy learns from it, and offers "always" for this sender.
+  const move = async (i: Item, category: string) => {
+    const r = await patch(i.id, { category });
+    refreshRules();
+    const who = i.sender_name || i.sender;
+    const label = TAB_LABEL[category] ?? category;
+    const learned = r.senderRule && r.senderRule.category === category;
+    toast({
+      title: `Moved to ${label}`,
+      description: learned
+        ? `Future emails from ${who} will go to ${label}.`
+        : `Buoy learns from this. Want every future email from ${who} in ${label}?`,
+      action: learned ? undefined : (
+        <ToastAction altText={`Always ${label} for this sender`} onClick={async () => {
+          await patch(i.id, { category, applyToSender: true });
+          refreshRules();
+          toast({ title: "Rule saved", description: `Future emails from ${who} go to ${label}.` });
+        }}>Always</ToastAction>
+      ),
+    });
   };
 
   // Reopen: back to the open list; if Buoy filed it, Outlook moves it back to Inbox.
@@ -196,7 +235,7 @@ export function EmailTriagePanel() {
               <select
                 className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                 value={i.category ?? ""}
-                onChange={(e) => patch(i.id, { category: e.target.value })}
+                onChange={(e) => void move(i, e.target.value)}
                 aria-label="Move to"
               >
                 {TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
@@ -270,6 +309,34 @@ export function EmailTriagePanel() {
             {g.items.map((i) => renderRow(i, true))}
           </div>
         ))}
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-3 space-y-2" data-testid="triage-rules">
+        <button type="button" className="text-sm font-medium flex items-center gap-2" onClick={() => setShowRules((v) => !v)} data-testid="button-toggle-rules">
+          Sorting rules <span className="text-xs text-muted-foreground font-normal">
+            {(rulesQ.data?.rules.length ?? 0)} sender rule{(rulesQ.data?.rules.length ?? 0) === 1 ? "" : "s"} · learned from {rulesQ.data?.corrections ?? 0} move{(rulesQ.data?.corrections ?? 0) === 1 ? "" : "s"}
+          </span>
+        </button>
+        {showRules ? (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              When you move an email, the private model on the Buoy server uses it as an example for future emails.
+              Move two from the same sender to the same place (or tap Always) and that sender is sorted there automatically.
+              Spam/Junk only hides emails in Buoy; nothing is moved to Outlook's Junk folder.
+            </p>
+            {(rulesQ.data?.rules ?? []).length === 0 ? <div className="text-xs text-muted-foreground">No sender rules yet.</div> : null}
+            {(rulesQ.data?.rules ?? []).map((r) => (
+              <div key={r.sender} className="flex flex-wrap items-center gap-2 text-sm py-1 border-t border-border first:border-t-0">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{r.sender}</span>
+                <Badge variant="outline" className="text-[10px] py-0 h-5">{TAB_LABEL[r.category] ?? r.category}</Badge>
+                <span className="text-xs text-muted-foreground">{r.origin === "manual" ? "you set" : "learned"}{r.hits ? ` · used ${r.hits}×` : ""}</span>
+                <Button size="sm" variant="ghost" className="ml-auto h-7" onClick={() => void removeRule(r.sender)} aria-label={`Remove rule for ${r.sender}`}>
+                  <X className="h-3 w-3 mr-1" /> Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div

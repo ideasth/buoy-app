@@ -351,10 +351,17 @@ export class OnTimeEngine {
         const row = this.d.store.nextQueued();
         if (!row) break;
         const t0 = this.now();
+        // Stage 35 — Oliver's sender rules + past re-sorts teach the model.
+        let learned: { senderRule: any; examples: any[] } | undefined;
+        try {
+          const rule = this.d.store.getSenderRule(row.sender);
+          learned = { senderRule: rule?.category ?? null, examples: this.d.store.correctionExamples(row.sender) };
+        } catch { learned = undefined; }
         const c = await classify({
           sender: row.sender, senderName: row.sender_name, subject: row.subject,
           body: row.body_for_llm ?? row.snippet, receivedAt: row.received_at,
-        }, llm, llm ? cfg.ollamaModel : null);
+        }, llm, llm ? cfg.ollamaModel : null, learned);
+        if (c.learnedRule) { try { this.d.store.bumpSenderRule(row.sender); } catch { /* ignore */ } }
         this.d.store.saveClassification(row.id, {
           category: c.category, summary: c.summary, deadlineText: c.deadlineText,
           deadlineDate: c.deadlineDate, isPriority: c.rules.isPriority, ruleHits: c.rules.hits, model: c.model,

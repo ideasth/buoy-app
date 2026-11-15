@@ -110,15 +110,31 @@ export interface Classification {
   skippedModel?: boolean;
 }
 
-export function buildPrompt(inp: TriageInput, rules: RuleResult): string {
+export interface LearnedHints {
+  /** Oliver's sender rule (manual or learned) — decides the category outright. */
+  senderRule?: TriageCategory | null;
+  /** Past re-sorts, used as few-shot examples. */
+  examples?: Array<{ sender: string; subject: string; to_category: string }>;
+}
+
+const LABEL: Record<string, string> = { act_today: "act_today", reply_week: "reply_week", waiting: "waiting", fyi: "fyi", spam: "spam" };
+
+export function buildPrompt(inp: TriageInput, rules: RuleResult, learned?: LearnedHints): string {
   const today = melbDateKey(inp.receivedAt);
+  const ex = (learned?.examples ?? []).filter((e) => LABEL[e.to_category]);
+  const exLines = ex.length
+    ? ["Oliver has re-sorted these emails himself. Follow the same pattern for similar senders and subjects:",
+       ...ex.map((e) => `- From ${e.sender} | Subject: ${e.subject.slice(0, 100)} -> ${e.to_category}`)]
+    : [];
   return [
     "You sort email for a busy Australian medical specialist with ADHD.",
-    "Return ONLY JSON: {\"category\": one of act_today|reply_week|waiting|fyi, \"summary\": one plain sentence (max 20 words) saying what he needs to do, \"deadline\": the deadline as written in the email or null}.",
+    "Return ONLY JSON: {\"category\": one of act_today|reply_week|waiting|fyi|spam, \"summary\": one plain sentence (max 20 words) saying what he needs to do, \"deadline\": the deadline as written in the email or null}.",
     "act_today = needs his action within 24 hours (urgent clinical, results calls, same-day deadlines).",
     "reply_week = needs a reply or action, but not today.",
     "waiting = he is waiting on someone else; nothing for him to do now.",
     "fyi = newsletters, notifications, receipts, information only.",
+    "spam = junk, unsolicited marketing, phishing or scams he never wants to see.",
+    ...exLines,
     `Email received: ${today}. Rule hints: ${rules.hits.join(", ") || "none"}.`,
     `From: ${inp.senderName} <${inp.sender}>`,
     `Subject: ${inp.subject}`,
@@ -149,14 +165,21 @@ export function ollamaCaller(url: string, model: string, timeoutMs = 180_000): L
   };
 }
 
-const CATS: readonly TriageCategory[] = ["act_today", "reply_week", "waiting", "fyi"];
+const CATS: readonly TriageCategory[] = ["act_today", "reply_week", "waiting", "fyi", "spam"];
 
 export async function classify(
-  inp: TriageInput, llm: LlmCall | null, modelName: string | null,
-): Promise<Classification & { rules: RuleResult }> {
+  inp: TriageInput, llm: LlmCall | null, modelName: string | null, learned?: LearnedHints,
+): Promise<Classification & { rules: RuleResult; learnedRule?: boolean }> {
   const rules = applyRules(inp);
+  // Stage 35 — Oliver's sender rule decides the category. FYI/spam skip the
+  // model; others still use it for the summary and deadline.
+  const forced = learned?.senderRule && CATS.includes(learned.senderRule) ? learned.senderRule : null;
+  if (forced) rules.hits.push("sender-rule");
+  if (forced === "spam" || forced === "fyi") {
+    return { rules, learnedRule: true, category: forced, summary: forced === "spam" ? "Junk (your rule for this sender)." : inp.subject.slice(0, 140) || "(no subject)", deadlineText: null, deadlineDate: null, model: null, skippedModel: true };
+  }
   // Obvious bulk mail never needs the model.
-  if (rules.isBulk && !rules.isPriority) {
+  if (rules.isBulk && !rules.isPriority && !forced) {
     return { rules, category: "fyi", summary: "Newsletter or notification.", deadlineText: null, deadlineDate: null, model: null, skippedModel: true };
   }
   let category: TriageCategory = rules.hintCategory ?? (rules.isPriority ? "reply_week" : "fyi");
@@ -165,7 +188,7 @@ export async function classify(
   let usedModel: string | null = null;
   if (llm) {
     try {
-      const raw = await llm(buildPrompt(inp, rules));
+      const raw = await llm(buildPrompt(inp, rules, learned));
       const j = JSON.parse(raw);
       if (CATS.includes(j.category)) category = j.category;
       if (typeof j.summary === "string" && j.summary.trim()) summary = j.summary.trim().slice(0, 200);
@@ -179,6 +202,9 @@ export async function classify(
   }
   // Safety rail: urgent + priority sender is never demoted below act_today.
   if (rules.isPriority && rules.hits.includes("urgent") && rules.hits.includes("action")) category = "act_today";
+  // A priority sender is never auto-junked by the model (only by Oliver's own rule).
+  if (category === "spam" && rules.isPriority && !forced) category = "fyi";
+  if (forced) category = forced;
   if (!deadlineText) {
     // Rules-only fallback: "by Friday", "due 16/11", "before 3 Dec", "by tomorrow".
     const m = `${inp.subject}\n${inp.body.slice(0, 4000)}`.match(
@@ -187,5 +213,5 @@ export async function classify(
     if (m) deadlineText = m[1];
   }
   const deadlineDate = resolveDeadline(deadlineText, inp.receivedAt);
-  return { rules, category, summary, deadlineText, deadlineDate, model: usedModel };
+  return { rules, category, summary, deadlineText, deadlineDate, model: usedModel, learnedRule: !!forced };
 }

@@ -22,6 +22,7 @@ export const BUOY_LABELS: Record<string, string> = {
   reply_week: "Buoy: Reply this week",
   waiting: "Buoy: Waiting",
   fyi: "Buoy: FYI",
+  spam: "Buoy: Spam/Junk", // Stage 35 — label only; never moved to Junk
 };
 export const FILED_DONE = "buoy_done";
 

@@ -20,6 +20,7 @@ import { planMailSync, planPruneCleanup, runMailSync, isEmptyPlan, PerRowQueue, 
 import { applyFlag, type FlagSyncDeps } from "./flagsync";
 import { parseUpload, parseZip } from "./upload";
 import express from "express";
+import type { TriageCategory } from "./store";
 import { ELGIN_SUMMARY_PREFIX, isElginBlock } from "../elgin-feed";
 import { addDaysKey, melbDateKey, melbToUtcMs } from "./time";
 
@@ -260,16 +261,36 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
   app.patch("/api/ontime/triage/:id", (req, res) => {
     if (!deps.guard(req, res)) return;
     const id = Number(req.params.id);
-    const b = (req.body ?? {}) as { status?: string; category?: string };
+    const b = (req.body ?? {}) as { status?: string; category?: string; applyToSender?: boolean };
+    const before = store.getTriage(id);
     const row = store.updateTriage(id, { status: b.status, category: b.category });
     if (!row) return res.status(404).json({ error: "not found" });
+    // Stage 35 — learn from re-sorts; optional explicit rule for this sender.
+    let senderRule: unknown = undefined;
+    try {
+      const to = row.category as TriageCategory | null;
+      if (b.category && before && to && before.category !== to) senderRule = store.recordCorrection(before, to) ?? null;
+      if (b.applyToSender && to && row.sender) senderRule = store.setSenderRule(row.sender, to, "manual");
+    } catch { /* learning must never block sorting */ }
     // Stage 29/30 — Outlook flags, labels and filing, each behind its switch.
     const cfg = store.getConfig();
     const opts = { flags: cfg.flagSyncEnabled, filing: cfg.mailFilingEnabled };
     const plan = planMailSync(row, opts);
     if (!isEmptyPlan(plan)) void syncRow(row.id, opts).catch(() => undefined);
     const { body_for_llm, ...rest } = row;
-    res.json({ ...rest, mailPlan: plan });
+    res.json({ ...rest, mailPlan: plan, senderRule });
+  });
+
+  // Stage 35 — sender rules (manual + learned) for Email Status.
+  app.get("/api/ontime/triage-rules", (req, res) => {
+    if (!deps.guard(req, res)) return;
+    res.json({ rules: store.listSenderRules(), corrections: store.correctionCount() });
+  });
+  app.delete("/api/ontime/triage-rules", (req, res) => {
+    if (!deps.guard(req, res)) return;
+    const sender = String(req.query.sender ?? "");
+    if (!sender) return res.status(400).json({ error: "sender required" });
+    res.json({ removed: store.deleteSenderRule(sender) });
   });
 
   // Stage 29 — manual one-email test. Works even with the switch off so the
