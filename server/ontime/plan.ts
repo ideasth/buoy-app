@@ -158,6 +158,42 @@ export function planDigestCue(dateKey: string, cfg: OnTimeConfig): PlannedCue | 
   };
 }
 
+/**
+ * Stage 37 — the day's first appointment for the top of the morning digest.
+ * Earliest timed, non-ignored event starting on dateKey. The title is short
+ * and watch-safe (respects privacyLabels via eventLabel); the place is the
+ * matched travel location, or the calendar location when privacy is off.
+ */
+export interface FirstAppointment { startMs: number; leaveAtMs: number | null; title: string; line: string }
+
+export function firstAppointment(dateKey: string, events: PlanEvent[], cfg: OnTimeConfig): FirstAppointment | null {
+  const dayStart = melbToUtcMs(dateKey, "00:00");
+  const dayEnd = melbToUtcMs(addDaysKey(dateKey, 1), "00:00");
+  const ev = events
+    .filter((e) => !e.allDay && !isIgnoredEvent(e, cfg) && e.startMs >= dayStart && e.startMs < dayEnd)
+    .sort((a, b) => a.startMs - b.startMs)[0];
+  if (!ev) return null;
+  const label = eventLabel(ev, cfg);
+  const place = ev.travelLocationName || (cfg.privacyLabels ? "" : (ev.location ?? "").trim().slice(0, 60));
+  const where = place && place !== label ? ` at ${place}` : "";
+  const startHH = melbHHMM(ev.startMs);
+  const leaveAt = leaveAtFor(ev, cfg);
+  const shortPlace = place || label;
+  if (leaveAt == null) {
+    return {
+      startMs: ev.startMs, leaveAtMs: null,
+      title: `${startHH} ${shortPlace}`.slice(0, 60),
+      line: `First appointment: ${startHH} ${label}${where}. No travel needed.`,
+    };
+  }
+  const leaveHH = melbHHMM(leaveAt);
+  return {
+    startMs: ev.startMs, leaveAtMs: leaveAt,
+    title: `${startHH} ${shortPlace} - leave by ${leaveHH}`.slice(0, 60),
+    line: `First appointment: ${startHH} ${label}${where}. Leave by ${leaveHH} (${ev.travelAllowMinutes} min travel + ${cfg.bufferMinutes} min buffer).`,
+  };
+}
+
 /** Stage 32 — the weekly stale-items nudge (body composed at fire time). */
 export function planStaleCue(dateKey: string, cfg: OnTimeConfig): PlannedCue | null {
   if (!cfg.staleNudgeEnabled) return null;

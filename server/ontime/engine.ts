@@ -11,7 +11,7 @@
 
 import type { OnTimeConfig } from "./config";
 import type { AlertRow, OnTimeStore } from "./store";
-import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
+import { firstAppointment, planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, type NtfyAction, type NtfyMessage, type Sender } from "./notify";
 import { classify, ollamaCaller, type LlmCall } from "./triage";
 import { pollInbox, readGraphCreds, type GraphCreds } from "./graph";
@@ -182,14 +182,29 @@ export class OnTimeEngine {
     };
   }
 
-  composeDigest(cfg: OnTimeConfig, dateKey: string): string {
+  /**
+   * Stage 37 — digest title + body. With today's calendar the title leads
+   * with the first appointment and its leave-by time; without it (calendar
+   * read failed) the title stays "Today" and the body uses saved alerts.
+   */
+  composeDigestMessage(cfg: OnTimeConfig, dateKey: string, events?: PlanEvent[] | null): { title: string; body: string } {
+    const first = events ? firstAppointment(dateKey, events, cfg) : null;
+    const body = this.composeDigest(cfg, dateKey, events ?? undefined);
+    return { title: first ? first.title : "Today", body };
+  }
+
+  composeDigest(cfg: OnTimeConfig, dateKey: string, events?: PlanEvent[]): string {
     const store = this.d.store;
     const dayStart = melbToUtcMs(dateKey, "00:00");
     const dayEnd = melbToUtcMs(addDaysKey(dateKey, 1), "00:00");
     const alerts = store.listAlerts(dayStart, dayEnd);
     const leaves = alerts.filter((r) => r.kind === "leave_now" && r.status !== "skipped");
     const lines: string[] = [];
-    if (leaves.length) {
+    if (events) {
+      const fa = firstAppointment(dateKey, events, cfg);
+      lines.push(fa ? fa.line : "No appointments today.");
+      if (leaves.length > 1) lines.push(`${leaves.length} trips today.`);
+    } else if (leaves.length) {
       const first = leaves[0];
       lines.push(`First leave-by: ${first.leave_at_ms ? melbHHMM(first.leave_at_ms) : melbHHMM(first.fire_at)} (${first.title.replace(/^Leave now - /, "")}).`);
       if (leaves.length > 1) lines.push(`${leaves.length} trips today.`);
@@ -256,8 +271,11 @@ export class OnTimeEngine {
       let body: string | undefined;
       let row = a;
       if (a.kind === "digest") {
-        body = this.composeDigest(cfg, melbDateKey(a.fire_at));
-        row = { ...a, body };
+        let events: PlanEvent[] | null = null;
+        try { events = await this.d.getPlanEvents(); } catch { events = null; /* digest must still send */ }
+        const m = this.composeDigestMessage(cfg, melbDateKey(a.fire_at), events);
+        body = m.body;
+        row = { ...a, title: m.title, body };
       } else if (a.kind === "stale") {
         const s = this.composeStale(cfg, a.fire_at);
         if (s == null) { this.d.store.markStatus(a.id, "skipped"); continue; }

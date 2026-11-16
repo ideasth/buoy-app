@@ -92,8 +92,10 @@ describe("engine: cues, escalation, snooze", () => {
     await s.engine.refreshPlan();
     s.at("06:30");
     await s.engine.fireDue(s.store.getConfig());
-    const d = s.sent.find((m) => m.title === "Today")!;
-    expect(d.message).toContain("First leave-by: 08:15");
+    // Stage 37 — title now leads with the first appointment and leave-by.
+    const d = s.sent.find((m) => m.title === "09:00 Elgin Braybrook - leave by 08:15")!;
+    expect(d.message).toContain("First appointment: 09:00 Elgin Braybrook. Leave by 08:15");
+    expect(d.message).not.toContain("Patient X");
     expect(d.message).toContain("Top 3: Report A; Call B");
   });
 
