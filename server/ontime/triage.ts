@@ -117,7 +117,7 @@ export interface LearnedHints {
   examples?: Array<{ sender: string; subject: string; to_category: string }>;
 }
 
-const LABEL: Record<string, string> = { act_today: "act_today", reply_week: "reply_week", waiting: "waiting", fyi: "fyi", spam: "spam" };
+const LABEL: Record<string, string> = { act_today: "act_today", reply_week: "reply_week", waiting: "waiting", fyi: "fyi", spam: "spam", unsubscribe: "unsubscribe" };
 
 export function buildPrompt(inp: TriageInput, rules: RuleResult, learned?: LearnedHints): string {
   const today = melbDateKey(inp.receivedAt);
@@ -128,12 +128,13 @@ export function buildPrompt(inp: TriageInput, rules: RuleResult, learned?: Learn
     : [];
   return [
     "You sort email for a busy Australian medical specialist with ADHD.",
-    "Return ONLY JSON: {\"category\": one of act_today|reply_week|waiting|fyi|spam, \"summary\": one plain sentence (max 20 words) saying what he needs to do, \"deadline\": the deadline as written in the email or null}.",
+    "Return ONLY JSON: {\"category\": one of act_today|reply_week|waiting|fyi|spam|unsubscribe, \"summary\": one plain sentence (max 20 words) saying what he needs to do, \"deadline\": the deadline as written in the email or null}.",
     "act_today = needs his action within 24 hours (urgent clinical, results calls, same-day deadlines).",
     "reply_week = needs a reply or action, but not today.",
     "waiting = he is waiting on someone else; nothing for him to do now.",
     "fyi = newsletters, notifications, receipts, information only.",
     "spam = junk, unsolicited marketing, phishing or scams he never wants to see.",
+    "unsubscribe = a mailing list, newsletter or marketing he signed up to but no longer wants (only when the examples show he unsubscribes from similar mail).",
     ...exLines,
     `Email received: ${today}. Rule hints: ${rules.hits.join(", ") || "none"}.`,
     `From: ${inp.senderName} <${inp.sender}>`,
@@ -165,7 +166,7 @@ export function ollamaCaller(url: string, model: string, timeoutMs = 180_000): L
   };
 }
 
-const CATS: readonly TriageCategory[] = ["act_today", "reply_week", "waiting", "fyi", "spam"];
+const CATS: readonly TriageCategory[] = ["act_today", "reply_week", "waiting", "fyi", "spam", "unsubscribe"];
 
 export async function classify(
   inp: TriageInput, llm: LlmCall | null, modelName: string | null, learned?: LearnedHints,
@@ -175,8 +176,11 @@ export async function classify(
   // model; others still use it for the summary and deadline.
   const forced = learned?.senderRule && CATS.includes(learned.senderRule) ? learned.senderRule : null;
   if (forced) rules.hits.push("sender-rule");
-  if (forced === "spam" || forced === "fyi") {
-    return { rules, learnedRule: true, category: forced, summary: forced === "spam" ? "Junk (your rule for this sender)." : inp.subject.slice(0, 140) || "(no subject)", deadlineText: null, deadlineDate: null, model: null, skippedModel: true };
+  if (forced === "spam" || forced === "fyi" || forced === "unsubscribe") {
+    const summary = forced === "spam" ? "Junk (your rule for this sender)."
+      : forced === "unsubscribe" ? "Mailing list you want to stop (your rule for this sender)."
+      : inp.subject.slice(0, 140) || "(no subject)";
+    return { rules, learnedRule: true, category: forced, summary, deadlineText: null, deadlineDate: null, model: null, skippedModel: true };
   }
   // Obvious bulk mail never needs the model.
   if (rules.isBulk && !rules.isPriority && !forced) {
@@ -203,7 +207,7 @@ export async function classify(
   // Safety rail: urgent + priority sender is never demoted below act_today.
   if (rules.isPriority && rules.hits.includes("urgent") && rules.hits.includes("action")) category = "act_today";
   // A priority sender is never auto-junked by the model (only by Oliver's own rule).
-  if (category === "spam" && rules.isPriority && !forced) category = "fyi";
+  if ((category === "spam" || category === "unsubscribe") && rules.isPriority && !forced) category = "fyi";
   if (forced) category = forced;
   if (!deadlineText) {
     // Rules-only fallback: "by Friday", "due 16/11", "before 3 Dec", "by tomorrow".

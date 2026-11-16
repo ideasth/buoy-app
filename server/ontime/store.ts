@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { DEFAULT_CONFIG, mergeConfig, type OnTimeConfig } from "./config";
 import type { PlannedCue } from "./plan";
 
-export const TRIAGE_CATEGORIES = ["act_today", "reply_week", "waiting", "fyi", "spam"] as const;
+export const TRIAGE_CATEGORIES = ["act_today", "reply_week", "waiting", "fyi", "spam", "unsubscribe"] as const;
 export type TriageCategory = (typeof TRIAGE_CATEGORIES)[number];
 
 export interface AlertRow {

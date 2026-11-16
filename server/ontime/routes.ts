@@ -14,7 +14,8 @@ import { OnTimeStore, TRIAGE_CATEGORIES } from "./store";
 import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
-import { readGraphCreds, setMessageFlag, getMessageCategories, patchMessage, moveMessage, findMessageByInternetId } from "./graph";
+import { buildUnsubPlan } from "./unsubscribe";
+import { readGraphCreds, setMessageFlag, getMessageForUnsubscribe, getMessageCategories, patchMessage, moveMessage, findMessageByInternetId } from "./graph";
 import { linkUploadedEmails } from "./upload-links";
 import { planMailSync, planPruneCleanup, runMailSync, isEmptyPlan, PerRowQueue, type MailOps } from "./mailsync";
 import { applyFlag, type FlagSyncDeps } from "./flagsync";
@@ -263,8 +264,21 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
   app.patch("/api/ontime/triage/:id", (req, res) => {
     if (!deps.guard(req, res)) return;
     const id = Number(req.params.id);
-    const b = (req.body ?? {}) as { status?: string; category?: string; applyToSender?: boolean };
+    const b = (req.body ?? {}) as { status?: string; category?: string; applyToSender?: boolean; unsubscribed?: boolean };
     const before = store.getTriage(id);
+    // Stage 36 — "I've unsubscribed": close it; later mail from this sender goes to Spam/Junk.
+    if (b.unsubscribed) {
+      const done = store.updateTriage(id, { status: "done" });
+      if (!done) return res.status(404).json({ error: "not found" });
+      let senderRule: unknown = null;
+      try { if (done.sender) senderRule = store.setSenderRule(done.sender, "spam", "manual"); } catch { /* never block */ }
+      const cfg = store.getConfig();
+      const opts = { flags: cfg.flagSyncEnabled, filing: cfg.mailFilingEnabled };
+      const plan = planMailSync(done, opts);
+      if (!isEmptyPlan(plan)) void syncRow(done.id, opts).catch(() => undefined);
+      const { body_for_llm, ...rest } = done;
+      return res.json({ ...rest, mailPlan: plan, senderRule });
+    }
     const row = store.updateTriage(id, { status: b.status, category: b.category });
     if (!row) return res.status(404).json({ error: "not found" });
     // Stage 35 — learn from re-sorts; optional explicit rule for this sender.
@@ -281,6 +295,28 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
     if (!isEmptyPlan(plan)) void syncRow(row.id, opts).catch(() => undefined);
     const { body_for_llm, ...rest } = row;
     res.json({ ...rest, mailPlan: plan, senderRule });
+  });
+
+  // Stage 36 — how to stop this email: unsubscribe links + plain steps.
+  // Read-only Outlook lookup (headers + body); nothing is stored or sent.
+  app.get("/api/ontime/triage/:id/unsubscribe", async (req, res) => {
+    if (!deps.guard(req, res)) return;
+    const row = store.getTriage(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: "not found" });
+    let headers: Array<{ name: string; value: string }> = [];
+    let body = row.snippet ?? "";
+    let lookedUp = false;
+    let lookupError: string | null = null;
+    const creds = row.source === "graph" ? readGraphCreds() : null;
+    if (creds) {
+      try {
+        const m = await getMessageForUnsubscribe(creds, row.external_id);
+        headers = m.headers; body = m.body; lookedUp = true;
+      } catch (e) {
+        lookupError = (e as Error).message.slice(0, 120);
+      }
+    }
+    res.json({ ...buildUnsubPlan({ headers, body, sender: row.sender, category: row.category }), lookedUp, lookupError });
   });
 
   // Stage 35 — sender rules (manual + learned) for Email Status.

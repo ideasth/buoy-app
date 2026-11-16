@@ -195,6 +195,26 @@ async function graphFetch(c: GraphCreds, url: string, init: { method: string; bo
   try { return await res.json(); } catch { return {}; }
 }
 
+/**
+ * Stage 36 — read-only: headers + plain-text body of one message, for the
+ * unsubscribe helper. Nothing is written; the body is not stored.
+ */
+export async function getMessageForUnsubscribe(
+  c: GraphCreds, id: string,
+): Promise<{ headers: Array<{ name: string; value: string }>; body: string }> {
+  const token = await getToken(c);
+  const res = await fetch(`${msgUrl(c, id)}?$select=internetMessageHeaders,body`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
+  });
+  if (!res.ok) throw new Error(`graph unsubscribe HTTP ${res.status}`);
+  const j = (await res.json()) as any;
+  const headers = Array.isArray(j?.internetMessageHeaders)
+    ? j.internetMessageHeaders.map((h: any) => ({ name: String(h?.name ?? ""), value: String(h?.value ?? "") }))
+    : [];
+  return { headers, body: String(j?.body?.content ?? "") };
+}
+
 export async function getMessageCategories(c: GraphCreds, id: string): Promise<string[]> {
   const j = await graphFetch(c, `${msgUrl(c, id)}?$select=categories`, { method: "GET" }, "categories");
   return Array.isArray(j?.categories) ? j.categories.map(String) : [];

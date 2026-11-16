@@ -1,6 +1,6 @@
 // filepath: /home/user/workspace/anchor/client/src/components/EmailTriagePanel.tsx
 // Stage 25 — sorted inbox view inside Email Status (no separate Inbox page,
-// per standing rule). Tabs: Act today / This week / Waiting / FYI / Spam/Junk. Plus an
+// per standing rule). Tabs: Act today / This week / Waiting / FYI / Spam/Junk / Unsubscribe. Plus an
 // upload box for Safer Care Victoria (or any) emails: drop .eml/.msg files
 // or paste the text.
 
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
-import { Check, ExternalLink, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
+import { BellOff, Check, ExternalLink, Mail, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
 import { groupByThread } from "@/lib/emailThreads";
 
 type Item = {
@@ -28,11 +28,62 @@ const TABS: Array<{ key: string; label: string }> = [
   { key: "waiting", label: "Waiting" },
   { key: "fyi", label: "FYI" },
   { key: "spam", label: "Spam/Junk" },
+  { key: "unsubscribe", label: "Unsubscribe" },
 ];
 const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map((t) => [t.key, t.label]));
 type SenderRule = { sender: string; category: string; origin: "manual" | "learned"; hits: number };
 // Stage 31 — closed items (done / dismissed, kept for 30 days) with Reopen.
 const CLOSED_TAB = "closed";
+
+// Stage 36 — "How to stop these": unsubscribe links + plain steps, looked up
+// read-only from Outlook. Buoy never visits the links or sends mail itself.
+type UnsubPlan = {
+  links: Array<{ kind: "web" | "email"; url: string; source: "header" | "body" }>;
+  oneClick: boolean; caution: string | null; steps: string[]; lookedUp: boolean; lookupError: string | null;
+};
+
+function UnsubHelp({ item, onDone }: { item: Item; onDone: () => void }) {
+  const q = useQuery<UnsubPlan>({
+    queryKey: ["/api/ontime/triage", item.id, "unsubscribe"],
+    queryFn: async () => (await apiRequest("GET", `/api/ontime/triage/${item.id}/unsubscribe`)).json(),
+    staleTime: 5 * 60_000,
+  });
+  if (q.isLoading) return <div className="text-xs text-muted-foreground pt-2">Looking for the unsubscribe link…</div>;
+  if (q.isError || !q.data) return <div className="text-xs text-destructive pt-2">Couldn't load unsubscribe details.</div>;
+  const p = q.data;
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 space-y-2" data-testid={`unsub-help-${item.id}`}>
+      <div className="text-sm font-medium">How to stop these emails</div>
+      {p.caution ? <div className="text-xs text-amber-700 dark:text-amber-400">{p.caution}</div> : null}
+      <ol className="list-decimal pl-5 text-xs space-y-1">
+        {p.steps.map((s, n) => <li key={n}>{s}</li>)}
+      </ol>
+      {p.links.length ? (
+        <div className="flex flex-wrap gap-2">
+          {p.links.map((l) => (
+            <a
+              key={l.url}
+              href={l.url}
+              target={l.kind === "web" ? "_blank" : undefined}
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-input px-2 h-8 text-xs hover:bg-accent"
+              data-testid={`unsub-link-${l.kind}`}
+            >
+              {l.kind === "web" ? <ExternalLink className="h-3 w-3" /> : <Mail className="h-3 w-3" />}
+              {l.kind === "web" ? "Open unsubscribe page" : "Open unsubscribe email"}
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {!p.lookedUp && item.source === "graph" && p.lookupError ? (
+        <div className="text-[11px] text-muted-foreground">Outlook lookup failed ({p.lookupError}); steps are based on the preview only.</div>
+      ) : null}
+      <Button size="sm" onClick={onDone} data-testid={`button-unsubscribed-${item.id}`}>
+        <Check className="h-3 w-3 mr-1" /> I've unsubscribed
+      </Button>
+    </div>
+  );
+}
 
 const fmt = (ms: number) =>
   new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Melbourne", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
@@ -211,6 +262,14 @@ export function EmailTriagePanel() {
     }
   };
 
+  const [unsubOpen, setUnsubOpen] = useState<number | null>(null);
+  const markUnsubscribed = async (i: Item) => {
+    await patch(i.id, { unsubscribed: true });
+    refreshRules();
+    setUnsubOpen(null);
+    toast({ title: "Marked unsubscribed", description: `Any more from ${i.sender_name || i.sender} will go to Spam/Junk. You can remove this in Sorting rules.` });
+  };
+
   const renderRow = (i: Item, inThread: boolean) => (
           <div key={i.id} className={inThread ? "py-2 pl-3 border-l-2 border-border space-y-1" : "p-3 space-y-1"} data-testid={`triage-row-${i.id}`}>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -242,6 +301,14 @@ export function EmailTriagePanel() {
               >
                 {TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </select>
+              <Button
+                size="sm"
+                variant={i.category === "unsubscribe" ? "default" : "ghost"}
+                onClick={() => setUnsubOpen((v) => (v === i.id ? null : i.id))}
+                data-testid={`button-unsub-${i.id}`}
+              >
+                <BellOff className="h-3 w-3 mr-1" /> How to stop these
+              </Button>
               </>)}
               {i.web_link ? (
                 <a href={i.web_link} target="_blank" rel="noreferrer" className="text-xs inline-flex items-center gap-1 ml-2 underline">
@@ -249,6 +316,7 @@ export function EmailTriagePanel() {
                 </a>
               ) : null}
             </div>
+            {unsubOpen === i.id && tab !== CLOSED_TAB ? <UnsubHelp item={i} onDone={() => void markUnsubscribed(i)} /> : null}
           </div>
   );
 
@@ -324,7 +392,7 @@ export function EmailTriagePanel() {
             <p className="text-xs text-muted-foreground">
               When you move an email, the private model on the Buoy server uses it as an example for future emails.
               Move two from the same sender to the same place (or tap Always) and that sender is sorted there automatically.
-              Spam/Junk only hides emails in Buoy; nothing is moved to Outlook's Junk folder.
+              Spam/Junk and Unsubscribe only sort emails in Buoy; nothing is moved to Outlook's Junk folder, and Buoy never visits unsubscribe links or sends mail for you.
             </p>
             {(rulesQ.data?.rules ?? []).length === 0 ? <div className="text-xs text-muted-foreground">No sender rules yet.</div> : null}
             {(rulesQ.data?.rules ?? []).map((r) => (

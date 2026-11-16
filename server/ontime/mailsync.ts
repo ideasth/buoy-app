@@ -23,6 +23,7 @@ export const BUOY_LABELS: Record<string, string> = {
   waiting: "Buoy: Waiting",
   fyi: "Buoy: FYI",
   spam: "Buoy: Spam/Junk", // Stage 35 — label only; never moved to Junk
+  unsubscribe: "Buoy: Unsubscribe", // Stage 36 — label only
 };
 export const FILED_DONE = "buoy_done";
 
