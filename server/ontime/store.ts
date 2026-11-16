@@ -356,14 +356,20 @@ export class OnTimeStore {
   getTriage(id: number): TriageRow | undefined {
     return this.db.prepare(`SELECT * FROM email_triage WHERE id = ?`).get(id) as TriageRow | undefined;
   }
-  listTriage(opts: { includeClosed?: boolean; limit?: number } = {}): TriageRow[] {
-    const where = opts.includeClosed ? "" : "WHERE status IN ('new','queued')";
+  listTriage(opts: { includeClosed?: boolean; limit?: number; category?: string } = {}): TriageRow[] {
+    // Stage 35a — optional per-category filter so each tab gets its own rows
+    // (a global LIMIT hid older categories behind the newest 300 overall).
+    const conds: string[] = [];
+    const args: unknown[] = [];
+    if (!opts.includeClosed) conds.push("status IN ('new','queued')");
+    if (opts.category) { conds.push("category = ?"); args.push(opts.category); }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     return this.db.prepare(
       `SELECT id, source, external_id, received_at, sender, sender_name, subject, snippet, web_link, category, summary,
               deadline_text, deadline_date, is_priority, rule_hits, model, status, task_id, nudged_at, NULL AS body_for_llm,
               classified_at, created_at, updated_at, flag_state, flag_error, flag_synced_at, buoy_label, filed_folder
        FROM email_triage ${where} ORDER BY received_at DESC LIMIT ?`,
-    ).all(opts.limit ?? 300) as TriageRow[];
+    ).all(...args, opts.limit ?? 300) as TriageRow[];
   }
   updateTriage(id: number, patch: { status?: string; category?: string; taskId?: number | null; nudgedAt?: number }): TriageRow | undefined {
     const cur = this.getTriage(id);

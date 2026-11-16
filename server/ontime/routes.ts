@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Express, Request, Response } from "express";
 import type { Database as Db } from "better-sqlite3";
-import { OnTimeStore } from "./store";
+import { OnTimeStore, TRIAGE_CATEGORIES } from "./store";
 import { OnTimeEngine, type EngineDeps } from "./engine";
 import { planCues, runningLateSmsUrl, type PlanEvent } from "./plan";
 import { ntfyConfigured, secretsDir, sendNtfy } from "./notify";
@@ -255,7 +255,9 @@ export function registerOnTimeRoutes(app: Express, deps: OnTimeRouteDeps): { sto
   app.get("/api/ontime/triage", (req, res) => {
     if (!deps.guard(req, res)) return;
     const includeClosed = req.query.all === "1";
-    res.json({ items: store.listTriage({ includeClosed }), counts: store.triageCounts(), queued: store.queuedCount() });
+    const cat = typeof req.query.category === "string" ? req.query.category : "";
+    const category = (TRIAGE_CATEGORIES as readonly string[]).includes(cat) ? cat : undefined;
+    res.json({ items: store.listTriage({ includeClosed, category }), counts: store.triageCounts(), queued: store.queuedCount() });
   });
 
   app.patch("/api/ontime/triage/:id", (req, res) => {

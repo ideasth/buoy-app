@@ -54,8 +54,10 @@ export function EmailTriagePanel() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const q = useQuery<{ items: Item[]; counts: Record<string, number>; queued: number }>({
-    queryKey: ["/api/ontime/triage"],
-    queryFn: async () => (await apiRequest("GET", "/api/ontime/triage")).json(),
+    queryKey: ["/api/ontime/triage", "open", tab],
+    queryFn: async () =>
+      (await apiRequest("GET", tab === CLOSED_TAB ? "/api/ontime/triage" : `/api/ontime/triage?category=${encodeURIComponent(tab)}`)).json(),
+    placeholderData: (prev) => prev,
     refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 10_000 : 60_000),
   });
   const closedQ = useQuery<{ items: Item[] }>({
