@@ -6,7 +6,7 @@ import { z } from "zod";
 export const tasks = sqliteTable("tasks", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull(),
-  status: text("status").notNull().default("todo"), // todo / doing / done / dropped
+  status: text("status").notNull().default("todo"), // todo / doing / done / dropped / parked (Stage 38 Backlog)
   priority: text("priority").notNull().default("iftime"), // anchor / deadline / deep / maintenance / iftime
   domain: text("domain").notNull().default("work"), // family / work / medicolegal / personal / health
   estimateMinutes: integer("estimate_minutes").notNull().default(30),

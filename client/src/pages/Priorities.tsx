@@ -76,6 +76,8 @@ const STATUS_OPTIONS = [
   { value: "doing", label: "Doing" },
   { value: "done", label: "Done" },
   { value: "dropped", label: "Dropped" },
+  // Stage 38 — clean slate. Parked tasks are hidden everywhere until restored (set back to To do).
+  { value: "parked", label: "Backlog (parked)" },
 ] as const;
 
 type StatusValue = (typeof STATUS_OPTIONS)[number]["value"];

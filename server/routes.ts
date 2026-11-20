@@ -44,6 +44,8 @@ import {
   melbourneDateStr,
   shiftDate,
   parseIdArray,
+  selectMorningEligible,
+  planPark,
 } from "./morning-helpers";
 import { approveAsTask } from "./inbox-scanner";
 import { getCurrentSession } from "./auth";
@@ -1272,48 +1274,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.get("/api/morning/eligible-tasks", (_req, res) => {
+    // Stage 38 — clean slate: parked (Backlog) tasks never show; only
+    // near-due, new and yesterday's unfinished Top 3 tasks do.
     const date = melbourneDateStr();
-    const tomorrow = shiftDate(date, 1);
     const yesterday = shiftDate(date, -1);
     const dayStartTs = Date.parse(date + "T00:00:00");
-    const tomorrowEndTs = Date.parse(tomorrow + "T23:59:59");
-    const dayMinus1Ts = Date.now() - 24 * 3600 * 1000;
-
-    const all = storage
-      .listTasks()
-      .filter((t) => t.status !== "done" && t.status !== "dropped");
-
     const yt = storage.getTopThree(yesterday);
     const yIds = new Set<number>(
-      [yt?.taskId1, yt?.taskId2, yt?.taskId3].filter(
-        (n): n is number => typeof n === "number",
-      ),
+      [yt?.taskId1, yt?.taskId2, yt?.taskId3].filter((n): n is number => typeof n === "number"),
     );
+    res.json(selectMorningEligible(storage.listTasks() as any[], { dayStartTs, nowMs: Date.now(), yesterdayTopIds: yIds }));
+  });
 
-    type R = { task: Task; bucket: number };
-    const out: R[] = [];
-    const seen = new Set<number>();
-    const push = (t: Task, bucket: number) => {
-      if (seen.has(t.id)) return;
-      seen.add(t.id);
-      out.push({ task: t, bucket });
-    };
-    for (const t of all) {
-      // overdue
-      if (t.dueAt && t.dueAt < dayStartTs) push(t, 0);
-      // due today/tomorrow
-      else if (t.dueAt && t.dueAt >= dayStartTs && t.dueAt <= tomorrowEndTs) push(t, 1);
-      // anchor / deadline
-      else if (t.priority === "anchor" || t.priority === "deadline") push(t, 2);
-      // braindump from today
-      else if (t.tag === "Braindump" && t.createdAt >= dayMinus1Ts) push(t, 3);
-      // created in last 24h
-      else if (t.createdAt >= dayMinus1Ts) push(t, 3);
-      // yesterday top3 carryover
-      else if (yIds.has(t.id)) push(t, 4);
+  // Stage 38 — one-off "clean slate": park open tasks created before
+  // `before` (epoch ms), keeping anything due within keepDueDays either
+  // side of now. dryRun returns counts only. Undo via POST /api/tasks/unpark.
+  app.post("/api/tasks/park", (req, res) => {
+    const before = Number(req.body?.before);
+    if (!Number.isFinite(before) || before <= 0) return res.status(400).json({ error: "before (epoch ms) required" });
+    const keepDueDays = Number.isFinite(Number(req.body?.keepDueDays)) ? Number(req.body.keepDueDays) : 7;
+    const { park, keep } = planPark(storage.listTasks() as any[], { before, nowMs: Date.now(), keepDueDays });
+    if (req.body?.dryRun) return res.json({ dryRun: true, wouldPark: park.length, kept: keep.map((t) => t.id) });
+    for (const t of park) storage.updateTask(t.id, { status: "parked" } as any);
+    res.json({ parked: park.map((t) => t.id), kept: keep.map((t) => t.id) });
+  });
+
+  app.post("/api/tasks/unpark", (req, res) => {
+    const ids: number[] = Array.isArray(req.body?.ids) ? req.body.ids.filter((n: any) => Number.isInteger(n)) : [];
+    let restored = 0;
+    for (const id of ids) {
+      const t = storage.getTask(id);
+      if (t && t.status === "parked") { storage.updateTask(id, { status: "todo" } as any); restored++; }
     }
-    out.sort((a, b) => a.bucket - b.bucket || a.task.id - b.task.id);
-    res.json(out.slice(0, 30).map((x) => x.task));
+    res.json({ restored });
   });
 
   // ====== INBOX SUGGESTIONS ======

@@ -76,3 +76,52 @@ export function parseIdArray(v: string | null | undefined): number[] {
   }
   return [];
 }
+
+// Stage 38 — clean slate. A task is "open" only when todo/doing; "parked"
+// (Backlog) tasks are hidden from Morning, Today and coach context until
+// restored. Morning shows only: overdue by up to 7 days, due in the next
+// 7 days, created in the last 24 h (incl. today's brain dump), and
+// yesterday's unfinished Top 3.
+export const MORNING_DUE_WINDOW_DAYS = 7;
+const DAY_MS = 86_400_000;
+
+export interface EligibleTaskLike {
+  id: number; status: string; dueAt: number | null; createdAt: number; tag?: string | null;
+}
+
+export function isOpenStatus(s: string): boolean {
+  return s === "todo" || s === "doing";
+}
+
+export function selectMorningEligible<T extends EligibleTaskLike>(
+  tasks: T[], opts: { dayStartTs: number; nowMs: number; yesterdayTopIds: Set<number>; limit?: number },
+): T[] {
+  const win = MORNING_DUE_WINDOW_DAYS * DAY_MS;
+  const windowEnd = opts.dayStartTs + (MORNING_DUE_WINDOW_DAYS + 1) * DAY_MS - 1;
+  const out: Array<{ t: T; b: number }> = [];
+  for (const t of tasks) {
+    if (!isOpenStatus(t.status)) continue;
+    let b = -1;
+    if (t.dueAt && t.dueAt < opts.dayStartTs && t.dueAt >= opts.dayStartTs - win) b = 0;
+    else if (t.dueAt && t.dueAt >= opts.dayStartTs && t.dueAt <= windowEnd) b = 1;
+    else if (t.createdAt >= opts.nowMs - DAY_MS) b = 2;
+    else if (opts.yesterdayTopIds.has(t.id)) b = 3;
+    if (b >= 0) out.push({ t, b });
+  }
+  out.sort((a, z) => a.b - z.b || (a.t.dueAt ?? Infinity) - (z.t.dueAt ?? Infinity) || a.t.id - z.t.id);
+  return out.slice(0, opts.limit ?? 30).map((x) => x.t);
+}
+
+/** Stage 38 — which open tasks a "park everything before X" reset moves. */
+export function planPark<T extends EligibleTaskLike>(
+  tasks: T[], opts: { before: number; nowMs: number; keepDueDays?: number },
+): { park: T[]; keep: T[] } {
+  const keepMs = (opts.keepDueDays ?? MORNING_DUE_WINDOW_DAYS) * DAY_MS;
+  const park: T[] = []; const keep: T[] = [];
+  for (const t of tasks) {
+    if (!isOpenStatus(t.status) || t.createdAt >= opts.before) continue;
+    const dueSoon = !!t.dueAt && t.dueAt >= opts.nowMs - keepMs && t.dueAt <= opts.nowMs + keepMs;
+    (dueSoon ? keep : park).push(t);
+  }
+  return { park, keep };
+}

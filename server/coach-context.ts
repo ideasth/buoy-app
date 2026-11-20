@@ -186,7 +186,7 @@ export function buildCoachContextBundle({
     const id = (yTop as any)?.[`taskId${slot}`] as number | null | undefined;
     if (id != null) {
       const t = tasksById.get(id);
-      if (t && t.status !== "done" && t.status !== "dropped") {
+      if (t && t.status !== "done" && t.status !== "dropped" && t.status !== "parked") {
         yesterdayUnfinished.push({ taskId: id, name: t.name, status: t.status });
       }
     }

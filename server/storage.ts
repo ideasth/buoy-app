@@ -2645,7 +2645,7 @@ export class Storage {
     const tasksRows = sqlite
       .prepare(
         `SELECT id, title FROM tasks
-         WHERE status != 'done' AND status != 'dropped'
+         WHERE status != 'done' AND status != 'dropped' AND status != 'parked'
          ORDER BY COALESCE(created_at, 0) DESC
          LIMIT 50`,
       )

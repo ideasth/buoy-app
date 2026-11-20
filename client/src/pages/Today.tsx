@@ -129,7 +129,7 @@ export default function Today() {
   ].filter((n): n is number => typeof n === "number");
   const carryOver = yesterdayTopIds
     .map((id) => tasksById.get(id))
-    .filter((t): t is Task => !!t && t.status !== "done" && t.status !== "dropped");
+    .filter((t): t is Task => !!t && t.status !== "done" && t.status !== "dropped" && t.status !== "parked");
 
   const ifTime = (tasksQ.data ?? [])
     .filter(
